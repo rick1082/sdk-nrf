@@ -189,10 +189,10 @@ void main(void)
 #else
 	ret = audio_datapath_init();
 	ERR_CHK(ret);
+	audio_sync_timer_sync_evt_send();
 	audio_i2s_init();
 	ret = hw_codec_init();
 	ERR_CHK(ret);
-	audio_sync_timer_sync_evt_send();
 #endif
 
 	/* Initialize BLE, with callback for when BLE is ready */
