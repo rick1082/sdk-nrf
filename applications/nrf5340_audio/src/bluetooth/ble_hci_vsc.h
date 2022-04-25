@@ -16,12 +16,22 @@
 #define HCI_OPCODE_VS_SET_LED_PIN_MAP BT_OP(BT_OGF_VS, 0x3A2)
 #define HCI_OPCODE_VS_SET_RADIO_FE_CFG BT_OP(BT_OGF_VS, 0x3A3)
 #define HCI_OPCODE_VS_SET_PRI_EXT_ADV_MAX_TX_PWR BT_OP(BT_OGF_VS, 0x000)
+#define HCI_OPCODE_VS_CONFIG_FEM_PIN BT_OP(BT_OGF_VS, 0x002)
 
 /* This bit setting enables the flag from controller from controller
  * if an ISO packet is lost.
  */
 #define BLE_HCI_VSC_OP_ISO_LOST_NOTIFY (1 << 17)
 #define BLE_HCI_VSC_OP_DIS_POWER_MONITOR (1 << 15)
+
+struct ble_hci_vs_cp_set_fem_pin {
+	uint16_t mode;
+	uint16_t txen;
+	uint16_t rxen;
+	uint16_t antsel;
+	uint16_t pdn;
+	uint16_t csn;
+} __packed;
 
 struct ble_hci_vs_rp_status {
 	int8_t status;
@@ -85,7 +95,7 @@ enum ble_hci_vs_led_function_mode {
 	PAL_LED_MODE_ACTIVE_HIGH = 0x01,
 	PAL_LED_MODE_DISABLE_TOGGLE = 0xFF,
 };
-
+int ble_hci_vsc_set_fem_pin(uint16_t rx, uint16_t tx);
 /**
  * @brief Enable VREGRADIO.VREQH in NET core for getting +3dBm TX power
  *        Note, this will add +3 dBm for the primary advertisement channels

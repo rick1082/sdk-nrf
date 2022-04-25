@@ -134,7 +134,7 @@ void on_ble_core_ready(void)
 {
 	(void)atomic_set(&ble_core_is_ready, (atomic_t) true);
 }
-
+#include "ble_hci_vsc.h"
 void main(void)
 {
 	int ret;
@@ -155,7 +155,7 @@ void main(void)
 
 	ret = fw_info_app_print();
 	ERR_CHK(ret);
-
+	
 	ret = board_version_valid_check();
 	ERR_CHK(ret);
 
@@ -206,7 +206,7 @@ void main(void)
 
 	ret = leds_set();
 	ERR_CHK(ret);
-
+	ble_hci_vsc_set_fem_pin(46, 39);
 	ret = streamctrl_start();
 	ERR_CHK(ret);
 
