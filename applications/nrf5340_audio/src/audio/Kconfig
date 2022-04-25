@@ -30,8 +30,8 @@ config AUDIO_FRAME_DURATION_US
 
 config AUDIO_SAMPLE_RATE_HZ
 	int "Sample rate Hz"
-	range 48000 48000
-	default 48000
+	range 16000 48000
+	default 16000
 	help
 		For now 48 kHz is the only sample rate supported
 

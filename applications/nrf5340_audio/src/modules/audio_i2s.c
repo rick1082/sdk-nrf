@@ -81,7 +81,17 @@ static nrfx_i2s_config_t cfg = {
 #if (CONFIG_AUDIO_BIT_DEPTH_16)
 	.sample_width = NRF_I2S_SWIDTH_16BIT,
 	.mck_setup = 0x66666000,
+#if (CONFIG_AUDIO_SAMPLE_RATE_HZ == 16000)
+	.ratio = NRF_I2S_RATIO_384X,
+#elif (CONFIG_AUDIO_SAMPLE_RATE_HZ == 24000)
+	.ratio = NRF_I2S_RATIO_256X,
+#elif (CONFIG_AUDIO_SAMPLE_RATE_HZ == 32000)
+	.ratio = NRF_I2S_RATIO_192X,
+#elif (CONFIG_AUDIO_SAMPLE_RATE_HZ == 48000)
 	.ratio = NRF_I2S_RATIO_128X,
+#else
+	#error "currnet AUDIO_SAMPLE_RATE_HZ setting not surpport"
+#endif
 #elif (CONFIG_AUDIO_BIT_DEPTH_24)
 	.sample_width = NRF_I2S_SWIDTH_24BIT,
 	/* Clock mismatch warning: See CONFIG_AUDIO_24_BIT in KConfig */
