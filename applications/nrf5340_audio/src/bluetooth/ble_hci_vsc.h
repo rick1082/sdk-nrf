@@ -66,6 +66,13 @@ struct ble_hci_vs_cp_set_radio_fe_cfg {
 	uint8_t ant_id;
 } __packed;
 
+enum ble_hci_vs_max_tx_power {
+	BLE_HCI_VSC_MAX_TX_PWR_0dBm = 0,
+	BLE_HCI_VSC_MAX_TX_PWR_3dBm = 3,
+	BLE_HCI_VSC_MAX_TX_PWR_10dBm = 10,
+	BLE_HCI_VSC_MAX_TX_PWR_20dBm = 20
+};
+
 enum ble_hci_vs_tx_power {
 	BLE_HCI_VSC_TX_PWR_0dBm = 0,
 	BLE_HCI_VSC_TX_PWR_Neg1dBm = -1,
@@ -95,16 +102,9 @@ enum ble_hci_vs_led_function_mode {
 	PAL_LED_MODE_ACTIVE_HIGH = 0x01,
 	PAL_LED_MODE_DISABLE_TOGGLE = 0xFF,
 };
-int ble_hci_vsc_set_fem_pin(uint16_t rx, uint16_t tx);
-/**
- * @brief Enable VREGRADIO.VREQH in NET core for getting +3dBm TX power
- *        Note, this will add +3 dBm for the primary advertisement channels
- *        as well even ble_hci_vsc_set_pri_ext_adv_max_tx_pwr() has been used
- * @param high_power_mode	Enable VREGRADIO.VREQH or not
- *
- * @return 0 for success, error otherwise.
- */
-int ble_hci_vsc_set_radio_high_pwr_mode(bool high_power_mode);
+int ble_hci_vsc_set_fem_pin(struct ble_hci_vs_cp_set_fem_pin * fem_pin);
+
+int ble_hci_vsc_set_radio_high_pwr_mode(enum ble_hci_vs_max_tx_power max_tx_power);
 
 /**
  * @brief Set Bluetooth MAC device address

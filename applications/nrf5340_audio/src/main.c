@@ -155,7 +155,7 @@ void main(void)
 
 	ret = fw_info_app_print();
 	ERR_CHK(ret);
-	
+
 	ret = board_version_valid_check();
 	ERR_CHK(ret);
 
@@ -206,7 +206,20 @@ void main(void)
 
 	ret = leds_set();
 	ERR_CHK(ret);
-	ble_hci_vsc_set_fem_pin(46, 39);
+
+	struct ble_hci_vs_cp_set_fem_pin fem_pin = { .mode = 0xffff,
+						     .txen = 46,
+						     .rxen = 39,
+						     .antsel = 0xffff,
+						     .pdn = 0xffff,
+						     .csn = 0xffff };
+
+	ret = ble_hci_vsc_set_fem_pin(&fem_pin);
+	ERR_CHK(ret);
+
+	ret = ble_hci_vsc_set_radio_high_pwr_mode(BLE_HCI_VSC_MAX_TX_PWR_20dBm);
+	ERR_CHK(ret);
+
 	ret = streamctrl_start();
 	ERR_CHK(ret);
 
