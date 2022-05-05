@@ -41,7 +41,7 @@ struct ble_iso_data {
 	bool bad_frame;
 	uint32_t sdu_ref;
 } __packed;
-const static struct device *gpio_dev = DEVICE_DT_GET(DT_NODELABEL(gpio1));
+
 DATA_FIFO_DEFINE(ble_fifo_rx, CONFIG_BUF_BLE_RX_PACKET_NUM, WB_UP(sizeof(struct ble_iso_data)));
 
 static struct k_thread audio_datapath_thread_data;
@@ -111,7 +111,6 @@ static void ble_test_pattern_receive(uint8_t const *const p_data, size_t data_si
 static void ble_iso_rx_data_handler(uint8_t const *const p_data, size_t data_size, bool bad_frame,
 				    uint32_t sdu_ref)
 {
-	gpio_pin_set(gpio_dev, 12, 1);
 	/* Since the audio datapath thread is preemptive, no actions on the
 	 * FIFO can happen whilst in this handler.
 	 */
@@ -167,7 +166,6 @@ static void ble_iso_rx_data_handler(uint8_t const *const p_data, size_t data_siz
 	ret = data_fifo_block_lock(&ble_fifo_rx, (void *)&iso_received,
 				   sizeof(struct ble_iso_data));
 	ERR_CHK_MSG(ret, "Failed to lock block");
-	//gpio_pin_set(gpio_dev, 12, 0);
 }
 #endif /* ((CONFIG_AUDIO_DEV == HEADSET) || CONFIG_TRANSPORT_CIS) */
 
@@ -746,8 +744,7 @@ int streamctrl_start(void)
 				K_PRIO_PREEMPT(CONFIG_AUDIO_DATAPATH_THREAD_PRIO), 0, K_NO_WAIT);
 	ret = k_thread_name_set(audio_datapath_thread_id, "AUDIO DATAPATH");
 	ERR_CHK(ret);
-	ret = gpio_pin_configure(gpio_dev, 12, GPIO_OUTPUT_LOW);
-	ERR_CHK(ret);
+
 	ret = m_ble_transport_init();
 	ERR_CHK(ret);
 

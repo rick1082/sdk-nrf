@@ -189,7 +189,6 @@ static bool tone_active;
 /* Buffer which can hold max 1 period test tone at 100 Hz */
 static uint16_t test_tone_buf[CONFIG_AUDIO_SAMPLE_RATE_HZ / 100];
 static size_t test_tone_size;
-const static struct device *gpio_dev = DEVICE_DT_GET(DT_NODELABEL(gpio1));
 
 static void hfclkaudio_set(uint16_t freq_value)
 {
@@ -741,9 +740,6 @@ void audio_datapath_sdu_ref_update(uint32_t sdu_ref_us)
 void audio_datapath_stream_out(const uint8_t *buf, size_t size, uint32_t sdu_ref_us, bool bad_frame)
 {
 	uint32_t cur_time = audio_sync_timer_curr_time_get();
-	if (bad_frame){
-		gpio_pin_set(gpio_dev, 13, 1);
-	}
 	if (!ctrl_blk.stream_started) {
 		LOG_WRN("Stream not started");
 		return;
@@ -837,8 +833,6 @@ void audio_datapath_stream_out(const uint8_t *buf, size_t size, uint32_t sdu_ref
 	}
 
 	ctrl_blk.out.prod_blk_idx = out_blk_idx;
-	gpio_pin_set(gpio_dev, 12, 0);
-	gpio_pin_set(gpio_dev, 13, 0);
 }
 
 int audio_datapath_start(struct data_fifo *fifo_rx)
@@ -883,10 +877,6 @@ int audio_datapath_stop(void)
 int audio_datapath_init(void)
 {
 	int ret;
-	ret = gpio_pin_configure(gpio_dev, 12, GPIO_OUTPUT_LOW);
-	ERR_CHK(ret);
-	ret = gpio_pin_configure(gpio_dev, 13, GPIO_OUTPUT_LOW);
-	ERR_CHK(ret);
 	memset(&ctrl_blk, 0, sizeof(ctrl_blk));
 	audio_i2s_blk_comp_cb_register(audio_datapath_i2s_blk_complete);
 	ctrl_blk.datapath_initialized = true;
