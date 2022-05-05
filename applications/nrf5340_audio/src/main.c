@@ -207,11 +207,12 @@ void main(void)
 	ret = leds_set();
 	ERR_CHK(ret);
 
-	struct ble_hci_vs_cp_set_fem_pin fem_pin = { .mode = 0xffff,
+	struct ble_hci_vs_cp_set_fem_pin fem_pin = { 
+							 .mode = 31,
 						     .txen = 46,
-						     .rxen = 39,
-						     .antsel = 0xffff,
-						     .pdn = 0xffff,
+						     .rxen = 32,
+						     .antsel = 33,
+						     .pdn = 45,
 						     .csn = 0xffff };
 
 	ret = ble_hci_vsc_set_fem_pin(&fem_pin);
