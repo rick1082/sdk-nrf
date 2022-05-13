@@ -290,7 +290,7 @@ void audio_system_start(void)
 	}
 
 	if (audio_system_started) {
-		LOG_WRN("Audio codec already started");
+		LOG_WRN("Audio system already started");
 		return;
 	}
 
@@ -338,7 +338,7 @@ void audio_system_stop(void)
 	int ret;
 
 	if (!audio_system_started) {
-		LOG_WRN("Audio codec not started");
+		LOG_WRN("Audio system not started");
 		return;
 	}
 
