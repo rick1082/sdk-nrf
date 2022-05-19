@@ -213,7 +213,7 @@ void main(void)
 						     .rxen = 32,
 						     .antsel = 33,
 						     .pdn = 45,
-						     .csn = 0xffff };
+						     .csn = 44 };
 
 	ret = ble_hci_vsc_set_fem_pin(&fem_pin);
 	ERR_CHK(ret);
