@@ -27,6 +27,7 @@
 #include "channel_assignment.h"
 #include "hw_codec.h"
 #include "audio_usb.h"
+#include "ble_hci_vsc.h"
 
 #include <logging/log.h>
 LOG_MODULE_REGISTER(main, CONFIG_LOG_MAIN_LEVEL);
@@ -134,7 +135,7 @@ void on_ble_core_ready(void)
 {
 	(void)atomic_set(&ble_core_is_ready, (atomic_t) true);
 }
-#include "ble_hci_vsc.h"
+
 void main(void)
 {
 	int ret;
@@ -189,10 +190,10 @@ void main(void)
 #else
 	ret = audio_datapath_init();
 	ERR_CHK(ret);
-	audio_sync_timer_sync_evt_send();
 	audio_i2s_init();
 	ret = hw_codec_init();
 	ERR_CHK(ret);
+	audio_sync_timer_sync_evt_send();
 #endif
 
 	/* Initialize BLE, with callback for when BLE is ready */
@@ -207,13 +208,9 @@ void main(void)
 	ret = leds_set();
 	ERR_CHK(ret);
 
-	struct ble_hci_vs_cp_set_fem_pin fem_pin = { 
-							 .mode = 31,
-						     .txen = 46,
-						     .rxen = 32,
-						     .antsel = 33,
-						     .pdn = 45,
-						     .csn = 44 };
+	struct ble_hci_vs_cp_set_fem_pin fem_pin = {
+		.mode = 31, .txen = 46, .rxen = 32, .antsel = 33, .pdn = 45, .csn = 44
+	};
 
 	ret = ble_hci_vsc_set_fem_pin(&fem_pin);
 	ERR_CHK(ret);

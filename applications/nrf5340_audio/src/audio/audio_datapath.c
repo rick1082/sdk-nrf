@@ -61,8 +61,6 @@
 #include "tone.h"
 #include "contin_array.h"
 #include "pcm_mix.h"
-#include <drivers/gpio.h>
-#include <device.h>
 #include <logging/log.h>
 LOG_MODULE_REGISTER(audio_datapath, CONFIG_LOG_AUDIO_DATAPATH_LEVEL);
 
@@ -740,6 +738,7 @@ void audio_datapath_sdu_ref_update(uint32_t sdu_ref_us)
 void audio_datapath_stream_out(const uint8_t *buf, size_t size, uint32_t sdu_ref_us, bool bad_frame)
 {
 	uint32_t cur_time = audio_sync_timer_curr_time_get();
+
 	if (!ctrl_blk.stream_started) {
 		LOG_WRN("Stream not started");
 		return;
@@ -876,7 +875,6 @@ int audio_datapath_stop(void)
 
 int audio_datapath_init(void)
 {
-	int ret;
 	memset(&ctrl_blk, 0, sizeof(ctrl_blk));
 	audio_i2s_blk_comp_cb_register(audio_datapath_i2s_blk_complete);
 	ctrl_blk.datapath_initialized = true;
