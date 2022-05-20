@@ -32,10 +32,9 @@ static struct bt_audio_broadcast_source *broadcast_source;
 
 NET_BUF_POOL_FIXED_DEFINE(tx_pool, TOTAL_BUF_NEEDED, BT_ISO_SDU_BUF_SIZE(CONFIG_BT_ISO_TX_MTU), 8,
 			  NULL);
+
 static uint8_t mock_data[CONFIG_BT_ISO_TX_MTU];
 static bool stopping;
-
-#define BROADCAST_SOURCE_LIFETIME 30U /* seconds */
 
 static void stream_sent_cb(struct bt_audio_stream *stream)
 {
@@ -86,10 +85,9 @@ static void stream_stopped_cb(struct bt_audio_stream *stream)
 	LOG_INF("Broadcast source stopped");
 }
 
-// TODO: Static?
-struct bt_audio_stream_ops stream_ops = { .sent = stream_sent_cb,
-					  .started = stream_started_cb,
-					  .stopped = stream_stopped_cb };
+static struct bt_audio_stream_ops stream_ops = { .sent = stream_sent_cb,
+						 .started = stream_started_cb,
+						 .stopped = stream_stopped_cb };
 
 int le_audio_config_get(void)
 {
@@ -146,7 +144,9 @@ void le_audio_enable(le_audio_receive_cb recv_cb)
 	ERR_CHK_MSG(ret, "Unable to create broadcast source");
 
 	LOG_INF("Starting broadcast source");
+
 	stopping = false;
+
 	ret = bt_audio_broadcast_source_start(broadcast_source);
 	ERR_CHK_MSG(ret, "Unable to start broadcast source");
 }

@@ -17,13 +17,15 @@ LOG_MODULE_REGISTER(bis_headset, CONFIG_LOG_BLE_LEVEL);
 
 // TODO: Implement timeouts for the events (can use same timeout functionality for every step)
 
-le_audio_receive_cb receive_cb;
+static le_audio_receive_cb receive_cb;
+static bool synced_to_broadcast;
 
 static struct bt_audio_broadcast_sink *broadcast_sink;
 // TODO: Currently only 1 stream is supported
 static struct bt_audio_stream streams[CONFIG_BT_AUDIO_BROADCAST_SNK_STREAM_COUNT];
 
 /* Mandatory support preset for both source and sink */
+// TODO: Change to 48_2_1 (?)
 static struct bt_audio_lc3_preset preset_16_2_1 = BT_AUDIO_LC3_BROADCAST_PRESET_16_2_1;
 
 /* Create a mask for the maximum BIS we can sync to using the number of streams
@@ -53,10 +55,9 @@ static void stream_recv_cb(struct bt_audio_stream *stream, struct net_buf *buf)
 	}
 }
 
-// TODO: Static here?
-struct bt_audio_stream_ops stream_ops = { .started = stream_started_cb,
-					  .stopped = stream_stopped_cb,
-					  .recv = stream_recv_cb };
+static struct bt_audio_stream_ops stream_ops = { .started = stream_started_cb,
+						 .stopped = stream_stopped_cb,
+						 .recv = stream_recv_cb };
 
 static bool scan_recv_cb(const struct bt_le_scan_recv_info *info, uint32_t broadcast_id)
 {
@@ -70,45 +71,6 @@ static void scan_term_cb(int err)
 	if (err != 0) {
 		LOG_ERR("Scan terminated with error: %d", err);
 	}
-}
-
-static void base_recv_cb(struct bt_audio_broadcast_sink *sink, const struct bt_audio_base *base)
-{
-	uint32_t base_bis_index_bitfield = 0U;
-
-	// if (k_sem_count_get(&sem_base_received) != 0U) {
-	// return;
-	// }
-
-	LOG_INF("Received BASE with %u subgroups from broadcast sink", base->subgroup_count);
-
-	for (size_t i = 0U; i < base->subgroup_count; i++) {
-		for (size_t j = 0U; j < base->subgroups[i].bis_count; j++) {
-			const uint8_t index = base->subgroups[i].bis_data[j].index;
-
-			base_bis_index_bitfield |= BIT(index);
-		}
-	}
-
-	bis_index_bitfield = base_bis_index_bitfield & bis_index_mask;
-
-	LOG_INF("BASE received, waiting for syncable");
-}
-
-static void syncable_cb(struct bt_audio_broadcast_sink *sink, bool encrypted)
-{
-	int ret;
-
-	if (encrypted) {
-		LOG_ERR("Cannot sync to encrypted broadcast source");
-		return;
-	}
-
-	LOG_INF("Syncing to broadcast");
-
-	ret = bt_audio_broadcast_sink_sync(broadcast_sink, bis_index_bitfield, streams,
-					   &preset_16_2_1.codec, NULL);
-	ERR_CHK_MSG(ret, "Unable to sync to broadcast source");
 }
 
 static void pa_synced_cb(struct bt_audio_broadcast_sink *sink, struct bt_le_per_adv_sync *sync,
@@ -137,16 +99,60 @@ static void pa_sync_lost_cb(struct bt_audio_broadcast_sink *sink)
 
 	broadcast_sink = NULL;
 
-	LOG_WRN("MUST RESET CONNECTION");
+	// TODO: Must reset connetcion, this is not implemented yet
 }
 
-// TODO: Order in the same way they should be called
+static void base_recv_cb(struct bt_audio_broadcast_sink *sink, const struct bt_audio_base *base)
+{
+	uint32_t base_bis_index_bitfield = 0U;
+
+	if (synced_to_broadcast) {
+		return;
+	}
+
+	LOG_INF("Received BASE with %u subgroups from broadcast sink", base->subgroup_count);
+
+	for (size_t i = 0U; i < base->subgroup_count; i++) {
+		for (size_t j = 0U; j < base->subgroups[i].bis_count; j++) {
+			const uint8_t index = base->subgroups[i].bis_data[j].index;
+
+			base_bis_index_bitfield |= BIT(index);
+		}
+	}
+
+	bis_index_bitfield = base_bis_index_bitfield & bis_index_mask;
+
+	LOG_INF("BASE received, waiting for syncable");
+}
+
+static void syncable_cb(struct bt_audio_broadcast_sink *sink, bool encrypted)
+{
+	int ret;
+
+	if (synced_to_broadcast) {
+		return;
+	}
+
+	if (encrypted) {
+		LOG_ERR("Cannot sync to encrypted broadcast source");
+		return;
+	}
+
+	LOG_INF("Syncing to broadcast");
+
+	ret = bt_audio_broadcast_sink_sync(broadcast_sink, bis_index_bitfield, streams,
+					   &preset_16_2_1.codec, NULL);
+	ERR_CHK_MSG(ret, "Unable to sync to broadcast source");
+
+	synced_to_broadcast = true;
+}
+
 static struct bt_audio_broadcast_sink_cb broadcast_sink_cbs = { .scan_recv = scan_recv_cb,
 								.scan_term = scan_term_cb,
-								.base_recv = base_recv_cb,
-								.syncable = syncable_cb,
 								.pa_synced = pa_synced_cb,
-								.pa_sync_lost = pa_sync_lost_cb };
+								.pa_sync_lost = pa_sync_lost_cb,
+								.base_recv = base_recv_cb,
+								.syncable = syncable_cb };
 
 int le_audio_config_get(void)
 {
