@@ -378,6 +378,8 @@ void audio_system_stop(void)
 
 void audio_system_init(void)
 {
+	int ret;
+
 #if ((CONFIG_AUDIO_DEV == GATEWAY) && (CONFIG_AUDIO_SOURCE_USB))
 	ret = audio_usb_init();
 	ERR_CHK(ret);

@@ -60,6 +60,7 @@
 #include "tone.h"
 #include "contin_array.h"
 #include "pcm_mix.h"
+#include "streamctrl.h"
 
 #include <logging/log.h>
 LOG_MODULE_REGISTER(audio_datapath, CONFIG_LOG_AUDIO_DATAPATH_LEVEL);
