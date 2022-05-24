@@ -40,6 +40,8 @@ void streamctrl_encoded_data_send(void const *const data, size_t len);
  */
 void streamctrl_event_handler(void);
 
+
+void stream_state_set(enum stream_state stream_state_new);
 /** @brief Init internal functionality and start streamctrl
  *
  *  @return 0 if successful.

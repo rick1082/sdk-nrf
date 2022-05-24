@@ -198,7 +198,7 @@ static void audio_datapath_thread(void *dummy1, void *dummy2, void *dummy3)
 }
 
 /* Function for handling all stream state changes */
-static void stream_state_set(enum stream_state stream_state_new)
+void stream_state_set(enum stream_state stream_state_new)
 {
 	strm_state = stream_state_new;
 }

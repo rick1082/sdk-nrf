@@ -8,6 +8,6 @@ target_sources(app PRIVATE
 	       ${CMAKE_CURRENT_SOURCE_DIR}/ble_audio_services.c
 	       ${CMAKE_CURRENT_SOURCE_DIR}/ble_core.c
 	       ${CMAKE_CURRENT_SOURCE_DIR}/ble_hci_vsc.c
-	       ${CMAKE_CURRENT_SOURCE_DIR}/le_audio_bis_gateway.c
-	       ${CMAKE_CURRENT_SOURCE_DIR}/le_audio_bis_headset.c
+	       ${CMAKE_CURRENT_SOURCE_DIR}/le_audio_cis_gateway.c
+	       ${CMAKE_CURRENT_SOURCE_DIR}/le_audio_cis_headset.c
 )

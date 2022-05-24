@@ -163,6 +163,7 @@ static void encoder_thread(void *arg1, void *arg2, void *arg3)
 
 		if (sw_codec_cfg.encoder.enabled) {
 			/* Send encoded data over IPM */
+			LOG_INF("%d", encoded_data_size);
 			streamctrl_encoded_data_send(encoded_data, encoded_data_size);
 		}
 		STACK_USAGE_PRINT("encoder_thread", &encoder_thread_data);
