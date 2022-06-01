@@ -16,12 +16,6 @@
 #include <logging/log.h>
 LOG_MODULE_REGISTER(cis_gateway, CONFIG_LOG_BLE_LEVEL);
 
-static struct bt_conn *default_conn;
-static struct bt_audio_stream audio_stream;
-static struct bt_audio_unicast_group *unicast_group;
-static struct bt_codec *remote_codecs[CONFIG_BT_AUDIO_UNICAST_CLIENT_PAC_COUNT];
-static struct bt_audio_ep *sinks[CONFIG_BT_AUDIO_UNICAST_CLIENT_ASE_SNK_COUNT];
-
 #define BT_AUDIO_LC3_UNICAST_PRESET_NRF5340_AUDIO                                                  \
 	BT_AUDIO_LC3_PRESET(BT_CODEC_LC3_CONFIG_48_4,                                              \
 			    BT_CODEC_LC3_QOS_10_UNFRAMED(120u, 2u, 20u, 10000u))
@@ -30,7 +24,6 @@ static struct bt_audio_ep *sinks[CONFIG_BT_AUDIO_UNICAST_CLIENT_ASE_SNK_COUNT];
 	NET_BUF_POOL_FIXED_DEFINE(iso_tx_pool_##i, HCI_ISO_BUF_ALLOC_PER_CHAN,                     \
 				  BT_ISO_SDU_BUF_SIZE(CONFIG_BT_ISO_TX_MTU), 8, NULL);
 #define NET_BUF_POOL_PTR_ITERATE(i, ...) IDENTITY(&iso_tx_pool_##i)
-
 LISTIFY(CONFIG_BT_ISO_MAX_CHAN, NET_BUF_POOL_ITERATE, (;))
 
 #define BT_LE_CONN_PARAM_MULTI                                                                     \
@@ -39,36 +32,27 @@ LISTIFY(CONFIG_BT_ISO_MAX_CHAN, NET_BUF_POOL_ITERATE, (;))
 
 #define DEVICE_NAME_PEER "NRF5340_AUDIO"
 #define DEVICE_NAME_PEER_LEN (sizeof(DEVICE_NAME_PEER) - 1)
-static struct net_buf_pool *iso_tx_pools[] = { LISTIFY(CONFIG_BT_ISO_MAX_CHAN,
-						       NET_BUF_POOL_PTR_ITERATE,
-						       (,)) };
 
-static struct bt_audio_lc3_preset unicast_present_nrf5340 =
+static struct bt_conn *default_conn;
+static struct bt_audio_stream audio_stream;
+static struct bt_audio_unicast_group *unicast_group;
+static struct bt_codec *remote_codecs[CONFIG_BT_AUDIO_UNICAST_CLIENT_PAC_COUNT];
+static struct bt_audio_ep *sinks[CONFIG_BT_AUDIO_UNICAST_CLIENT_ASE_SNK_COUNT];
+static struct net_buf_pool *iso_tx_pools[] = { LISTIFY(CONFIG_BT_ISO_MAX_CHAN,
+								 NET_BUF_POOL_PTR_ITERATE, (,)) };
+static struct bt_audio_lc3_preset lc3_preset_unicast_nrf5340 =
 	BT_AUDIO_LC3_UNICAST_PRESET_NRF5340_AUDIO;
 
-static void start_scan(void);
-
-static int unicast_group_create(struct bt_audio_stream *stream)
-{
-	int ret;
-
-	ret = bt_audio_unicast_group_create(stream, CONFIG_BT_ISO_MAX_CHAN, &unicast_group);
-	if (ret != 0) {
-		LOG_ERR("Unable to create unicast group: %d", ret);
-		return ret;
-	}
-
-	return 0;
-}
+static void ble_acl_start_scan(void);
 
 static void stream_configured_cb(struct bt_audio_stream *stream,
 				 const struct bt_codec_qos_pref *pref)
 {
 	int ret;
 
-	ret = bt_audio_stream_qos(default_conn, unicast_group, &unicast_present_nrf5340.qos);
-	if (ret != 0) {
-		LOG_INF("Unable to setup QoS: %d", ret);
+	ret = bt_audio_stream_qos(default_conn, unicast_group, &lc3_preset_unicast_nrf5340.qos);
+	if (ret) {
+		LOG_ERR("Unable to setup QoS: %d", ret);
 	}
 }
 
@@ -76,10 +60,10 @@ static void stream_qos_set_cb(struct bt_audio_stream *stream)
 {
 	int ret;
 
-	ret = bt_audio_stream_enable(stream, unicast_present_nrf5340.codec.meta,
-				     unicast_present_nrf5340.codec.meta_count);
-	if (ret != 0) {
-		LOG_INF("Unable to enable stream: %d", ret);
+	ret = bt_audio_stream_enable(stream, lc3_preset_unicast_nrf5340.codec.meta,
+				     lc3_preset_unicast_nrf5340.codec.meta_count);
+	if (ret) {
+		LOG_ERR("Unable to enable stream: %d", ret);
 	}
 }
 
@@ -88,8 +72,8 @@ static void stream_enabled_cb(struct bt_audio_stream *stream)
 	int ret;
 
 	ret = bt_audio_stream_start(stream);
-	if (ret != 0) {
-		LOG_INF("Unable to start stream: %d", ret);
+	if (ret) {
+		LOG_ERR("Unable to start stream: %d", ret);
 	}
 }
 
@@ -98,6 +82,7 @@ static void stream_started_cb(struct bt_audio_stream *stream)
 	int ret;
 	struct event_t event;
 
+	LOG_INF("Audio stream %p started", (void *)stream);
 	event.event_source = EVT_SRC_LE_AUDIO;
 	event.le_audio_activity.le_audio_evt_type = LE_AUDIO_EVT_STREAMING;
 
@@ -117,14 +102,15 @@ static void stream_disabled_cb(struct bt_audio_stream *stream)
 
 static void stream_stopped_cb(struct bt_audio_stream *stream)
 {
-	LOG_INF("Audio Stream %p stopped", (void *)stream);
 	int ret;
 	struct event_t event;
 
+	LOG_INF("Audio Stream %p stopped", (void *)stream);
 	event.event_source = EVT_SRC_LE_AUDIO;
 	event.le_audio_activity.le_audio_evt_type = LE_AUDIO_EVT_NOT_STREAMING;
 
 	ret = ctrl_events_put(&event);
+	ERR_CHK(ret);
 }
 
 static void stream_released_cb(struct bt_audio_stream *stream)
@@ -145,8 +131,11 @@ static struct bt_audio_stream_ops stream_ops = {
 
 static void add_remote_sink(struct bt_audio_ep *ep, uint8_t index)
 {
-	LOG_INF("Sink #%u: ep %p", index, (void *)ep);
-	sinks[index] = ep;
+	if (index > sizeof(sinks)) {
+		LOG_ERR("Sink index is out of range");
+	} else {
+		sinks[index] = ep;
+	}
 }
 
 static void add_remote_codec(struct bt_codec *codec, int index, uint8_t type)
@@ -165,7 +154,7 @@ static void discover_sink_cb(struct bt_conn *conn, struct bt_codec *codec, struc
 {
 	int ret;
 
-	if (params->err != 0) {
+	if (params->err) {
 		LOG_ERR("Discovery failed: %d", params->err);
 		return;
 	}
@@ -189,8 +178,8 @@ static void discover_sink_cb(struct bt_conn *conn, struct bt_codec *codec, struc
 
 	(void)memset(params, 0, sizeof(*params));
 	ret = bt_audio_stream_config(default_conn, &audio_stream, sinks[0],
-				     &unicast_present_nrf5340.codec);
-	if (ret != 0) {
+				     &lc3_preset_unicast_nrf5340.codec);
+	if (ret) {
 		LOG_ERR("Could not configure stream");
 	}
 }
@@ -204,20 +193,23 @@ static int device_found(uint8_t type, const uint8_t *data, uint8_t data_len,
 	bt_addr_le_to_str(addr, addr_str, sizeof(addr_str));
 	if ((data_len == DEVICE_NAME_PEER_LEN) &&
 	    (strncmp(DEVICE_NAME_PEER, data, DEVICE_NAME_PEER_LEN) == 0)) {
-		LOG_INF("device found");
-		bt_le_scan_stop();
+		LOG_INF("Device found");
+		ret = bt_le_scan_stop();
+		if (ret) {
+			LOG_WRN("Stop scan failed: %d", ret);
+		}
 		ret = bt_conn_le_create(addr, BT_CONN_LE_CREATE_CONN, BT_LE_CONN_PARAM_MULTI,
 					&default_conn);
-		if (ret != 0) {
-			LOG_INF("Create conn to failed (%u)", ret);
-			start_scan();
+		if (ret) {
+			LOG_WRN("Create ACL connection failed: %d", ret);
+			ble_acl_start_scan();
 		}
 	}
 
 	return -ENOENT;
 }
 
-/** @brief  BLE parse advertisement package.
+/** @brief  Parse BLE advertisement package.
  */
 static void ad_parse(struct net_buf_simple *p_ad, const bt_addr_le_t *addr)
 {
@@ -252,13 +244,13 @@ static void on_device_found(const bt_addr_le_t *addr, int8_t rssi, uint8_t type,
 	ad_parse(p_ad, addr);
 }
 
-static void start_scan(void)
+static void ble_acl_start_scan(void)
 {
 	int ret;
 
-	/* This demo doesn't require active scan */
+	//TODO: Figure out why SCAN_PASSIVE leads to bad performance
 	ret = bt_le_scan_start(BT_LE_SCAN_ACTIVE, on_device_found);
-	if (ret != 0) {
+	if (ret) {
 		LOG_INF("Scanning failed to start: %d", ret);
 		return;
 	}
@@ -266,19 +258,20 @@ static void start_scan(void)
 	LOG_INF("Scanning successfully started");
 }
 
-static void connected(struct bt_conn *conn, uint8_t err)
+static void connected_cb(struct bt_conn *conn, uint8_t err)
 {
+	int ret;
 	char addr[BT_ADDR_LE_STR_LEN];
 
 	(void)bt_addr_le_to_str(bt_conn_get_dst(conn), addr, sizeof(addr));
 
-	if (err != 0) {
-		LOG_INF("Failed to connect to %s: %d", addr, err);
+	if (err) {
+		LOG_ERR("Failed to connect to %s: %d", addr, err);
 
 		bt_conn_unref(default_conn);
 		default_conn = NULL;
 
-		start_scan();
+		ble_acl_start_scan();
 		return;
 	}
 
@@ -287,10 +280,13 @@ static void connected(struct bt_conn *conn, uint8_t err)
 	}
 
 	LOG_INF("Connected: %s", addr);
-	bt_conn_set_security(conn, BT_SECURITY_L2);
+	ret = bt_conn_set_security(conn, BT_SECURITY_L2);
+	if (ret) {
+		LOG_ERR("Failed to set security to L2: %d", ret);
+	}
 }
 
-static void disconnected(struct bt_conn *conn, uint8_t reason)
+static void disconnected_cb(struct bt_conn *conn, uint8_t reason)
 {
 	char addr[BT_ADDR_LE_STR_LEN];
 
@@ -305,7 +301,7 @@ static void disconnected(struct bt_conn *conn, uint8_t reason)
 	bt_conn_unref(default_conn);
 	default_conn = NULL;
 
-	start_scan();
+	ble_acl_start_scan();
 }
 
 static void security_changed_cb(struct bt_conn *conn, bt_security_t level, enum bt_security_err err)
@@ -313,32 +309,47 @@ static void security_changed_cb(struct bt_conn *conn, bt_security_t level, enum 
 	int ret;
 
 	if (err) {
-		LOG_ERR("Security failed: level %u err %d", level, err);
+		LOG_ERR("Security failed: level %d err %d", level, err);
 		ret = bt_conn_disconnect(conn, err);
 		if (ret) {
 			LOG_ERR("Failed to disconnect %d", ret);
 		}
 	} else {
-		LOG_INF("Security changed: level %u", level);
+		LOG_INF("Security changed: level %d", level);
 		static struct bt_audio_discover_params dis_params;
 
 		dis_params.func = discover_sink_cb;
 		dis_params.type = BT_AUDIO_SINK;
 
-		err = bt_audio_discover(default_conn, &dis_params);
-		if (err != 0) {
-			LOG_INF("Failed to discover sink: %d", err);
+		ret = bt_audio_discover(default_conn, &dis_params);
+		if (ret) {
+			LOG_INF("Failed to discover sink: %d", ret);
 		}
 	}
 }
 
 BT_CONN_CB_DEFINE(conn_callbacks) = {
-	.connected = connected,
-	.disconnected = disconnected,
+	.connected = connected_cb,
+	.disconnected = disconnected_cb,
 	.security_changed = security_changed_cb,
 };
 
-int le_audio_config_get(void)
+static void initialize(le_audio_receive_cb recv_cb)
+{
+	int ret;
+	static bool initialized;
+
+	ARG_UNUSED(recv_cb);
+	if (!initialized) {
+		audio_stream.ops = &stream_ops;
+		ret = bt_audio_unicast_group_create(&audio_stream, CONFIG_BT_ISO_MAX_CHAN,
+						    &unicast_group);
+		ERR_CHK_MSG(ret, "Failed to create unicast group");
+		initialized = true;
+	}
+}
+
+int le_audio_config_get(uint32_t *bitrate, uint32_t *sampling_rate)
 {
 	return 0;
 }
@@ -376,6 +387,7 @@ int le_audio_send(uint8_t const *const data, size_t size)
 	buf = net_buf_alloc(iso_tx_pools[0], K_NO_WAIT);
 	net_buf_reserve(buf, BT_ISO_CHAN_SEND_RESERVE);
 
+	//TODO: Handling dual channel sending properly
 	net_buf_add_mem(buf, data, 120);
 
 	ret = bt_audio_stream_send(&audio_stream, buf);
@@ -389,14 +401,12 @@ int le_audio_send(uint8_t const *const data, size_t size)
 
 void le_audio_enable(le_audio_receive_cb recv_cb)
 {
-	audio_stream.ops = &stream_ops;
-	unicast_group_create(&audio_stream);
-	start_scan();
+	initialize(recv_cb);
+	ble_acl_start_scan();
 }
 
 void le_audio_disable(void)
 {
-	// TODO: Stopping functionality is in broadcast_audio_source sample
 }
 
 #endif /* (CONFIG_AUDIO_DEV == GATEWAY) */

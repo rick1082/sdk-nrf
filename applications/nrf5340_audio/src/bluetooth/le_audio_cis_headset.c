@@ -7,41 +7,57 @@
 #if (CONFIG_AUDIO_DEV == HEADSET)
 #include <bluetooth/bluetooth.h>
 #include <bluetooth/audio/audio.h>
-
-#include "le_audio.h"
-#include "macros_common.h"
-#include "ctrl_events.h"
 #include <bluetooth/bluetooth.h>
 #include <bluetooth/conn.h>
 #include <bluetooth/audio/audio.h>
 #include <bluetooth/audio/capabilities.h>
 
+#include "le_audio.h"
+#include "macros_common.h"
+#include "ctrl_events.h"
+
 #include <logging/log.h>
 LOG_MODULE_REGISTER(cis_headset, CONFIG_LOG_BLE_LEVEL);
+
+#define CHANNEL_COUNT_1 BIT(0)
+#define BLE_ISO_LATENCY_MS 10
+#define BLE_ISO_RETRANSMITS 2
+#define BLE_ISO_PRSENTATION_DELAY_MIN_US 10000
+#define BLE_ISO_PRSENTATION_DELAY_MAX_US 40000
+#define BLE_ISO_PREF_PRSENTATION_DELAY_MIN_US 10000
+#define BLE_ISO_PREF_PRSENTATION_DELAY_MAX_US 40000
 
 static le_audio_receive_cb receive_cb;
 static const struct bt_data ad[] = {
 	BT_DATA_BYTES(BT_DATA_FLAGS, (BT_LE_AD_GENERAL | BT_LE_AD_NO_BREDR)),
 };
-
-#define CHANNEL_COUNT_1 BIT(0)
+static struct bt_audio_capability_ops lc3_cap_codec_ops;
 static struct bt_codec lc3_codec =
 	BT_CODEC_LC3(BT_CODEC_LC3_FREQ_ANY, BT_CODEC_LC3_DURATION_10, CHANNEL_COUNT_1, 40u, 120u,
 		     1u, (BT_AUDIO_CONTEXT_TYPE_CONVERSATIONAL | BT_AUDIO_CONTEXT_TYPE_MEDIA),
 		     BT_AUDIO_CONTEXT_TYPE_UNSPECIFIED);
-
+static struct bt_audio_capability caps = {
+	.type = BT_AUDIO_SINK,
+	.pref = BT_AUDIO_CAPABILITY_PREF(
+		BT_AUDIO_CAPABILITY_UNFRAMED_SUPPORTED, BT_GAP_LE_PHY_2M, BLE_ISO_RETRANSMITS,
+		BLE_ISO_LATENCY_MS, BLE_ISO_PRSENTATION_DELAY_MIN_US,
+		BLE_ISO_PRSENTATION_DELAY_MAX_US, BLE_ISO_PREF_PRSENTATION_DELAY_MIN_US,
+		BLE_ISO_PREF_PRSENTATION_DELAY_MAX_US),
+	.codec = &lc3_codec,
+	.ops = &lc3_cap_codec_ops,
+};
 static struct bt_conn *default_conn;
 static struct bt_audio_stream streams;
-static struct bt_audio_stream *stream_cap_config_cb(struct bt_conn *conn,
-					  struct bt_audio_ep *ep,
-					  enum bt_audio_pac_type type,
-					  struct bt_audio_capability *cap,
-					  struct bt_codec *codec)
+
+static struct bt_audio_stream *lc3_cap_config_cb(struct bt_conn *conn, struct bt_audio_ep *ep,
+						 enum bt_audio_pac_type type,
+						 struct bt_audio_capability *cap,
+						 struct bt_codec *codec)
 {
 	struct bt_audio_stream *stream = &streams;
 
 	if (!stream->conn) {
-		LOG_DBG("ASE Codec Config stream %p", (void *)stream);
+		LOG_INF("ASE Codec Config stream %p", (void *)stream);
 		return stream;
 	}
 
@@ -49,31 +65,29 @@ static struct bt_audio_stream *stream_cap_config_cb(struct bt_conn *conn,
 	return NULL;
 }
 
-static int stream_cap_reconfig_cb(struct bt_audio_stream *stream,
-			struct bt_audio_capability *cap,
-			struct bt_codec *codec)
+static int lc3_cap_reconfig_cb(struct bt_audio_stream *stream, struct bt_audio_capability *cap,
+			       struct bt_codec *codec)
 {
-	LOG_DBG("ASE Codec Reconfig: stream %p cap %p", (void *)stream, (void *)cap);
+	LOG_INF("ASE Codec Reconfig: stream %p cap %p", (void *)stream, (void *)cap);
 
 	/* We only support one QoS at the moment, reject changes */
 	return -ENOEXEC;
 }
 
-static int stream_cap_qos_cb(struct bt_audio_stream *stream, struct bt_codec_qos *qos)
+static int lc3_cap_qos_cb(struct bt_audio_stream *stream, struct bt_codec_qos *qos)
 {
-	LOG_DBG("QoS: stream %p qos %p", (void *)stream, (void *)qos);
+	LOG_INF("QoS: stream %p qos %p", (void *)stream, (void *)qos);
 
 	return 0;
 }
 
-static int stream_cap_enable_cb(struct bt_audio_stream *stream,
-		      struct bt_codec_data *meta,
-		      size_t meta_count)
+static int lc3_cap_enable_cb(struct bt_audio_stream *stream, struct bt_codec_data *meta,
+			     size_t meta_count)
 {
 	int ret;
 	struct event_t event;
 
-	LOG_DBG("Enable: stream %p meta_count %u", (void *)stream, meta_count);
+	LOG_INF("Enable: stream %p meta_count %u", (void *)stream, meta_count);
 	event.event_source = EVT_SRC_LE_AUDIO;
 	event.le_audio_activity.le_audio_evt_type = LE_AUDIO_EVT_STREAMING;
 
@@ -82,29 +96,26 @@ static int stream_cap_enable_cb(struct bt_audio_stream *stream,
 	return 0;
 }
 
-static int stream_cap_start_cb(struct bt_audio_stream *stream)
+static int lc3_cap_start_cb(struct bt_audio_stream *stream)
 {
-	LOG_DBG("Start: stream %p", (void *)stream);
+	LOG_INF("Start: stream %p", (void *)stream);
 	return 0;
 }
 
-static int stream_cap_metadata_cb(struct bt_audio_stream *stream,
-			struct bt_codec_data *meta,
-			size_t meta_count)
+static int lc3_cap_metadata_cb(struct bt_audio_stream *stream, struct bt_codec_data *meta,
+			       size_t meta_count)
 {
-	LOG_DBG("Metadata: stream %p meta_count %u", (void *)stream, meta_count);
-
+	LOG_INF("Metadata: stream %p meta_count %u", (void *)stream, meta_count);
 	return 0;
 }
 
-static int stream_cap_disable_cb(struct bt_audio_stream *stream)
+static int lc3_cap_disable_cb(struct bt_audio_stream *stream)
 {
-	LOG_DBG("Disable: stream %p", (void *)stream);
-
+	LOG_INF("Disable: stream %p", (void *)stream);
 	return 0;
 }
 
-static int stream_cap_stop_cb(struct bt_audio_stream *stream)
+static int lc3_cap_stop_cb(struct bt_audio_stream *stream)
 {
 	int ret;
 	struct event_t event;
@@ -120,24 +131,24 @@ static int stream_cap_stop_cb(struct bt_audio_stream *stream)
 	return 0;
 }
 
-static int stream_cap_release_cb(struct bt_audio_stream *stream)
+static int lc3_cap_release_cb(struct bt_audio_stream *stream)
 {
 	LOG_INF("Release: stream %p", (void *)stream);
 	return 0;
 }
-static struct bt_audio_capability_ops stream_cap_codec_ops = {
-	.config = stream_cap_config_cb,
-	.reconfig = stream_cap_reconfig_cb,
-	.qos = stream_cap_qos_cb,
-	.enable = stream_cap_enable_cb,
-	.start = stream_cap_start_cb,
-	.metadata = stream_cap_metadata_cb,
-	.disable = stream_cap_disable_cb,
-	.stop = stream_cap_stop_cb,
-	.release = stream_cap_release_cb,
+static struct bt_audio_capability_ops lc3_cap_codec_ops = {
+	.config = lc3_cap_config_cb,
+	.reconfig = lc3_cap_reconfig_cb,
+	.qos = lc3_cap_qos_cb,
+	.enable = lc3_cap_enable_cb,
+	.start = lc3_cap_start_cb,
+	.metadata = lc3_cap_metadata_cb,
+	.disable = lc3_cap_disable_cb,
+	.stop = lc3_cap_stop_cb,
+	.release = lc3_cap_release_cb,
 };
 
-static void stream_recv(struct bt_audio_stream *stream, const struct bt_iso_recv_info *info,
+static void stream_recv_cb(struct bt_audio_stream *stream, const struct bt_iso_recv_info *info,
 			   struct net_buf *buf)
 {
 	static uint32_t recv_cnt;
@@ -151,8 +162,8 @@ static void stream_recv(struct bt_audio_stream *stream, const struct bt_iso_recv
 	if (!(info->flags & BT_ISO_FLAGS_VALID)) {
 		bad_frame = true;
 	}
-	//TODO: change the payload size according to the ISO setting
-	receive_cb(buf->data, 120, bad_frame, info->ts);
+
+	receive_cb(buf->data, buf->len, bad_frame, info->ts);
 
 	recv_cnt++;
 	if ((recv_cnt % 1000U) == 0U) {
@@ -160,7 +171,7 @@ static void stream_recv(struct bt_audio_stream *stream, const struct bt_iso_recv
 	}
 }
 
-static void stream_stop(struct bt_audio_stream *stream)
+static void stream_stop_cb(struct bt_audio_stream *stream)
 {
 	int ret;
 	struct event_t event;
@@ -173,27 +184,13 @@ static void stream_stop(struct bt_audio_stream *stream)
 	ret = ctrl_events_put(&event);
 	ERR_CHK(ret);
 }
-static struct bt_audio_stream_ops stream_ops = {
-	.recv = stream_recv,
-	.stopped = stream_stop
-};
 
-static struct bt_audio_capability caps = {
-	.type = BT_AUDIO_SINK,
-	.pref = BT_AUDIO_CAPABILITY_PREF(
-			BT_AUDIO_CAPABILITY_UNFRAMED_SUPPORTED,
-			BT_GAP_LE_PHY_2M, 0x02, 10, 10000, 10000,
-			10000, 10000),
-	.codec = &lc3_codec,
-	.ops = &stream_cap_codec_ops,
-};
-
-static void connected(struct bt_conn *conn, uint8_t err)
+static void connected_cb(struct bt_conn *conn, uint8_t err)
 {
 	char addr[BT_ADDR_LE_STR_LEN];
 
 	bt_addr_le_to_str(bt_conn_get_dst(conn), addr, sizeof(addr));
-	if (err != 0) {
+	if (err) {
 		default_conn = NULL;
 		return;
 	}
@@ -202,11 +199,12 @@ static void connected(struct bt_conn *conn, uint8_t err)
 	default_conn = bt_conn_ref(conn);
 }
 
-static void disconnected(struct bt_conn *conn, uint8_t reason)
+static void disconnected_cb(struct bt_conn *conn, uint8_t reason)
 {
 	char addr[BT_ADDR_LE_STR_LEN];
 
 	if (conn != default_conn) {
+		LOG_WRN("Disconnected on wrong conn");
 		return;
 	}
 
@@ -219,11 +217,30 @@ static void disconnected(struct bt_conn *conn, uint8_t reason)
 }
 
 BT_CONN_CB_DEFINE(conn_callbacks) = {
-	.connected = connected,
-	.disconnected = disconnected,
+	.connected = connected_cb,
+	.disconnected = disconnected_cb,
 };
 
-int le_audio_config_get(void)
+static struct bt_audio_stream_ops stream_ops = { .recv = stream_recv_cb,
+						 .stopped = stream_stop_cb };
+
+static void initialize(le_audio_receive_cb recv_cb)
+{
+	int ret;
+	static bool initialized;
+
+	if (!initialized) {
+		receive_cb = recv_cb;
+		ret = bt_audio_capability_register(&caps);
+		ERR_CHK_MSG(ret, "Capability register failed");
+		ret = bt_audio_capability_set_location(BT_AUDIO_SINK, BT_AUDIO_LOCATION_SIDE_LEFT);
+		ERR_CHK_MSG(ret, "Location set failed");
+
+		bt_audio_stream_cb_register(&streams, &stream_ops);
+	}
+}
+
+int le_audio_config_get(uint32_t *bitrate, uint32_t *sampling_rate)
 {
 	return 0;
 }
@@ -262,12 +279,7 @@ void le_audio_enable(le_audio_receive_cb recv_cb)
 {
 	int ret;
 
-	receive_cb = recv_cb;
-	ret = bt_audio_capability_register(&caps);
-	ERR_CHK_MSG(ret, "Capability register failed");
-
-	bt_audio_stream_cb_register(&streams, &stream_ops);
-
+	initialize(recv_cb);
 	ret = bt_le_adv_start(BT_LE_ADV_CONN_NAME, ad, ARRAY_SIZE(ad), NULL, 0);
 	if (ret) {
 		LOG_INF("Advertising failed to start: %d", ret);
