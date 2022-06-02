@@ -6,10 +6,13 @@
 
 #if (CONFIG_AUDIO_DEV == GATEWAY)
 #include "le_audio.h"
-#include "macros_common.h"
-#include "ctrl_events.h"
+
 #include <bluetooth/bluetooth.h>
 #include <bluetooth/audio/audio.h>
+
+#include "macros_common.h"
+#include "ctrl_events.h"
+
 #include <logging/log.h>
 LOG_MODULE_REGISTER(cis_gateway, CONFIG_LOG_BLE_LEVEL);
 
