@@ -5,6 +5,7 @@
  */
 
 #if (CONFIG_AUDIO_DEV == GATEWAY)
+
 #include "le_audio.h"
 
 #include <bluetooth/bluetooth.h>
@@ -30,7 +31,7 @@ LISTIFY(CONFIG_BT_ISO_MAX_CHAN, NET_BUF_POOL_ITERATE, (;))
 	BT_LE_CONN_PARAM(CONFIG_BLE_ACL_CONN_INTERVAL, CONFIG_BLE_ACL_CONN_INTERVAL,               \
 			 CONFIG_BLE_ACL_SLAVE_LATENCY, CONFIG_BLE_ACL_SUP_TIMEOUT)
 
-#define DEVICE_NAME_PEER "NRF5340_AUDIO"
+#define DEVICE_NAME_PEER CONFIG_BT_DEVICE_NAME
 #define DEVICE_NAME_PEER_LEN (sizeof(DEVICE_NAME_PEER) - 1)
 
 static struct bt_conn *default_conn;
@@ -196,12 +197,14 @@ static int device_found(uint8_t type, const uint8_t *data, uint8_t data_len,
 		if (ret) {
 			LOG_WRN("Stop scan failed: %d", ret);
 		}
+
 		ret = bt_conn_le_create(addr, BT_CONN_LE_CREATE_CONN, BT_LE_CONN_PARAM_MULTI,
 					&default_conn);
 		if (ret) {
 			LOG_WRN("Create ACL connection failed: %d", ret);
 			ble_acl_start_scan();
 		}
+		return 0;
 	}
 
 	return -ENOENT;
@@ -331,7 +334,7 @@ BT_CONN_CB_DEFINE(conn_callbacks) = {
 	.security_changed = security_changed_cb,
 };
 
-static void initialize(le_audio_receive_cb recv_cb)
+static int initialize(le_audio_receive_cb recv_cb)
 {
 	int ret;
 	static bool initialized;
@@ -341,9 +344,14 @@ static void initialize(le_audio_receive_cb recv_cb)
 		audio_stream.ops = &stream_ops;
 		ret = bt_audio_unicast_group_create(&audio_stream, CONFIG_BT_ISO_MAX_CHAN,
 						    &unicast_group);
-		ERR_CHK_MSG(ret, "Failed to create unicast group");
+
+		if (ret) {
+			LOG_ERR("Failed to create unicast group: %d", ret);
+			return ret;
+		}
 		initialized = true;
 	}
+	return 0;
 }
 
 int le_audio_config_get(uint32_t *bitrate, uint32_t *sampling_rate)
@@ -396,14 +404,21 @@ int le_audio_send(uint8_t const *const data, size_t size)
 	return 0;
 }
 
-void le_audio_enable(le_audio_receive_cb recv_cb)
+int  le_audio_enable(le_audio_receive_cb recv_cb)
 {
-	initialize(recv_cb);
+	int ret;
+
+	ret = initialize(recv_cb);
+	if (ret) {
+		return ret;
+	}
 	ble_acl_start_scan();
+	return 0;
 }
 
-void le_audio_disable(void)
+int le_audio_disable(void)
 {
+	return 0;
 }
 
 #endif /* (CONFIG_AUDIO_DEV == GATEWAY) */

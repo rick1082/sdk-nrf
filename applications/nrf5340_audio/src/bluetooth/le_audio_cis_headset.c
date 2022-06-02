@@ -5,6 +5,7 @@
  */
 
 #if (CONFIG_AUDIO_DEV == HEADSET)
+
 #include "le_audio.h"
 
 #include <bluetooth/audio/audio.h>
@@ -26,7 +27,7 @@ LOG_MODULE_REGISTER(cis_headset, CONFIG_LOG_BLE_LEVEL);
 #define BLE_ISO_PRSENTATION_DELAY_MAX_US 40000
 #define BLE_ISO_PREF_PRSENTATION_DELAY_MIN_US 10000
 #define BLE_ISO_PREF_PRSENTATION_DELAY_MAX_US 40000
-#define DEVICE_NAME_PEER "NRF5340_AUDIO"
+#define DEVICE_NAME_PEER CONFIG_BT_DEVICE_NAME
 #define DEVICE_NAME_PEER_LEN (sizeof(DEVICE_NAME_PEER) - 1)
 
 static le_audio_receive_cb receive_cb;
@@ -139,6 +140,7 @@ static int lc3_cap_release_cb(struct bt_audio_stream *stream)
 	LOG_INF("Release: stream %p", (void *)stream);
 	return 0;
 }
+
 static struct bt_audio_capability_ops lc3_cap_codec_ops = {
 	.config = lc3_cap_config_cb,
 	.reconfig = lc3_cap_reconfig_cb,
@@ -227,7 +229,7 @@ BT_CONN_CB_DEFINE(conn_callbacks) = {
 static struct bt_audio_stream_ops stream_ops = { .recv = stream_recv_cb,
 						 .stopped = stream_stop_cb };
 
-static void initialize(le_audio_receive_cb recv_cb)
+static int initialize(le_audio_receive_cb recv_cb)
 {
 	int ret;
 	static bool initialized;
@@ -235,13 +237,19 @@ static void initialize(le_audio_receive_cb recv_cb)
 	if (!initialized) {
 		receive_cb = recv_cb;
 		ret = bt_audio_capability_register(&caps);
-		ERR_CHK_MSG(ret, "Capability register failed");
+		if (ret) {
+			LOG_ERR("Capability register failed");
+			return ret;
+		}
 		ret = bt_audio_capability_set_location(BT_AUDIO_SINK, BT_AUDIO_LOCATION_SIDE_LEFT);
-		ERR_CHK_MSG(ret, "Location set failed");
-
+		if (ret) {
+			LOG_ERR("Location set failed");
+			return ret;
+		}
 		bt_audio_stream_cb_register(&streams, &stream_ops);
 		initialized = true;
 	}
+	return 0;
 }
 
 int le_audio_config_get(uint32_t *bitrate, uint32_t *sampling_rate)
@@ -279,22 +287,29 @@ int le_audio_send(uint8_t const *const data, size_t size)
 	return 0;
 }
 
-void le_audio_enable(le_audio_receive_cb recv_cb)
+int le_audio_enable(le_audio_receive_cb recv_cb)
 {
 	int ret;
 
-	initialize(recv_cb);
-	ret = bt_le_adv_start(BT_LE_ADV_CONN, ad, ARRAY_SIZE(ad), NULL, 0);
+	ret = initialize(recv_cb);
 	if (ret) {
-		LOG_INF("Advertising failed to start: %d", ret);
-		return;
+		LOG_ERR("Initialize failed");
+		return ret;
+	}
+	ret = bt_le_adv_start(BT_LE_ADV_CONN, ad, ARRAY_SIZE(ad), NULL, 0);
+
+	if (ret) {
+		LOG_ERR("Advertising failed to start: %d", ret);
+		return ret;
 	}
 
-	LOG_INF("Advertising successfully started\n");
+	LOG_INF("Advertising successfully started");
+	return 0;
 }
 
-void le_audio_disable(void)
+int le_audio_disable(void)
 {
+	return 0;
 }
 
 #endif /* (CONFIG_AUDIO_DEV == HEADSET) */
