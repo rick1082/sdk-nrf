@@ -5,14 +5,14 @@
  */
 
 #if (CONFIG_AUDIO_DEV == HEADSET)
-#include <bluetooth/bluetooth.h>
+#include "le_audio.h"
+
 #include <bluetooth/audio/audio.h>
 #include <bluetooth/bluetooth.h>
 #include <bluetooth/conn.h>
 #include <bluetooth/audio/audio.h>
 #include <bluetooth/audio/capabilities.h>
 
-#include "le_audio.h"
 #include "macros_common.h"
 #include "ctrl_events.h"
 
@@ -26,10 +26,13 @@ LOG_MODULE_REGISTER(cis_headset, CONFIG_LOG_BLE_LEVEL);
 #define BLE_ISO_PRSENTATION_DELAY_MAX_US 40000
 #define BLE_ISO_PREF_PRSENTATION_DELAY_MIN_US 10000
 #define BLE_ISO_PREF_PRSENTATION_DELAY_MAX_US 40000
+#define DEVICE_NAME_PEER "NRF5340_AUDIO"
+#define DEVICE_NAME_PEER_LEN (sizeof(DEVICE_NAME_PEER) - 1)
 
 static le_audio_receive_cb receive_cb;
 static const struct bt_data ad[] = {
 	BT_DATA_BYTES(BT_DATA_FLAGS, (BT_LE_AD_GENERAL | BT_LE_AD_NO_BREDR)),
+	BT_DATA(BT_DATA_NAME_COMPLETE, DEVICE_NAME_PEER, DEVICE_NAME_PEER_LEN),
 };
 static struct bt_audio_capability_ops lc3_cap_codec_ops;
 static struct bt_codec lc3_codec =
@@ -189,12 +192,12 @@ static void connected_cb(struct bt_conn *conn, uint8_t err)
 {
 	char addr[BT_ADDR_LE_STR_LEN];
 
-	bt_addr_le_to_str(bt_conn_get_dst(conn), addr, sizeof(addr));
 	if (err) {
 		default_conn = NULL;
 		return;
 	}
 
+	bt_addr_le_to_str(bt_conn_get_dst(conn), addr, sizeof(addr));
 	LOG_INF("Connected: %s", addr);
 	default_conn = bt_conn_ref(conn);
 }
@@ -237,6 +240,7 @@ static void initialize(le_audio_receive_cb recv_cb)
 		ERR_CHK_MSG(ret, "Location set failed");
 
 		bt_audio_stream_cb_register(&streams, &stream_ops);
+		initialized = true;
 	}
 }
 
@@ -280,7 +284,7 @@ void le_audio_enable(le_audio_receive_cb recv_cb)
 	int ret;
 
 	initialize(recv_cb);
-	ret = bt_le_adv_start(BT_LE_ADV_CONN_NAME, ad, ARRAY_SIZE(ad), NULL, 0);
+	ret = bt_le_adv_start(BT_LE_ADV_CONN, ad, ARRAY_SIZE(ad), NULL, 0);
 	if (ret) {
 		LOG_INF("Advertising failed to start: %d", ret);
 		return;

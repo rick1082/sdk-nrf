@@ -5,14 +5,11 @@
  */
 
 #if (CONFIG_AUDIO_DEV == GATEWAY)
-
-#include <bluetooth/bluetooth.h>
-#include <bluetooth/audio/audio.h>
-
 #include "le_audio.h"
 #include "macros_common.h"
 #include "ctrl_events.h"
-
+#include <bluetooth/bluetooth.h>
+#include <bluetooth/audio/audio.h>
 #include <logging/log.h>
 LOG_MODULE_REGISTER(cis_gateway, CONFIG_LOG_BLE_LEVEL);
 
@@ -188,9 +185,7 @@ static int device_found(uint8_t type, const uint8_t *data, uint8_t data_len,
 			const bt_addr_le_t *addr)
 {
 	int ret;
-	char addr_str[BT_ADDR_LE_STR_LEN];
 
-	bt_addr_le_to_str(addr, addr_str, sizeof(addr_str));
 	if ((data_len == DEVICE_NAME_PEER_LEN) &&
 	    (strncmp(DEVICE_NAME_PEER, data, DEVICE_NAME_PEER_LEN) == 0)) {
 		LOG_INF("Device found");
@@ -248,8 +243,7 @@ static void ble_acl_start_scan(void)
 {
 	int ret;
 
-	//TODO: Figure out why SCAN_PASSIVE leads to bad performance
-	ret = bt_le_scan_start(BT_LE_SCAN_ACTIVE, on_device_found);
+	ret = bt_le_scan_start(BT_LE_SCAN_PASSIVE, on_device_found);
 	if (ret) {
 		LOG_INF("Scanning failed to start: %d", ret);
 		return;
