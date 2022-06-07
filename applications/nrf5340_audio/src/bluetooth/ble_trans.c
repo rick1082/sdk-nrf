@@ -71,6 +71,11 @@ static K_SEM_DEFINE(sem_per_big_info, 0, 1);
 static K_SEM_DEFINE(sem_big_sync, 0, 1);
 
 static struct k_work_delayable iso_cis_conn_work;
+static struct k_work_delayable disconnect_sent_work;
+static struct k_work_delayable gateway_search_timeout_work;
+
+#define BLE_ISO_BIG_SYNC_TIMEOUT 50
+#define BLE_BIS_GATEWAY_SEARCH_TIMEOUT_MS K_MSEC(1000)
 
 #define BT_LE_SCAN_CUSTOM                                                                          \
 	BT_LE_SCAN_PARAM(BT_LE_SCAN_TYPE_PASSIVE, BT_LE_SCAN_OPT_NONE, BT_GAP_SCAN_FAST_INTERVAL,  \
@@ -109,6 +114,9 @@ static int iso_bis_rx_sync_delete(void);
 static int iso_bis_rx_sync_get(void);
 static void iso_rx_stats_handler(struct k_timer *timer);
 
+static char *gateway_name_list[2] = { "NRF5340_AUDIO_DEV_1", "NRF5340_AUDIO_DEV_2" };
+static uint8_t gateway_selected;
+
 static uint8_t iso_chan_to_idx(struct bt_iso_chan *chan)
 {
 	if (chan == NULL) {
@@ -137,12 +145,46 @@ static int ble_event_send(enum ble_evt_type ble_evt)
 	return ctrl_events_put(&event);
 }
 
+static bool target_device_check(struct net_buf_simple *p_ad, uint8_t target_device_num)
+{
+	while (p_ad->len > 1) {
+		uint8_t len = net_buf_simple_pull_u8(p_ad);
+		uint8_t type;
+
+		/* Check for early termination */
+		if (len == 0) {
+			return false;
+		}
+
+		if (len > p_ad->len) {
+			LOG_ERR("AD malformed");
+			return false;
+		}
+
+		type = net_buf_simple_pull_u8(p_ad);
+
+		if (strncmp(gateway_name_list[target_device_num], p_ad->data,
+			    strlen(gateway_name_list[target_device_num])) == 0) {
+			LOG_INF("Gateway %d found", target_device_num);
+			return true;
+		}
+
+		(void)net_buf_simple_pull(p_ad, len - 1);
+	}
+	return false;
+}
+
 static void scan_recv(const struct bt_le_scan_recv_info *info, struct net_buf_simple *buf)
 {
 	int ret;
+	char addr[BT_ADDR_LE_STR_LEN];
 
-	if (!per_adv_found && info->interval) {
+	if (!per_adv_found && info->interval && target_device_check(buf, gateway_selected)) {
+		k_work_cancel_delayable(&gateway_search_timeout_work);
 		per_adv_found = true;
+
+		bt_addr_le_to_str(info->addr, addr, sizeof(addr));
+		LOG_INF("Connected to gateway %d, mac %s", gateway_selected, addr);
 
 		per_sid = info->sid;
 		per_interval_ms = BT_INTERVAL_TO_MS(info->interval);
@@ -406,7 +448,7 @@ static int iso_bis_rx_sync_get(void)
 
 	per_adv_found = false;
 	LOG_DBG("Start scanning...");
-
+	k_work_schedule(&gateway_search_timeout_work, BLE_BIS_GATEWAY_SEARCH_TIMEOUT_MS);
 	ret = bt_le_scan_start(BT_LE_SCAN_CUSTOM, NULL);
 	if (ret) {
 		LOG_ERR("ble_le_scan_start failed");
@@ -458,13 +500,31 @@ static int iso_bis_rx_sync_get(void)
 	return 0;
 }
 
+static void work_gateway_search_timeout(struct k_work *work)
+{
+	LOG_INF("Gateway search timeout");
+	gateway_selected ^= 1;
+	LOG_INF("Change gateway to %d", gateway_selected);
+	k_work_reschedule(&gateway_search_timeout_work, BLE_BIS_GATEWAY_SEARCH_TIMEOUT_MS);
+}
+
+static void work_evt_disconnect_sent(struct k_work *work)
+{
+	int ret;
+
+	ret = ble_event_send(BLE_EVT_DISCONNECTED);
+	ERR_CHK_MSG(ret, "Unable to put event BLE_EVT_DISCONNECTED in event queue");
+}
+
 static int iso_bis_rx_init(void)
 {
 	int ret;
 
 	bt_le_scan_cb_register(&scan_callbacks);
 	bt_le_per_adv_sync_cb_register(&sync_callbacks);
-
+	k_work_init_delayable(&disconnect_sent_work, work_evt_disconnect_sent);
+	k_work_init_delayable(&gateway_search_timeout_work, work_gateway_search_timeout);
+	k_work_schedule(&gateway_search_timeout_work, BLE_BIS_GATEWAY_SEARCH_TIMEOUT_MS);
 	ret = iso_bis_rx_sync_get();
 	if (ret) {
 		LOG_ERR("Sync lost before enter streaming state");
@@ -810,6 +870,25 @@ static int iso_tx_data_or_pattern(uint8_t const *const data, size_t size, uint8_
 	}
 
 	return ret;
+}
+
+void ble_trans_evt_disconnect_send(void)
+{
+	/* In BIS mode, if headset is disconnected again during recovery from out of range,
+	 * using this API can trigger a disconnect event which triggers ble_trans_iso_start()
+	 * again. This will be improved later.
+	 */
+	k_work_schedule(&disconnect_sent_work, K_MSEC(500));
+}
+
+int ble_trans_iso_bis_change(void)
+{
+	gateway_selected ^= 1;
+	LOG_INF("Change gateway to %d", gateway_selected);
+	iso_bis_rx_cleanup();
+	ble_event_send(BLE_EVT_DISCONNECTED);
+	k_work_schedule(&gateway_search_timeout_work, BLE_BIS_GATEWAY_SEARCH_TIMEOUT_MS);
+	return 0;
 }
 
 int ble_trans_iso_lost_notify_enable(void)

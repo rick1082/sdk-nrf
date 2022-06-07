@@ -27,6 +27,7 @@
 #include "channel_assignment.h"
 #include "hw_codec.h"
 #include "audio_usb.h"
+#include "ble_hci_vsc.h"
 
 #include <logging/log.h>
 LOG_MODULE_REGISTER(main, CONFIG_LOG_MAIN_LEVEL);
@@ -208,9 +209,6 @@ void main(void)
 	ERR_CHK(ret);
 
 	ret = streamctrl_start();
-	ERR_CHK(ret);
-
-	ret = audio_datapath_tone_play(1000, 400, 1);
 	ERR_CHK(ret);
 
 	while (1) {

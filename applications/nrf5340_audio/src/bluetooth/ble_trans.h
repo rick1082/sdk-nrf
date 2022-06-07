@@ -117,6 +117,8 @@ int ble_trans_iso_cig_create(void);
  */
 int ble_trans_iso_cis_connect(struct bt_conn *conn);
 
+int ble_trans_iso_bis_change(void);
+
 /**
  * @brief    Get most recent anchor point for ISO TX
  *

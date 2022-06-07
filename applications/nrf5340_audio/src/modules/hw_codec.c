@@ -117,7 +117,7 @@ int hw_codec_volume_adjust(int8_t adjustment)
 	 */
 	adjustment *= 2;
 
-	uint16_t volume_reg_val;
+	int16_t volume_reg_val;
 
 	ret = cs47l63_read_reg(&cs47l63_driver, CS47L63_OUT1L_VOLUME_1,
 			       (uint32_t *)&volume_reg_val);
@@ -255,6 +255,15 @@ int hw_codec_default_conf_enable(void)
 	if (ret) {
 		return ret;
 	}
+
+#if (CONFIG_AUDIO_SOURCE_PDM)
+	LOG_INF("PDM turned on");
+	ret = cs47l63_comm_reg_conf_write(pdm_mic_enable_configure,
+					  ARRAY_SIZE(pdm_mic_enable_configure));
+	if (ret) {
+		return ret;
+	}
+#endif
 #endif /* ((CONFIG_AUDIO_DEV == GATEWAY) && (CONFIG_AUDIO_SOURCE_I2S)) */
 
 #if ((CONFIG_AUDIO_DEV == HEADSET) && CONFIG_STREAM_BIDIRECTIONAL)

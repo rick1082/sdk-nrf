@@ -524,6 +524,10 @@ static void m_button_evt_handler(struct button_evt event)
 	case BUTTON_TEST_TONE:
 		switch (m_stream_state) {
 		case STATE_STREAMING:
+			if ((CONFIG_AUDIO_DEV == HEADSET) && CONFIG_TRANSPORT_BIS) {
+				ble_trans_iso_bis_change();
+				break;
+			}
 			if (CONFIG_AUDIO_BIT_DEPTH_BITS != 16) {
 				LOG_WRN("Tone gen only supports 16 bits");
 				break;
@@ -660,6 +664,17 @@ static void m_ble_transport_evt_handler(enum ble_evt_type event)
 #if (CONFIG_AUDIO_DEV == HEADSET)
 			stream_state_set(STATE_LINK_READY);
 			ret = led_on(LED_APP_1_BLUE);
+			ERR_CHK(ret);
+			/* Make headset enters stream state after synced with gateway */
+			ret = ble_trans_iso_start();
+			if (ret) {
+				LOG_WRN("Unable to start iso, ready-state");
+				break;
+			}
+
+			LOG_DBG("Starting headset device");
+			stream_state_set(STATE_STREAMING);
+			ret = led_blink(LED_APP_1_BLUE);
 			ERR_CHK(ret);
 #elif (CONFIG_AUDIO_DEV == GATEWAY)
 			audio_gateway_start();
