@@ -82,7 +82,7 @@ static struct bt_audio_stream *lc3_cap_config_cb(struct bt_conn *conn, struct bt
 	if (!stream->conn) {
 		LOG_INF("ASE Codec Config stream %p", (void *)stream);
 
-		print_codec(stream->codec);
+		print_codec(codec);
 
 		ret = ctrl_events_le_audio_event_send(LE_AUDIO_EVT_CONFIG_RECEIVED);
 		ERR_CHK(ret);

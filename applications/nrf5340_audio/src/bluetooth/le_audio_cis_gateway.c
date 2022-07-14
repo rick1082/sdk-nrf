@@ -18,8 +18,8 @@
 LOG_MODULE_REGISTER(cis_gateway, CONFIG_LOG_BLE_LEVEL);
 
 #define BT_AUDIO_LC3_UNICAST_PRESET_NRF5340_AUDIO                                                  \
-	BT_AUDIO_LC3_PRESET(BT_CODEC_LC3_CONFIG_48_4,                                              \
-			    BT_CODEC_LC3_QOS_10_UNFRAMED(120u, 2u, 20u, 10000u))
+	BT_AUDIO_LC3_PRESET(BT_CODEC_LC3_CONFIG_48_2,                                              \
+			    BT_CODEC_LC3_QOS_10_UNFRAMED(100u, 5u, 20u, 10000u))
 
 #define HCI_ISO_BUF_ALLOC_PER_CHAN 2
 /* For being able to dynamically define iso_tx_pools */
@@ -472,7 +472,8 @@ int le_audio_send(uint8_t const *const data, size_t size)
 	net_buf_reserve(buf, BT_ISO_CHAN_SEND_RESERVE);
 
 	//TODO: Handling dual channel sending properly
-	net_buf_add_mem(buf, data, 120);
+	net_buf_add_mem(buf, data,
+		bt_codec_cfg_get_octets_per_frame(&lc3_preset_unicast_nrf5340.codec));
 
 #if (CONFIG_AUDIO_SOURCE_I2S)
 	struct bt_iso_tx_info tx_info = { 0 };
