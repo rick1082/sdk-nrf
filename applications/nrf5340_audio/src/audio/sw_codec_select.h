@@ -7,6 +7,7 @@
 #ifndef _SW_CODEC_SELECT_H_
 #define _SW_CODEC_SELECT_H_
 
+#include "channel_assignment.h"
 #include <zephyr/kernel.h>
 
 #if (CONFIG_SW_CODEC_SBC)
@@ -67,12 +68,6 @@ enum sw_codec_select_ch {
 	SW_CODEC_ZERO_CHANNELS,
 	SW_CODEC_MONO, /**< Only use one channel */
 	SW_CODEC_STEREO, /**< Use both channels */
-};
-
-enum audio_channel {
-	AUDIO_CH_L,
-	AUDIO_CH_R,
-	AUDIO_CH_NUM,
 };
 
 struct sw_codec_encoder {

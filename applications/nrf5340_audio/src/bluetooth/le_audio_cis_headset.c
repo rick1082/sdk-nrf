@@ -16,6 +16,8 @@
 #include "ctrl_events.h"
 #include "ble_audio_services.h"
 #include "audio_datapath.h"
+#include "channel_assignment.h"
+
 
 #include <logging/log.h>
 LOG_MODULE_REGISTER(cis_headset, CONFIG_LOG_BLE_LEVEL);
@@ -23,14 +25,29 @@ LOG_MODULE_REGISTER(cis_headset, CONFIG_LOG_BLE_LEVEL);
 #define CHANNEL_COUNT_1 BIT(0)
 #define BLE_ISO_LATENCY_MS 10
 #define BLE_ISO_RETRANSMITS 2
-#define DEVICE_NAME_PEER CONFIG_BT_DEVICE_NAME
-#define DEVICE_NAME_PEER_LEN (sizeof(DEVICE_NAME_PEER) - 1)
+
+#define BT_LE_ADV_FAST_CONN                                                                        \
+	BT_LE_ADV_PARAM(BT_LE_ADV_OPT_CONNECTABLE, BT_GAP_ADV_FAST_INT_MIN_1,                      \
+			BT_GAP_ADV_FAST_INT_MAX_1, NULL)
+
+#define DEVICE_NAME_PEER_L CONFIG_BLE_DEVICE_NAME_BASE "_H_L"
+#define DEVICE_NAME_PEER_L_LEN (sizeof(DEVICE_NAME_PEER_L) - 1)
+
+#define DEVICE_NAME_PEER_R CONFIG_BLE_DEVICE_NAME_BASE "_H_R"
+#define DEVICE_NAME_PEER_R_LEN (sizeof(DEVICE_NAME_PEER_R) - 1)
+
+/* Advertising data for peer connection */
+static const struct bt_data ad_peer_l[] = {
+	BT_DATA_BYTES(BT_DATA_FLAGS, (BT_LE_AD_GENERAL | BT_LE_AD_NO_BREDR)),
+	BT_DATA(BT_DATA_NAME_COMPLETE, DEVICE_NAME_PEER_L, DEVICE_NAME_PEER_L_LEN),
+};
+
+static const struct bt_data ad_peer_r[] = {
+	BT_DATA_BYTES(BT_DATA_FLAGS, (BT_LE_AD_GENERAL | BT_LE_AD_NO_BREDR)),
+	BT_DATA(BT_DATA_NAME_COMPLETE, DEVICE_NAME_PEER_R, DEVICE_NAME_PEER_R_LEN),
+};
 
 static le_audio_receive_cb receive_cb;
-static const struct bt_data ad[] = {
-	BT_DATA_BYTES(BT_DATA_FLAGS, (BT_LE_AD_GENERAL | BT_LE_AD_NO_BREDR)),
-	BT_DATA(BT_DATA_NAME_COMPLETE, DEVICE_NAME_PEER, DEVICE_NAME_PEER_LEN),
-};
 static struct bt_audio_capability_ops lc3_cap_codec_ops;
 static struct bt_codec lc3_codec =
 	BT_CODEC_LC3(BT_CODEC_LC3_FREQ_ANY, BT_CODEC_LC3_DURATION_10, CHANNEL_COUNT_1, 40u, 120u,
@@ -242,6 +259,31 @@ BT_CONN_CB_DEFINE(conn_callbacks) = {
 static struct bt_audio_stream_ops stream_ops = { .recv = stream_recv_cb,
 						 .stopped = stream_stop_cb };
 
+static void adv_start(void)
+{
+	enum audio_channel channel;
+	int ret;
+
+	ret = channel_assignment_get(&channel);
+	if (ret) {
+		/* Channel is not assigned yet: use default */
+		channel = AUDIO_CHANNEL_DEFAULT;
+	}
+
+	if (channel != AUDIO_CHANNEL_RIGHT) {
+		/* If anything else than right, default to left */
+		ret = bt_le_adv_start(BT_LE_ADV_FAST_CONN, ad_peer_l, ARRAY_SIZE(ad_peer_l), NULL,
+				      0);
+	} else {
+		ret = bt_le_adv_start(BT_LE_ADV_FAST_CONN, ad_peer_r, ARRAY_SIZE(ad_peer_r), NULL,
+				      0);
+	}
+
+	if (ret) {
+		LOG_ERR("Advertising failed to start (ret %d)", ret);
+	}
+}
+
 static int initialize(le_audio_receive_cb recv_cb)
 {
 	int ret;
@@ -356,12 +398,8 @@ int le_audio_enable(le_audio_receive_cb recv_cb)
 		LOG_ERR("Initialize failed");
 		return ret;
 	}
-	ret = bt_le_adv_start(BT_LE_ADV_CONN, ad, ARRAY_SIZE(ad), NULL, 0);
 
-	if (ret) {
-		LOG_ERR("Advertising failed to start: %d", ret);
-		return ret;
-	}
+	adv_start();
 
 	LOG_INF("Advertising successfully started");
 	return 0;

@@ -57,9 +57,9 @@ static void prev_frame_sbc_flush(char *pcm_data)
 int sw_codec_encode(void *pcm_data, size_t pcm_size, uint8_t **encoded_data, size_t *encoded_size)
 {
 	/* Temp storage for split stereo PCM signal */
-	char pcm_data_mono[AUDIO_CH_NUM][PCM_NUM_BYTES_MONO] = { 0 };
+	char pcm_data_mono[AUDIO_CHANNEL_COUNT][PCM_NUM_BYTES_MONO] = { 0 };
 	/* Make sure we have enough space for two frames (stereo) */
-	static uint8_t m_encoded_data[ENC_MAX_FRAME_SIZE * AUDIO_CH_NUM];
+	static uint8_t m_encoded_data[ENC_MAX_FRAME_SIZE * AUDIO_CHANNEL_COUNT];
 
 	size_t pcm_block_size_mono;
 	int ret;
@@ -78,7 +78,7 @@ int sw_codec_encode(void *pcm_data, size_t pcm_size, uint8_t **encoded_data, siz
 		 * stereo PCM stream
 		 */
 		ret = pscm_two_channel_split(pcm_data, pcm_size, CONFIG_AUDIO_BIT_DEPTH_BITS,
-					     pcm_data_mono[AUDIO_CH_L], pcm_data_mono[AUDIO_CH_R],
+					     pcm_data_mono[AUDIO_CHANNEL_LEFT], pcm_data_mono[AUDIO_CHANNEL_RIGHT],
 					     &pcm_block_size_mono);
 		if (ret) {
 			return ret;
@@ -96,16 +96,16 @@ int sw_codec_encode(void *pcm_data, size_t pcm_size, uint8_t **encoded_data, siz
 			break;
 		}
 		case SW_CODEC_STEREO: {
-			ret = sw_codec_lc3_enc_run(pcm_data_mono[AUDIO_CH_L], pcm_block_size_mono,
-						   LC3_USE_BITRATE_FROM_INIT, AUDIO_CH_L,
+			ret = sw_codec_lc3_enc_run(pcm_data_mono[AUDIO_CHANNEL_LEFT], pcm_block_size_mono,
+						   LC3_USE_BITRATE_FROM_INIT, AUDIO_CHANNEL_LEFT,
 						   sizeof(m_encoded_data), m_encoded_data,
 						   &encoded_bytes_written);
 			if (ret) {
 				return ret;
 			}
 
-			ret = sw_codec_lc3_enc_run(pcm_data_mono[AUDIO_CH_R], pcm_block_size_mono,
-						   LC3_USE_BITRATE_FROM_INIT, AUDIO_CH_R,
+			ret = sw_codec_lc3_enc_run(pcm_data_mono[AUDIO_CHANNEL_RIGHT], pcm_block_size_mono,
+						   LC3_USE_BITRATE_FROM_INIT, AUDIO_CHANNEL_RIGHT,
 						   sizeof(m_encoded_data) - encoded_bytes_written,
 						   m_encoded_data + encoded_bytes_written,
 						   &encoded_bytes_written);
@@ -128,10 +128,10 @@ int sw_codec_encode(void *pcm_data, size_t pcm_size, uint8_t **encoded_data, siz
 	}
 	case SW_CODEC_SBC: {
 #if (CONFIG_SW_CODEC_SBC)
-		static uint8_t pcm_data_prev_frame[AUDIO_CH_NUM][PCM_NUM_BYTES_SBC_FRAME_MONO];
+		static uint8_t pcm_data_prev_frame[AUDIO_CHANNEL_NUM][PCM_NUM_BYTES_SBC_FRAME_MONO];
 
 		ret = pscm_two_channel_split(pcm_data, pcm_size, CONFIG_AUDIO_BIT_DEPTH_BITS,
-					     pcm_data_mono[AUDIO_CH_L], pcm_data_mono[AUDIO_CH_R],
+					     pcm_data_mono[AUDIO_CHANNEL_LEFT], pcm_data_mono[AUDIO_CHANNEL_RIGHT],
 					     &pcm_block_size_mono);
 		if (ret) {
 			return ret;
@@ -159,10 +159,10 @@ int sw_codec_encode(void *pcm_data, size_t pcm_size, uint8_t **encoded_data, siz
 			 * This leads to a 20% overhead, but without it, channels
 			 * will mix leading to poor audio quality.
 			 */
-			prev_frame_sbc_flush(pcm_data_prev_frame[AUDIO_CH_L]);
+			prev_frame_sbc_flush(pcm_data_prev_frame[AUDIO_CHANNEL_LEFT]);
 
 			/* Encode left channel */
-			m_sbc_enc_params.ps16PcmBuffer = (int16_t *)pcm_data_mono[AUDIO_CH_L];
+			m_sbc_enc_params.ps16PcmBuffer = (int16_t *)pcm_data_mono[AUDIO_CHANNEL_LEFT];
 			m_sbc_enc_params.pu8Packet = m_encoded_data;
 			m_sbc_enc_params.u8NumPacketToEncode = CONFIG_SBC_NUM_FRAMES_PER_BLE_PACKET;
 
@@ -172,10 +172,10 @@ int sw_codec_encode(void *pcm_data, size_t pcm_size, uint8_t **encoded_data, siz
 			*encoded_size = m_sbc_enc_params.u16PacketLength *
 					CONFIG_SBC_NUM_FRAMES_PER_BLE_PACKET;
 
-			prev_frame_sbc_flush(pcm_data_prev_frame[AUDIO_CH_R]);
+			prev_frame_sbc_flush(pcm_data_prev_frame[AUDIO_CHANNEL_RIGHT]);
 
 			/* Encode right channel */
-			m_sbc_enc_params.ps16PcmBuffer = (int16_t *)pcm_data_mono[AUDIO_CH_R];
+			m_sbc_enc_params.ps16PcmBuffer = (int16_t *)pcm_data_mono[AUDIO_CHANNEL_RIGHT];
 			m_sbc_enc_params.pu8Packet = &m_encoded_data[*encoded_size];
 			m_sbc_enc_params.u8NumPacketToEncode = CONFIG_SBC_NUM_FRAMES_PER_BLE_PACKET;
 
@@ -187,11 +187,11 @@ int sw_codec_encode(void *pcm_data, size_t pcm_size, uint8_t **encoded_data, siz
 					CONFIG_SBC_NUM_FRAMES_PER_BLE_PACKET * 2;
 
 			/* Remember last frame */
-			memcpy(pcm_data_prev_frame[AUDIO_CH_L],
-			       &pcm_data_mono[AUDIO_CH_L][LAST_PCM_FRAME_START_IDX],
+			memcpy(pcm_data_prev_frame[AUDIO_CHANNEL_LEFT],
+			       &pcm_data_mono[AUDIO_CHANNEL_LEFT][LAST_PCM_FRAME_START_IDX],
 			       PCM_NUM_BYTES_SBC_FRAME_MONO);
-			memcpy(pcm_data_prev_frame[AUDIO_CH_R],
-			       &pcm_data_mono[AUDIO_CH_R][LAST_PCM_FRAME_START_IDX],
+			memcpy(pcm_data_prev_frame[AUDIO_CHANNEL_RIGHT],
+			       &pcm_data_mono[AUDIO_CHANNEL_RIGHT][LAST_PCM_FRAME_START_IDX],
 			       PCM_NUM_BYTES_SBC_FRAME_MONO);
 
 			break;
@@ -268,7 +268,7 @@ int sw_codec_decode(uint8_t const *const encoded_data, size_t encoded_size, bool
 			} else {
 				/* Decode left channel */
 				ret = sw_codec_lc3_dec_run(encoded_data, encoded_size / 2,
-						LC3_PCM_NUM_BYTES_MONO, AUDIO_CH_L,
+						LC3_PCM_NUM_BYTES_MONO, AUDIO_CHANNEL_LEFT,
 						pcm_data_mono, (uint16_t *)&pcm_size_session,
 						bad_frame);
 				if (ret) {
@@ -277,7 +277,7 @@ int sw_codec_decode(uint8_t const *const encoded_data, size_t encoded_size, bool
 				/* Decode right channel */
 				ret = sw_codec_lc3_dec_run((encoded_data + (encoded_size / 2)),
 							encoded_size / 2, LC3_PCM_NUM_BYTES_MONO,
-							AUDIO_CH_R, pcm_data_mono_right,
+							AUDIO_CHANNEL_RIGHT, pcm_data_mono_right,
 							(uint16_t *)&pcm_size_session, bad_frame);
 				if (ret) {
 					return ret;

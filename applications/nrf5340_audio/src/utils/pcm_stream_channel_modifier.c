@@ -5,6 +5,7 @@
  */
 
 #include "pcm_stream_channel_modifier.h"
+#include "channel_assignment.h"
 
 #include <zephyr/kernel.h>
 #include <errno.h>
@@ -62,7 +63,7 @@ int pscm_zero_pad(void const *const input, size_t input_size, enum audio_channel
 	char *pointer_output = (char *)output;
 
 	for (uint32_t i = 0; i < input_size / bytes_per_sample; i++) {
-		if (channel == AUDIO_CH_L) {
+		if (channel == AUDIO_CHANNEL_LEFT) {
 			for (uint8_t j = 0; j < bytes_per_sample; j++) {
 				*pointer_output++ = *pointer_input++;
 			}
@@ -70,7 +71,7 @@ int pscm_zero_pad(void const *const input, size_t input_size, enum audio_channel
 			for (uint8_t j = 0; j < bytes_per_sample; j++) {
 				*pointer_output++ = 0;
 			}
-		} else if (channel == AUDIO_CH_R) {
+		} else if (channel == AUDIO_CHANNEL_RIGHT) {
 			for (uint8_t j = 0; j < bytes_per_sample; j++) {
 				*pointer_output++ = 0;
 			}
@@ -155,13 +156,13 @@ int pscm_one_channel_split(void const *const input, size_t input_size, enum audi
 	char *pointer_output = (char *)output;
 
 	for (uint32_t i = 0; i < input_size / bytes_per_sample; i += 2) {
-		if (channel == AUDIO_CH_L) {
+		if (channel == AUDIO_CHANNEL_LEFT) {
 			for (uint8_t j = 0; j < bytes_per_sample; j++) {
 				*pointer_output++ = *pointer_input++;
 			}
 			pointer_input += bytes_per_sample;
 
-		} else if (channel == AUDIO_CH_R) {
+		} else if (channel == AUDIO_CHANNEL_RIGHT) {
 			pointer_input += bytes_per_sample;
 
 			for (uint8_t j = 0; j < bytes_per_sample; j++) {
