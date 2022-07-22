@@ -8,6 +8,7 @@
 
 #include <bluetooth/bluetooth.h>
 #include <bluetooth/audio/audio.h>
+#include <../subsys/bluetooth/audio/endpoint.h>
 
 #include "macros_common.h"
 #include "ctrl_events.h"
@@ -166,11 +167,12 @@ static void stream_stopped_cb(struct bt_audio_stream *stream)
 	int ret;
 
 	LOG_INF("Audio Stream %p stopped", (void *)stream);
-
+	if(audio_stream[0].ep->status.state != BT_AUDIO_EP_STATE_STREAMING && audio_stream[1].ep->status.state != BT_AUDIO_EP_STATE_STREAMING ) {
 	ret = ctrl_events_le_audio_event_send(LE_AUDIO_EVT_NOT_STREAMING);
 	ERR_CHK(ret);
-
 	atomic_clear(&iso_tx_pool_alloc[0]);
+	}
+
 }
 
 static void stream_released_cb(struct bt_audio_stream *stream)
@@ -568,7 +570,7 @@ static int num_iso_cis_connected(void)
 {
 	uint8_t num_cis_connected = 0;
 	for (int i = 0; i < 2; i++) {
-		if(audio_stream[i].iso->state == BT_ISO_STATE_CONNECTED) {
+		if(audio_stream[i].ep->status.state == BT_AUDIO_EP_STATE_STREAMING) {
 			num_cis_connected++;
 		}
 	}
@@ -581,20 +583,10 @@ static int iso_tx(uint8_t const *const data, size_t size, uint8_t iso_chan_idx)
 	static bool wrn_printed[CONFIG_BT_ISO_MAX_CHAN];
 	struct net_buf *net_buffer;
 
-	if(audio_stream[iso_chan_idx].iso->state != BT_ISO_STATE_CONNECTED){
+	if(audio_stream[iso_chan_idx].ep->status.state != BT_AUDIO_EP_STATE_STREAMING){
 		LOG_WRN("channel not connected");
 		return 0;
 	}
-
-	if (is_iso_buffer_full(iso_chan_idx)) {
-		if (!wrn_printed[iso_chan_idx]) {
-			LOG_WRN("HCI ISO TX overrun on ch %d. Single print", iso_chan_idx);
-			wrn_printed[iso_chan_idx] = true;
-		}
-		return -ENOMEM;
-	}
-
-	wrn_printed[iso_chan_idx] = false;
 
 	net_buffer  = net_buf_alloc(iso_tx_pools[iso_chan_idx], K_NO_WAIT);
 	if (net_buffer  == NULL) {
@@ -638,61 +630,6 @@ int le_audio_send(uint8_t const *const data, size_t size)
 	if (ret) {
 		return ret;
 	}
-
-
-#if 0
-	int ret;
-	static bool wrn_printed[CONFIG_BT_ISO_MAX_CHAN];
-	struct net_buf *buf;
-
-	if (is_iso_buffer_full(0)) {
-		if (!wrn_printed[0]) {
-			LOG_WRN("HCI ISO TX overrun on ch %d - Single print", 0);
-			wrn_printed[0] = true;
-		}
-
-		return -ENOMEM;
-	}
-
-	wrn_printed[0] = false;
-
-	buf = net_buf_alloc(iso_tx_pools[0], K_NO_WAIT);
-	if (buf == NULL) {
-		/* This should never occur because of the is_iso_buffer_full() check */
-		LOG_WRN("Out of TX buffers");
-		return -ENOMEM;
-	}
-
-	net_buf_reserve(buf, BT_ISO_CHAN_SEND_RESERVE);
-
-	//TODO: Handling dual channel sending properly
-	net_buf_add_mem(buf, data, 120);
-
-	struct bt_iso_tx_info tx_info = { 0 };
-
-	ret = bt_iso_chan_get_tx_sync(audio_stream.iso, &tx_info);
-
-	if (ret) {
-		LOG_WRN("Error getting ISO TX anchor point: %d", ret);
-	}
-
-	if (tx_info.ts != 0 && !ret) {
-#if (CONFIG_AUDIO_SOURCE_I2S)
-		audio_datapath_sdu_ref_update(tx_info.ts);
-#endif
-		audio_datapath_just_in_time_check_and_adjust(tx_info.ts);
-	}
-
-	atomic_inc(&iso_tx_pool_alloc[0]);
-
-	ret = bt_audio_stream_send(&audio_stream, buf);
-	if (ret < 0) {
-		LOG_WRN("Failed to send audio data: %d", ret);
-		net_buf_unref(buf);
-		atomic_dec(&iso_tx_pool_alloc[0]);
-	}
-#endif
-	return 0;
 }
 
 int le_audio_enable(le_audio_receive_cb recv_cb)
