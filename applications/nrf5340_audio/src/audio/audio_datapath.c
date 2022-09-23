@@ -247,9 +247,17 @@ static void audio_datapath_drift_compensation(uint32_t frame_start_ts)
 
 		ctrl_blk.drift_comp.center_freq = APLL_FREQ_CENTER + freq_adj;
 
+	if ((ctrl_blk.drift_comp.center_freq > (APLL_FREQ_MAX)) ||
+		    (ctrl_blk.drift_comp.center_freq < (APLL_FREQ_MIN))) {
+			LOG_DBG("Invalid center frequency, re-calculating");
+			drift_comp_state_set(DRFT_STATE_INIT);
+		}
+
+
 		hfclkaudio_set(ctrl_blk.drift_comp.center_freq);
 
 		drift_comp_state_set(DRFT_STATE_OFFSET);
+		return; /*  lexi return as disscussed with richard */
 		break;
 	}
 	case DRFT_STATE_OFFSET: {
@@ -293,7 +301,7 @@ static void audio_datapath_drift_compensation(uint32_t frame_start_ts)
 		hfclkaudio_set(ctrl_blk.drift_comp.center_freq + freq_adj);
 
 		if ((err_us > DRIFT_ERR_THRESH_UNLOCK) || (err_us < -DRIFT_ERR_THRESH_UNLOCK)) {
-			drift_comp_state_set(DRFT_STATE_OFFSET);
+			drift_comp_state_set(DRFT_STATE_INIT);
 		} else {
 			ctrl_blk.drift_comp.ctr = 0;
 		}

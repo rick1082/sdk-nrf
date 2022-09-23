@@ -1,0 +1,260 @@
+Only in /home/lx/ncs/nrf/applications/nrf5340_audio/bin: ble5-ctr-rpmsg_3251.hex
+Only in ./bin: ble5-ctr-rpmsg_3303.hex
+Only in ./: ble5-ctr-rpmsg_3251.hex
+Only in ./: build
+Only in ./: build_gen_diff_cp_hex.sh
+Only in ./: changes.diff
+Only in ./: changes_to_zephyr_in_ncs_2.0.0.diff
+diff -bur /home/lx/ncs/nrf/applications/nrf5340_audio/overlay-gateway.conf ./overlay-gateway.conf
+--- /home/lx/ncs/nrf/applications/nrf5340_audio/overlay-gateway.conf	2022-08-29 15:36:31.753617007 +1000
++++ ./overlay-gateway.conf	2022-09-01 15:14:33.756657846 +1000
+@@ -37,8 +37,8 @@
+ 
+ # Dual headsets demo requires gateway to establish two ACL connections
+ # and two ISO connections
+-CONFIG_BT_MAX_CONN=2
+-CONFIG_BT_ISO_MAX_CHAN=2
++CONFIG_BT_MAX_CONN=1
++CONFIG_BT_ISO_MAX_CHAN=1
+ CONFIG_BT_MAX_PAIRED=2
+ 
+ CONFIG_LC3_ENC_CHAN_MAX=2
+diff -bur /home/lx/ncs/nrf/applications/nrf5340_audio/prj.conf ./prj.conf
+--- /home/lx/ncs/nrf/applications/nrf5340_audio/prj.conf	2022-08-29 15:36:31.753617007 +1000
++++ ./prj.conf	2022-09-01 19:08:34.843015046 +1000
+@@ -70,3 +70,16 @@
+ # Workaround to not use fatal_error.c in NCS. Note that the system may still
+ # reset on error depending on the build configuraion
+ CONFIG_RESET_ON_FATAL_ERROR=n
++
++CONFIG_AUDIO_SOURCE_I2S=y
++CONFIG_BLE_ISO_RX_STATS_S=5
++#48 2M PHY ; 80 with 1MPHY; default: 100
++CONFIG_BLE_ACL_CONN_INTERVAL=100 
++
++CONFIG_LC3_MONO_BITRATE=96000
++
++CONFIG_BLE_ACL_SUP_TIMEOUT=400
++CONFIG_BLE_ACL_SLAVE_LATENCY=0
++
++#only need changes to gateway, anyway, apply to both. 
++CONFIG_BT_ISO_MAX_CHAN=1
+\ No newline at end of file
+diff -bur /home/lx/ncs/nrf/applications/nrf5340_audio/src/audio/audio_datapath.c ./src/audio/audio_datapath.c
+--- /home/lx/ncs/nrf/applications/nrf5340_audio/src/audio/audio_datapath.c	2022-08-29 15:36:31.753617007 +1000
++++ ./src/audio/audio_datapath.c	2022-09-01 20:32:06.651257335 +1000
+@@ -247,9 +247,17 @@
+ 
+ 		ctrl_blk.drift_comp.center_freq = APLL_FREQ_CENTER + freq_adj;
+ 
++	if ((ctrl_blk.drift_comp.center_freq > (APLL_FREQ_MAX)) ||
++		    (ctrl_blk.drift_comp.center_freq < (APLL_FREQ_MIN))) {
++			LOG_DBG("Invalid center frequency, re-calculating");
++			drift_comp_state_set(DRFT_STATE_INIT);
++		}
++
++
+ 		hfclkaudio_set(ctrl_blk.drift_comp.center_freq);
+ 
+ 		drift_comp_state_set(DRFT_STATE_OFFSET);
++		return; /*  lexi return as disscussed with richard */
+ 		break;
+ 	}
+ 	case DRFT_STATE_OFFSET: {
+@@ -293,7 +301,7 @@
+ 		hfclkaudio_set(ctrl_blk.drift_comp.center_freq + freq_adj);
+ 
+ 		if ((err_us > DRIFT_ERR_THRESH_UNLOCK) || (err_us < -DRIFT_ERR_THRESH_UNLOCK)) {
+-			drift_comp_state_set(DRFT_STATE_OFFSET);
++			drift_comp_state_set(DRFT_STATE_INIT);
+ 		} else {
+ 			ctrl_blk.drift_comp.ctr = 0;
+ 		}
+diff -bur /home/lx/ncs/nrf/applications/nrf5340_audio/src/bluetooth/ble_acl_common.c ./src/bluetooth/ble_acl_common.c
+--- /home/lx/ncs/nrf/applications/nrf5340_audio/src/bluetooth/ble_acl_common.c	2022-08-29 15:36:31.757616999 +1000
++++ ./src/bluetooth/ble_acl_common.c	2022-09-07 20:45:25.051756773 +1000
+@@ -96,7 +96,7 @@
+ 	char addr[BT_ADDR_LE_STR_LEN];
+ 
+ 	bt_addr_le_to_str(bt_conn_get_dst(conn), addr, sizeof(addr));
+-	LOG_DBG("ACL disconnected with %s reason: %d", addr, reason);
++	LOG_INF("ACL disconnected with %s reason: %d", addr, reason);
+ #if (CONFIG_AUDIO_DEV == HEADSET)
+ 	if (_p_conn_peer == conn) {
+ 		bt_conn_unref(_p_conn_peer);
+diff -bur /home/lx/ncs/nrf/applications/nrf5340_audio/src/bluetooth/ble_trans.c ./src/bluetooth/ble_trans.c
+--- /home/lx/ncs/nrf/applications/nrf5340_audio/src/bluetooth/ble_trans.c	2022-08-29 15:36:31.757616999 +1000
++++ ./src/bluetooth/ble_trans.c	2022-09-07 20:49:12.523063511 +1000
+@@ -21,7 +21,7 @@
+ #include "ble_hci_vsc.h"
+ #include "ble_acl_gateway.h"
+ #include "audio_sync_timer.h"
+-
++#include "ble_acl_headset.h"
+ #include <zephyr/logging/log.h>
+ LOG_MODULE_DECLARE(ble, CONFIG_LOG_BLE_LEVEL);
+ 
+@@ -72,6 +72,7 @@
+ static K_SEM_DEFINE(sem_big_sync, 0, 1);
+ 
+ static struct k_work_delayable iso_cis_conn_work;
++static struct k_work acl_disconnect_work;
+ 
+ #define BT_LE_SCAN_CUSTOM                                                                          \
+ 	BT_LE_SCAN_PARAM(BT_LE_SCAN_TYPE_PASSIVE, BT_LE_SCAN_OPT_NONE, BT_GAP_SCAN_FAST_INTERVAL,  \
+@@ -217,15 +218,16 @@
+ static void iso_rx_stats_handler(struct k_timer *timer)
+ {
+ 	float bad_pcnt;
+-
++	static uint32_t iso_rx_cb_bad_total; 
+ 	if (iso_rx_cb_bad == 0) {
+ 		bad_pcnt = 0;
+ 	} else {
+ 		bad_pcnt = 100 * (float)iso_rx_cb_bad / iso_rx_cb_tot;
+ 	}
++	iso_rx_cb_bad_total += iso_rx_cb_bad;
+ 	LOG_WRN("BLE ISO RX. tot: %d bad %d, Percent %1.1f", iso_rx_cb_tot, iso_rx_cb_bad,
+ 		bad_pcnt);
+-
++	LOG_WRN("BLE ISO RX. bad_total: %d", iso_rx_cb_bad_total);
+ 	iso_rx_cb_tot = 0;
+ 	iso_rx_cb_bad = 0;
+ }
+@@ -298,13 +300,14 @@
+ 		}
+ 	} else if (iso_trans_type == TRANS_TYPE_CIS) {
+ #if (CONFIG_AUDIO_DEV == HEADSET)
+-		LOG_DBG("ISO CIS disconnected, reason %d", reason);
++		LOG_INF("ISO CIS disconnected, reason %d", reason);
++		k_work_submit(&acl_disconnect_work);
+ 		ret = ble_event_send(BLE_EVT_DISCONNECTED);
+ 		ERR_CHK_MSG(ret, "Unable to put event BLE_EVT_DISCONNECTED in event queue");
+ #elif (CONFIG_AUDIO_DEV == GATEWAY)
+ 		for (int i = 0; i < CIS_ISO_CHAN_COUNT; i++) {
+ 			if (chan == iso_chan_p[i]) {
+-				LOG_DBG("ISO CIS %d disconnected, reason %d", i, reason);
++				LOG_INF("ISO CIS %d disconnected, reason %d", i, reason);
+ 				break;
+ 			}
+ 		}
+@@ -548,6 +551,7 @@
+ 	return 0;
+ }
+ 
++
+ static int iso_bis_tx_init(void)
+ {
+ 	int ret;
+@@ -1081,6 +1085,24 @@
+ 	return iso_bis_rx_sync_get();
+ }
+ 
++static void work_acl_disconnect(struct k_work *work)
++{
++	int ret;
++	struct bt_conn *conn = NULL;
++
++	ble_acl_headset_conn_peer_get(&conn);
++	if(conn != NULL)
++	{
++		ret = bt_conn_disconnect(conn, BT_HCI_ERR_LOCALHOST_TERM_CONN);
++		if (ret) {
++			LOG_ERR("Failed to disconnected, %d", ret);
++		}
++	}
++	else
++	{
++		LOG_INF("ACL conn ==  NULL");
++	}
++}
+ int ble_trans_iso_init(enum iso_transport trans_type, enum iso_direction dir,
+ 		       ble_trans_iso_rx_cb_t rx_cb)
+ {
+@@ -1137,6 +1159,7 @@
+ 		break;
+ 	case TRANS_TYPE_CIS:
+ 		k_work_init_delayable(&iso_cis_conn_work, work_iso_cis_conn);
++		k_work_init(&acl_disconnect_work, work_acl_disconnect);
+ 
+ 		for (int i = 0; i < CIS_ISO_CHAN_COUNT; i++) {
+ 			iso_chan_p[i]->ops = &iso_ops;
+diff -bur /home/lx/ncs/nrf/applications/nrf5340_audio/src/main.c ./src/main.c
+--- /home/lx/ncs/nrf/applications/nrf5340_audio/src/main.c	2022-08-29 15:36:31.757616999 +1000
++++ ./src/main.c	2022-09-02 09:46:37.251326216 +1000
+@@ -27,10 +27,14 @@
+ #include "channel_assignment.h"
+ #include "hw_codec.h"
+ #include "audio_usb.h"
++#include "ble_hci_vsc.h"
++#include <bluetooth/bluetooth.h>
+ 
+ #include <zephyr/logging/log.h>
+ LOG_MODULE_REGISTER(main, CONFIG_LOG_MAIN_LEVEL);
+ 
++
++
+ #if defined(CONFIG_INIT_STACKS)
+ /* Used for printing stack usage */
+ extern struct k_thread z_main_thread;
+@@ -134,6 +138,16 @@
+ {
+ 	(void)atomic_set(&ble_core_is_ready, (atomic_t) true);
+ }
++/**
++ *  byte 0 : channel 0-7; 0x00 --> 0 - 7 all disabled.
++ *  byte 1 : channel 8-15; 0x0e --> 9, 10, 11, enabled. 
++ *  byte 2 : channel 16-23; 0x07 --> 16, 17, 18 enabled.
++ *  byte 3 : channel 24-31; 0x00 --> 24 - 31 all disabled. 
++ *  byte 4 : channel 32-39; 0xfe --> 33,34,35,36, 37, 38, 39 enabled. 
++ * 
++ */
++
++/* uint8_t channel_map[5] = {0x00, 0x0e, 0x07, 0x00, 0xfe};  */
+ 
+ void main(void)
+ {
+@@ -199,11 +213,23 @@
+ 	ret = ble_core_init(on_ble_core_ready);
+ 	ERR_CHK(ret);
+ 
++
+ 	/* Wait until ble_core/NET core is ready */
+ 	while (!(bool)atomic_get(&ble_core_is_ready)) {
+ 		(void)k_sleep(K_MSEC(100));
+ 	}
+-
++	/*
++	ret = ble_hci_vsc_set_radio_high_pwr_mode(1);
++	LOG_INF("ble_hci_vsc_set_radio_high_pwr_mode: %d", ret);
++	ERR_CHK(ret);
++	*/
++#if ((CONFIG_AUDIO_DEV == GATEWAY))
++	/*
++	ret = bt_le_set_chan_map(channel_map);
++	LOG_INF("bt_le_set_chan_map: %d", ret);
++	ERR_CHK(ret);
++	*/
++#endif
+ 	ret = leds_set();
+ 	ERR_CHK(ret);
+ 
+diff -bur /home/lx/ncs/nrf/applications/nrf5340_audio/tools/buildprog/nrf5340_audio_dk_devices.json ./tools/buildprog/nrf5340_audio_dk_devices.json
+--- /home/lx/ncs/nrf/applications/nrf5340_audio/tools/buildprog/nrf5340_audio_dk_devices.json	2022-08-29 15:36:31.761616993 +1000
++++ ./tools/buildprog/nrf5340_audio_dk_devices.json	2022-08-30 19:35:39.608591454 +1000
+@@ -1,11 +1,11 @@
+ [
+  {
+-        "nrf5340_audio_dk_snr": 1000,
++        "nrf5340_audio_dk_snr": 1050197981,
+         "nrf5340_audio_dk_dev": "headset",
+         "channel": "left"
+  },
+  {
+-        "nrf5340_audio_dk_snr": 1000,
++        "nrf5340_audio_dk_snr": 1050154427,
+         "nrf5340_audio_dk_dev": "gateway",
+         "channel": "NA"
+  },
+Only in ./tools/buildprog: __pycache__
+Only in ./: .vscode

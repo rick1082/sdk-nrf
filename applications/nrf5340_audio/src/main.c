@@ -27,9 +27,13 @@
 #include "channel_assignment.h"
 #include "hw_codec.h"
 #include "audio_usb.h"
+#include "ble_hci_vsc.h"
+#include <bluetooth/bluetooth.h>
 
 #include <zephyr/logging/log.h>
 LOG_MODULE_REGISTER(main, CONFIG_LOG_MAIN_LEVEL);
+
+
 
 #if defined(CONFIG_INIT_STACKS)
 /* Used for printing stack usage */
@@ -134,6 +138,16 @@ void on_ble_core_ready(void)
 {
 	(void)atomic_set(&ble_core_is_ready, (atomic_t) true);
 }
+/**
+ *  byte 0 : channel 0-7; 0x00 --> 0 - 7 all disabled.
+ *  byte 1 : channel 8-15; 0x0e --> 9, 10, 11, enabled. 
+ *  byte 2 : channel 16-23; 0x07 --> 16, 17, 18 enabled.
+ *  byte 3 : channel 24-31; 0x00 --> 24 - 31 all disabled. 
+ *  byte 4 : channel 32-39; 0xfe --> 33,34,35,36, 37, 38, 39 enabled. 
+ * 
+ */
+
+/* uint8_t channel_map[5] = {0x00, 0x0e, 0x07, 0x00, 0xfe};  */
 
 void main(void)
 {
@@ -199,11 +213,23 @@ void main(void)
 	ret = ble_core_init(on_ble_core_ready);
 	ERR_CHK(ret);
 
+
 	/* Wait until ble_core/NET core is ready */
 	while (!(bool)atomic_get(&ble_core_is_ready)) {
 		(void)k_sleep(K_MSEC(100));
 	}
-
+	/*
+	ret = ble_hci_vsc_set_radio_high_pwr_mode(1);
+	LOG_INF("ble_hci_vsc_set_radio_high_pwr_mode: %d", ret);
+	ERR_CHK(ret);
+	*/
+#if ((CONFIG_AUDIO_DEV == GATEWAY))
+	/*
+	ret = bt_le_set_chan_map(channel_map);
+	LOG_INF("bt_le_set_chan_map: %d", ret);
+	ERR_CHK(ret);
+	*/
+#endif
 	ret = leds_set();
 	ERR_CHK(ret);
 

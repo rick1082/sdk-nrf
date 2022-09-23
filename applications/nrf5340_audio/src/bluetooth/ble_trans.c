@@ -21,7 +21,7 @@
 #include "ble_hci_vsc.h"
 #include "ble_acl_gateway.h"
 #include "audio_sync_timer.h"
-
+#include "ble_acl_headset.h"
 #include <zephyr/logging/log.h>
 LOG_MODULE_DECLARE(ble, CONFIG_LOG_BLE_LEVEL);
 
@@ -72,6 +72,7 @@ static K_SEM_DEFINE(sem_per_big_info, 0, 1);
 static K_SEM_DEFINE(sem_big_sync, 0, 1);
 
 static struct k_work_delayable iso_cis_conn_work;
+static struct k_work acl_disconnect_work;
 
 #define BT_LE_SCAN_CUSTOM                                                                          \
 	BT_LE_SCAN_PARAM(BT_LE_SCAN_TYPE_PASSIVE, BT_LE_SCAN_OPT_NONE, BT_GAP_SCAN_FAST_INTERVAL,  \
@@ -217,15 +218,16 @@ static uint8_t num_iso_cis_connected(void)
 static void iso_rx_stats_handler(struct k_timer *timer)
 {
 	float bad_pcnt;
-
+	static uint32_t iso_rx_cb_bad_total; 
 	if (iso_rx_cb_bad == 0) {
 		bad_pcnt = 0;
 	} else {
 		bad_pcnt = 100 * (float)iso_rx_cb_bad / iso_rx_cb_tot;
 	}
+	iso_rx_cb_bad_total += iso_rx_cb_bad;
 	LOG_WRN("BLE ISO RX. tot: %d bad %d, Percent %1.1f", iso_rx_cb_tot, iso_rx_cb_bad,
 		bad_pcnt);
-
+	LOG_WRN("BLE ISO RX. bad_total: %d", iso_rx_cb_bad_total);
 	iso_rx_cb_tot = 0;
 	iso_rx_cb_bad = 0;
 }
@@ -298,13 +300,14 @@ static void iso_disconnected_cb(struct bt_iso_chan *chan, uint8_t reason)
 		}
 	} else if (iso_trans_type == TRANS_TYPE_CIS) {
 #if (CONFIG_AUDIO_DEV == HEADSET)
-		LOG_DBG("ISO CIS disconnected, reason %d", reason);
+		LOG_INF("ISO CIS disconnected, reason %d", reason);
+		k_work_submit(&acl_disconnect_work);
 		ret = ble_event_send(BLE_EVT_DISCONNECTED);
 		ERR_CHK_MSG(ret, "Unable to put event BLE_EVT_DISCONNECTED in event queue");
 #elif (CONFIG_AUDIO_DEV == GATEWAY)
 		for (int i = 0; i < CIS_ISO_CHAN_COUNT; i++) {
 			if (chan == iso_chan_p[i]) {
-				LOG_DBG("ISO CIS %d disconnected, reason %d", i, reason);
+				LOG_INF("ISO CIS %d disconnected, reason %d", i, reason);
 				break;
 			}
 		}
@@ -547,6 +550,7 @@ static int iso_bis_rx_stop(void)
 
 	return 0;
 }
+
 
 static int iso_bis_tx_init(void)
 {
@@ -1081,6 +1085,24 @@ int ble_trans_iso_bis_rx_sync_get(void)
 	return iso_bis_rx_sync_get();
 }
 
+static void work_acl_disconnect(struct k_work *work)
+{
+	int ret;
+	struct bt_conn *conn = NULL;
+
+	ble_acl_headset_conn_peer_get(&conn);
+	if(conn != NULL)
+	{
+		ret = bt_conn_disconnect(conn, BT_HCI_ERR_LOCALHOST_TERM_CONN);
+		if (ret) {
+			LOG_ERR("Failed to disconnected, %d", ret);
+		}
+	}
+	else
+	{
+		LOG_INF("ACL conn ==  NULL");
+	}
+}
 int ble_trans_iso_init(enum iso_transport trans_type, enum iso_direction dir,
 		       ble_trans_iso_rx_cb_t rx_cb)
 {
@@ -1137,6 +1159,7 @@ int ble_trans_iso_init(enum iso_transport trans_type, enum iso_direction dir,
 		break;
 	case TRANS_TYPE_CIS:
 		k_work_init_delayable(&iso_cis_conn_work, work_iso_cis_conn);
+		k_work_init(&acl_disconnect_work, work_acl_disconnect);
 
 		for (int i = 0; i < CIS_ISO_CHAN_COUNT; i++) {
 			iso_chan_p[i]->ops = &iso_ops;

@@ -96,7 +96,7 @@ static void on_disconnected_cb(struct bt_conn *conn, uint8_t reason)
 	char addr[BT_ADDR_LE_STR_LEN];
 
 	bt_addr_le_to_str(bt_conn_get_dst(conn), addr, sizeof(addr));
-	LOG_DBG("ACL disconnected with %s reason: %d", addr, reason);
+	LOG_INF("ACL disconnected with %s reason: %d", addr, reason);
 #if (CONFIG_AUDIO_DEV == HEADSET)
 	if (_p_conn_peer == conn) {
 		bt_conn_unref(_p_conn_peer);
