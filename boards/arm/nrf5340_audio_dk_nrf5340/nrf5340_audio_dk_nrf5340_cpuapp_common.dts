@@ -18,7 +18,7 @@
 		compatible = "nordic,nrf-gpio-forwarder";
 		status = "okay";
 		uart {
-			gpios = <&gpio1 9 0>, <&gpio1 8 0>, <&gpio1 11 0>, <&gpio1 10 0>;
+			gpios = <&gpio1 9 0>, <&gpio1 8 0>, <&gpio1 11 0>, <&gpio1 10 0>, <&gpio1 13 0>, <&gpio1 14 0>;
 		};
 	};
 };

@@ -17,6 +17,16 @@
 #define HCI_OPCODE_VS_SET_RADIO_FE_CFG BT_OP(BT_OGF_VS, 0x3A3)
 #define HCI_OPCODE_VS_SET_PRI_EXT_ADV_MAX_TX_PWR BT_OP(BT_OGF_VS, 0x000)
 
+#define HCI_OPCODE_VS_CONFIG_FEM_PIN BT_OP(BT_OGF_VS, 0x002)
+struct ble_hci_vs_cp_set_fem_pin {
+	uint16_t mode;
+	uint16_t txen;
+	uint16_t rxen;
+	uint16_t antsel;
+	uint16_t pdn;
+	uint16_t csn;
+} __packed;
+
 /* This bit setting enables the flag from controller from controller
  * if an ISO packet is lost.
  */
@@ -164,5 +174,8 @@ int ble_hci_vsc_set_pri_ext_adv_max_tx_pwr(enum ble_hci_vs_tx_power tx_power);
  */
 int ble_hci_vsc_map_led_pin(enum ble_hci_vs_led_function_id id,
 			    enum ble_hci_vs_led_function_mode mode, uint16_t pin);
+
+int ble_hci_vsc_set_fem_pin(struct ble_hci_vs_cp_set_fem_pin * fem_pin);
+
 
 #endif /* _BLE_HCI_VSC_H_ */

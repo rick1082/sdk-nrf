@@ -29,6 +29,8 @@
 #include "audio_usb.h"
 #include "ble_hci_vsc.h"
 #include <bluetooth/bluetooth.h>
+#include "ble_hci_vsc.h"
+
 
 #include <zephyr/logging/log.h>
 LOG_MODULE_REGISTER(main, CONFIG_LOG_MAIN_LEVEL);
@@ -232,6 +234,13 @@ void main(void)
 #endif
 	ret = leds_set();
 	ERR_CHK(ret);
+
+	struct ble_hci_vs_cp_set_fem_pin fem_pin = {
+			.mode = 0xffff, .txen = 45, .rxen = 46, .antsel = 0xffff, .pdn = 0xffff, .csn = 0xffff
+	};
+	ret = ble_hci_vsc_set_fem_pin(&fem_pin);
+	ERR_CHK(ret);
+
 
 	ret = streamctrl_start();
 	ERR_CHK(ret);
