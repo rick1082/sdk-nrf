@@ -30,7 +30,7 @@
 #include "ble_hci_vsc.h"
 #include <bluetooth/bluetooth.h>
 #include "ble_hci_vsc.h"
-
+#include <settings/settings.h>
 
 #include <zephyr/logging/log.h>
 LOG_MODULE_REGISTER(main, CONFIG_LOG_MAIN_LEVEL);
@@ -135,10 +135,36 @@ static int channel_assign_check(void)
 	return 0;
 }
 
+static int bonding_clear_check(void)
+{
+	int ret;
+	bool pressed;
+
+	ret = button_pressed(BUTTON_MUTE, &pressed);
+	if (ret) {
+		return ret;
+	}
+
+	if (pressed) {
+		if (IS_ENABLED(CONFIG_SETTINGS)) {
+			LOG_INF("Clearing all bonds");
+			bt_unpair(BT_ID_DEFAULT, NULL);
+		}
+	}
+	return 0;
+}
+
 /* Callback from ble_core when the ble subsystem is ready */
 void on_ble_core_ready(void)
 {
+	int ret;
 	(void)atomic_set(&ble_core_is_ready, (atomic_t) true);
+	if (IS_ENABLED(CONFIG_SETTINGS)) {
+		settings_load();
+
+		ret = bonding_clear_check();
+		ERR_CHK(ret);
+	}
 }
 /**
  *  byte 0 : channel 0-7; 0x00 --> 0 - 7 all disabled.
