@@ -74,7 +74,9 @@ static void on_connected_cb(struct bt_conn *conn, uint8_t err)
 		ble_acl_gateway_on_connected(conn);
 #if (CONFIG_BT_SMP)
 		ret = bt_conn_set_security(conn, BT_SECURITY_L2);
-		ERR_CHK_MSG(ret, "Failed to set security");
+		if (ret) {
+			LOG_ERR("Failed to set security %d", ret);
+		}
 #else
 		if (!ble_acl_gateway_all_links_connected()) {
 			k_work_submit(&scan_work);
