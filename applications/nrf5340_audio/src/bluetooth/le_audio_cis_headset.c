@@ -85,6 +85,7 @@ static struct bt_audio_capability caps[] = {
 
 static struct k_work adv_work;
 static struct bt_conn *default_conn;
+static bool mic_return;
 static struct bt_audio_stream
 	audio_streams[CONFIG_BT_ASCS_ASE_SNK_COUNT + CONFIG_BT_ASCS_ASE_SRC_COUNT];
 
@@ -435,6 +436,7 @@ static int initialize(le_audio_receive_cb recv_cb)
 		if (channel == AUDIO_CH_L) {
 			ret = bt_audio_capability_set_location(BT_AUDIO_DIR_SINK,
 							       BT_AUDIO_LOCATION_FRONT_LEFT);
+			mic_return = true;
 			if (ret) {
 				LOG_ERR("Location set failed");
 				return ret;
@@ -443,6 +445,7 @@ static int initialize(le_audio_receive_cb recv_cb)
 		} else {
 			ret = bt_audio_capability_set_location(BT_AUDIO_DIR_SINK,
 							       BT_AUDIO_LOCATION_FRONT_RIGHT);
+			mic_return = false;
 			if (ret) {
 				LOG_ERR("Location set failed");
 				return ret;
@@ -467,11 +470,21 @@ static int initialize(le_audio_receive_cb recv_cb)
 			return ret;
 		}
 
-		ret = bt_audio_capability_set_location(BT_AUDIO_DIR_SOURCE,
-						       BT_AUDIO_LOCATION_FRONT_LEFT);
-		if (ret) {
-			LOG_ERR("Location set failed");
-			return ret;
+		if (channel == AUDIO_CH_L) {
+			ret = bt_audio_capability_set_location(BT_AUDIO_DIR_SOURCE,
+							       BT_AUDIO_LOCATION_FRONT_LEFT);
+			if (ret) {
+				LOG_ERR("Location set failed");
+				return ret;
+			}
+
+		} else {
+			ret = bt_audio_capability_set_location(BT_AUDIO_DIR_SOURCE,
+							       BT_AUDIO_LOCATION_FRONT_RIGHT);
+			if (ret) {
+				LOG_ERR("Location set failed");
+				return ret;
+			}
 		}
 #else
 		ret = bt_audio_capability_set_available_contexts(
@@ -581,29 +594,31 @@ int le_audio_pause(void)
 
 int le_audio_send(uint8_t const *const data, size_t size)
 {
-#if CONFIG_STREAM_BIDIRECTIONAL
+#if 1
 	int ret;
 	struct net_buf *buf;
 
-	if (sources[0].stream->ep->status.state != BT_AUDIO_EP_STATE_STREAMING) {
-		LOG_DBG("Return channel not connected");
-		return 0;
-	}
+	if (mic_return) {
+		if (sources[0].stream->ep->status.state != BT_AUDIO_EP_STATE_STREAMING) {
+			LOG_DBG("Return channel not connected");
+			return 0;
+		}
 
-	buf = net_buf_alloc(iso_tx_pools[0], K_NO_WAIT);
-	if (buf == NULL) {
-		LOG_WRN("Out of TX buffers");
-		return -ENOMEM;
-	}
+		buf = net_buf_alloc(iso_tx_pools[0], K_NO_WAIT);
+		if (buf == NULL) {
+			LOG_WRN("Out of TX buffers");
+			return -ENOMEM;
+		}
 
-	net_buf_reserve(buf, BT_ISO_CHAN_SEND_RESERVE);
-	net_buf_add_mem(buf, data, size);
+		net_buf_reserve(buf, BT_ISO_CHAN_SEND_RESERVE);
+		net_buf_add_mem(buf, data, size);
 
-	ret = bt_audio_stream_send(sources[0].stream, buf, sources[0].seq_num++,
-				   BT_ISO_TIMESTAMP_NONE);
-	if (ret < 0) {
-		LOG_WRN("Failed to send audio data: %d", ret);
-		net_buf_unref(buf);
+		ret = bt_audio_stream_send(sources[0].stream, buf, sources[0].seq_num++,
+					BT_ISO_TIMESTAMP_NONE);
+		if (ret < 0) {
+			LOG_WRN("Failed to send audio data: %d", ret);
+			net_buf_unref(buf);
+		}
 	}
 #endif /* CONFIG_STREAM_BIDIRECTIONAL */
 
