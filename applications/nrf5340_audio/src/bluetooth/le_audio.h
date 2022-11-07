@@ -25,6 +25,14 @@
 		BT_CODEC_LC3_QOS_10_UNFRAMED(LE_AUDIO_SDU_SIZE_OCTETS(CONFIG_LC3_BITRATE), 2u,     \
 					     20u, LE_AUDIO_PRES_DELAY_US))
 
+#define BT_AUDIO_LC3_UNICAST_PRESET_MIC(_loc, _stream_context)                             \
+	BT_AUDIO_LC3_PRESET(                                                                       \
+		BT_CODEC_LC3_CONFIG(                                                               \
+			BT_CODEC_CONFIG_LC3_FREQ_48KHZ, BT_CODEC_CONFIG_LC3_DURATION_10, _loc,     \
+			LE_AUDIO_SDU_SIZE_OCTETS(CONFIG_LC3_BITRATE_MIC), 1, _stream_context),         \
+		BT_CODEC_LC3_QOS_10_UNFRAMED(LE_AUDIO_SDU_SIZE_OCTETS(CONFIG_LC3_BITRATE_MIC), 2u,     \
+					     20u, LE_AUDIO_PRES_DELAY_US))
+
 #if CONFIG_AUDIO_SOURCE_USB
 /* Only 48kHz is supported when using USB */
 #if !CONFIG_BT_AUDIO_UNICAST_RECOMMENDED
@@ -36,6 +44,9 @@
 
 #elif CONFIG_AUDIO_SOURCE_I2S
 #if CONFIG_BT_AUDIO_UNICAST_RECOMMENDED
+#define BT_AUDIO_LC3_UNICAST_PRESET_NRF5340_AUDIO_MIC                                                  \
+	BT_AUDIO_LC3_UNICAST_PRESET_MIC(BT_AUDIO_LOCATION_FRONT_LEFT,                      \
+						BT_AUDIO_CONTEXT_TYPE_MEDIA)
 #define BT_AUDIO_LC3_UNICAST_PRESET_NRF5340_AUDIO                                                  \
 	BT_AUDIO_LC3_UNICAST_PRESET_RECOMMENDED(BT_AUDIO_LOCATION_FRONT_LEFT,                      \
 						BT_AUDIO_CONTEXT_TYPE_MEDIA)

@@ -52,6 +52,7 @@ static struct net_buf_pool *iso_tx_pools[] = { LISTIFY(CONFIG_BT_AUDIO_UNICAST_C
 						       NET_BUF_POOL_PTR_ITERATE, (,)) };
 /* clang-format on */
 static struct bt_audio_lc3_preset lc3_preset_nrf5340 = BT_AUDIO_LC3_UNICAST_PRESET_NRF5340_AUDIO;
+static struct bt_audio_lc3_preset lc3_preset_nrf5340_mic = BT_AUDIO_LC3_UNICAST_PRESET_NRF5340_AUDIO_MIC;
 static atomic_t iso_tx_pool_alloc[CONFIG_BT_AUDIO_UNICAST_CLIENT_ASE_SNK_COUNT];
 
 struct worker_data {
@@ -245,12 +246,13 @@ static void stream_configured_cb(struct bt_audio_stream *stream,
 	if (!group_created) {
 		for (int i = 0; i < ARRAY_SIZE(audio_streams); i++) {
 			group_params[i].stream = &audio_streams[i];
-			group_params[i].qos = &lc3_preset_nrf5340.qos;
 			group_params[i].dir = audio_streams[i].ep->dir;
 			if(group_params[i].dir == BT_AUDIO_DIR_SINK) {
 				LOG_INF("group stream sink %p", (void *)&audio_streams[i]);
+				group_params[i].qos = &lc3_preset_nrf5340.qos;
 			} else if(group_params[i].dir == BT_AUDIO_DIR_SOURCE) {
 				LOG_INF("group stream source %p", (void *)&audio_streams[i]);
+				group_params[i].qos = &lc3_preset_nrf5340_mic.qos;
 			} else {
 				LOG_INF("group stream undefined");
 			}
@@ -578,7 +580,7 @@ static void discover_source_cb(struct bt_conn *conn, struct bt_codec *codec, str
 		LOG_ERR("Unknown connection, should not reach here");
 	} else {
 		ret = bt_audio_stream_config(conn, &audio_streams[configured_stream_count++],
-					     sources[conn_index].ep, &lc3_preset_nrf5340.codec);
+					     sources[conn_index].ep, &lc3_preset_nrf5340_mic.codec);
 		if (ret) {
 			LOG_WRN("Could not configure stream");
 			return;

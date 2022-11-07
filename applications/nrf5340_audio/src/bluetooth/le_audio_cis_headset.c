@@ -594,7 +594,6 @@ int le_audio_pause(void)
 
 int le_audio_send(uint8_t const *const data, size_t size)
 {
-#if 1
 	int ret;
 	struct net_buf *buf;
 
@@ -620,7 +619,6 @@ int le_audio_send(uint8_t const *const data, size_t size)
 			net_buf_unref(buf);
 		}
 	}
-#endif /* CONFIG_STREAM_BIDIRECTIONAL */
 
 	return 0;
 }
