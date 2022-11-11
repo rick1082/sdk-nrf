@@ -179,6 +179,21 @@ config BT_SMP
 config BT_PAC_SNK
 	default y
 
+config BT_BAS
+	default y
+
+config BT_HRS
+	default y
+
+config BT_EXT_ADV
+	default y
+
+config BT_GAP_AUTO_UPDATE_CONN_PARAMS
+	default n
+
+config BT_GAP_PERIPHERAL_PREF_PARAMS
+	default n
+
 endif # AUDIO_DEV = 1 (HEADSET)
 
 # GATEWAY
@@ -198,6 +213,21 @@ config BT_AUDIO_BROADCAST_SRC_STREAM_COUNT
 
 config BT_ISO_MAX_CHAN
 	default 2
+
+config BT_CENTRAL
+	default y
+
+config BT_GATT_CLIENT
+	default y
+
+config BT_GAP_AUTO_UPDATE_CONN_PARAMS
+	default n
+
+config BT_AUTO_PHY_UPDATE
+	default n
+
+config BT_AUTO_DATA_LEN_UPDATE
+	default n
 
 endif # AUDIO_DEV = 2 (GATEWAY)
 

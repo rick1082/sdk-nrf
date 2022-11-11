@@ -8,6 +8,11 @@
 
 #include <zephyr/bluetooth/bluetooth.h>
 #include <zephyr/bluetooth/audio/audio.h>
+#include <zephyr/bluetooth/conn.h>
+#include <zephyr/bluetooth/uuid.h>
+#include <zephyr/bluetooth/gatt.h>
+#include <zephyr/sys/byteorder.h>
+#include <zephyr/bluetooth/bluetooth.h>
 /* TODO: Remove when a get_info function is implemented in host */
 #include <../subsys/bluetooth/audio/endpoint.h>
 
@@ -45,6 +50,84 @@ static struct bt_audio_lc3_preset lc3_preset = BT_AUDIO_LC3_BROADCAST_PRESET_NRF
 static atomic_t iso_tx_pool_alloc[CONFIG_BT_AUDIO_BROADCAST_SRC_STREAM_COUNT];
 static bool delete_broadcast_src;
 static uint32_t seq_num[CONFIG_BT_AUDIO_BROADCAST_SRC_STREAM_COUNT];
+
+#define REMOTE_DEVICE_NAME_PEER "NRF5340_AUDIO"
+#define REMOTE_DEVICE_NAME_PEER_LEN (sizeof(REMOTE_DEVICE_NAME_PEER) - 1)
+
+#define BT_LE_CONN_PARAM_MULTI                                                                     \
+	BT_LE_CONN_PARAM(100, 100, CONFIG_BLE_ACL_SLAVE_LATENCY, CONFIG_BLE_ACL_SUP_TIMEOUT)
+
+static void ble_acl_start_scan(void);
+
+static struct bt_uuid_16 uuid = BT_UUID_INIT_16(0);
+static struct bt_gatt_discover_params discover_params;
+static struct bt_gatt_subscribe_params subscribe_params;
+
+static uint8_t notify_func(struct bt_conn *conn, struct bt_gatt_subscribe_params *params,
+			   const void *data, uint16_t length)
+{
+	if (!data) {
+		printk("[UNSUBSCRIBED]\n");
+		params->value_handle = 0U;
+		return BT_GATT_ITER_STOP;
+	}
+
+	printk("[NOTIFICATION] data %p length %u\n", data, length);
+
+	return BT_GATT_ITER_CONTINUE;
+}
+
+static uint8_t discover_func(struct bt_conn *conn, const struct bt_gatt_attr *attr,
+			     struct bt_gatt_discover_params *params)
+{
+	int err;
+
+	if (!attr) {
+		printk("Discover complete\n");
+		(void)memset(params, 0, sizeof(*params));
+		return BT_GATT_ITER_STOP;
+	}
+
+	printk("[ATTRIBUTE] handle %u\n", attr->handle);
+
+	if (!bt_uuid_cmp(discover_params.uuid, BT_UUID_HRS)) {
+		memcpy(&uuid, BT_UUID_HRS_MEASUREMENT, sizeof(uuid));
+		discover_params.uuid = &uuid.uuid;
+		discover_params.start_handle = attr->handle + 1;
+		discover_params.type = BT_GATT_DISCOVER_CHARACTERISTIC;
+
+		err = bt_gatt_discover(conn, &discover_params);
+		if (err) {
+			printk("Discover failed (err %d)\n", err);
+		}
+	} else if (!bt_uuid_cmp(discover_params.uuid, BT_UUID_HRS_MEASUREMENT)) {
+		memcpy(&uuid, BT_UUID_GATT_CCC, sizeof(uuid));
+		discover_params.uuid = &uuid.uuid;
+		discover_params.start_handle = attr->handle + 2;
+		discover_params.type = BT_GATT_DISCOVER_DESCRIPTOR;
+		subscribe_params.value_handle = bt_gatt_attr_value_handle(attr);
+
+		err = bt_gatt_discover(conn, &discover_params);
+		if (err) {
+			printk("Discover failed (err %d)\n", err);
+		}
+	} else {
+		subscribe_params.notify = notify_func;
+		subscribe_params.value = BT_GATT_CCC_NOTIFY;
+		subscribe_params.ccc_handle = attr->handle;
+
+		err = bt_gatt_subscribe(conn, &subscribe_params);
+		if (err && err != -EALREADY) {
+			printk("Subscribe failed (err %d)\n", err);
+		} else {
+			printk("[SUBSCRIBED]\n");
+		}
+
+		return BT_GATT_ITER_STOP;
+	}
+
+	return BT_GATT_ITER_STOP;
+}
 
 static bool is_iso_buffer_full(uint8_t idx)
 {
@@ -137,6 +220,135 @@ static void stream_stopped_cb(struct bt_audio_stream *stream)
 	}
 }
 
+static int device_found(uint8_t type, const uint8_t *data, uint8_t data_len,
+			const bt_addr_le_t *addr)
+{
+	int ret;
+	struct bt_conn *conn;
+
+	if ((data_len == REMOTE_DEVICE_NAME_PEER_LEN) &&
+	    (strncmp(REMOTE_DEVICE_NAME_PEER, data, REMOTE_DEVICE_NAME_PEER_LEN) == 0)) {
+		LOG_INF("Device found");
+
+		ret = bt_le_scan_stop();
+		if (ret) {
+			LOG_WRN("Stop scan failed: %d", ret);
+		}
+
+		ret = bt_conn_le_create(addr, BT_CONN_LE_CREATE_CONN, BT_LE_CONN_PARAM_MULTI,
+					&conn);
+		if (ret) {
+			LOG_ERR("Could not init connection");
+			ble_acl_start_scan();
+			return ret;
+		}
+
+		return 0;
+	}
+
+	return -ENOENT;
+}
+
+static void ad_parse(struct net_buf_simple *p_ad, const bt_addr_le_t *addr)
+{
+	while (p_ad->len > 1) {
+		uint8_t len = net_buf_simple_pull_u8(p_ad);
+		uint8_t type;
+
+		/* Check for early termination */
+		if (len == 0) {
+			return;
+		}
+
+		if (len > p_ad->len) {
+			LOG_WRN("AD malformed");
+			return;
+		}
+
+		type = net_buf_simple_pull_u8(p_ad);
+
+		if (device_found(type, p_ad->data, len - 1, addr) == 0) {
+			return;
+		}
+
+		(void)net_buf_simple_pull(p_ad, len - 1);
+	}
+}
+
+static void on_device_found(const bt_addr_le_t *addr, int8_t rssi, uint8_t type,
+			    struct net_buf_simple *p_ad)
+{
+	if (type == BT_GAP_ADV_TYPE_ADV_IND || type == BT_GAP_ADV_TYPE_EXT_ADV) {
+		/* Note: May lead to connection creation */
+		ad_parse(p_ad, addr);
+	}
+}
+
+static void ble_acl_start_scan(void)
+{
+	int ret;
+
+	ret = bt_le_scan_start(BT_LE_SCAN_PASSIVE, on_device_found);
+	if (ret) {
+		LOG_WRN("Scanning failed to start: %d", ret);
+		return;
+	}
+
+	LOG_INF("Scanning successfully started");
+}
+
+static void connected_cb(struct bt_conn *conn, uint8_t err)
+{
+	int ret;
+	char addr[BT_ADDR_LE_STR_LEN];
+
+	(void)bt_addr_le_to_str(bt_conn_get_dst(conn), addr, sizeof(addr));
+
+	if (err) {
+		LOG_ERR("ACL connection to %s failed, error %d", addr, err);
+
+		bt_conn_unref(conn);
+		ble_acl_start_scan();
+
+		return;
+	}
+
+	/* ACL connection established */
+	/* TODO: Setting TX power for connection if set to anything but 0 */
+	LOG_INF("Connected: %s", addr);
+
+	memcpy(&uuid, BT_UUID_HRS, sizeof(uuid));
+	discover_params.uuid = &uuid.uuid;
+	discover_params.func = discover_func;
+	discover_params.start_handle = BT_ATT_FIRST_ATTRIBUTE_HANDLE;
+	discover_params.end_handle = BT_ATT_LAST_ATTRIBUTE_HANDLE;
+	discover_params.type = BT_GATT_DISCOVER_PRIMARY;
+
+	ret = bt_gatt_discover(conn, &discover_params);
+	if (ret) {
+		printk("Discover failed(ret %d)\n", ret);
+		return;
+	}
+}
+
+static void disconnected_cb(struct bt_conn *conn, uint8_t reason)
+{
+	char addr[BT_ADDR_LE_STR_LEN];
+
+	(void)bt_addr_le_to_str(bt_conn_get_dst(conn), addr, sizeof(addr));
+
+	LOG_INF("Disconnected: %s (reason 0x%02x)", addr, reason);
+
+	bt_conn_unref(conn);
+
+	ble_acl_start_scan();
+}
+
+static struct bt_conn_cb conn_callbacks = {
+	.connected = connected_cb,
+	.disconnected = disconnected_cb,
+};
+
 static struct bt_audio_stream_ops stream_ops = { .sent = stream_sent_cb,
 						 .started = stream_started_cb,
 						 .stopped = stream_stopped_cb };
@@ -145,6 +357,7 @@ static void initialize(void)
 {
 	static bool initialized;
 
+	bt_conn_cb_register(&conn_callbacks);
 	if (!initialized) {
 		for (int i = 0; i < ARRAY_SIZE(streams); i++) {
 			streams_p[i] = &streams[i];
@@ -286,7 +499,7 @@ int le_audio_enable(le_audio_receive_cb recv_cb)
 	}
 
 	LOG_DBG("LE Audio enabled");
-
+	ble_acl_start_scan();
 	return 0;
 }
 
