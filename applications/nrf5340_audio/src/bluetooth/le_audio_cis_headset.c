@@ -445,7 +445,8 @@ static int initialize(le_audio_receive_cb recv_cb)
 		} else {
 			ret = bt_audio_capability_set_location(BT_AUDIO_DIR_SINK,
 							       BT_AUDIO_LOCATION_FRONT_RIGHT);
-			mic_return = false;
+			//mic_return = false;
+			mic_return = true;
 			if (ret) {
 				LOG_ERR("Location set failed");
 				return ret;

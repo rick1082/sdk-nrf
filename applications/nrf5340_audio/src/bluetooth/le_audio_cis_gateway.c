@@ -409,8 +409,8 @@ static void stream_released_cb(struct bt_audio_stream *stream)
 static void stream_recv_cb(struct bt_audio_stream *stream, const struct bt_iso_recv_info *info,
 			   struct net_buf *buf)
 {
-	static uint32_t recv_cnt;
 	bool bad_frame = false;
+	static uint32_t packet_count;
 
 	if (receive_cb == NULL) {
 		LOG_ERR("The RX callback has not been set");
@@ -420,12 +420,16 @@ static void stream_recv_cb(struct bt_audio_stream *stream, const struct bt_iso_r
 	if (!(info->flags & BT_ISO_FLAGS_VALID)) {
 		bad_frame = true;
 	}
-	
-	receive_cb(buf->data, buf->len, bad_frame, info->ts);
 
-	recv_cnt++;
-	if ((recv_cnt % 1000U) == 0U) {
-		LOG_DBG("Received %d total ISO packets", recv_cnt);
+	if (stream->conn == headset_conn[AUDIO_CH_L]) {
+		receive_cb(buf->data, buf->len, bad_frame, info->ts);
+	} else if (stream->conn == headset_conn[AUDIO_CH_R]) {
+		packet_count++;
+		if ((packet_count % 1000) == 0) {
+			LOG_INF("Packet from right = %d", packet_count);
+		}
+	} else {
+		LOG_WRN("Unknown return stream");
 	}
 }
 
@@ -539,9 +543,6 @@ static void discover_source_cb(struct bt_conn *conn, struct bt_codec *codec, str
 	int ret = 0;
 	uint8_t ep_index = 0;
 	uint8_t conn_index = 0;
-	static bool group_created;
-	struct bt_audio_unicast_group_param
-		group_params[CONFIG_BT_AUDIO_UNICAST_CLIENT_ASE_SRC_COUNT];
 
 	if (params->err) {
 		LOG_ERR("Discovery failed: %d", params->err);
@@ -585,32 +586,6 @@ static void discover_source_cb(struct bt_conn *conn, struct bt_codec *codec, str
 			LOG_WRN("Could not configure stream");
 			return;
 		}
-#if 0
-		if (!group_created) {
-			for (int i = 0; i < ARRAY_SIZE(audio_streams); i++) {
-				group_params[i].stream = &audio_streams[i];
-				group_params[i].qos = &lc3_preset_nrf5340.qos;
-
-				/* Make the first stream be sink */
-				if (i == 0) {
-					group_params[i].dir = BT_AUDIO_DIR_SINK;
-					LOG_DBG("Sink stream: %p", (void *)&audio_streams[i]);
-				} else {
-					group_params[i].dir = BT_AUDIO_DIR_SOURCE;
-					LOG_DBG("Source stream: %p", (void *)&audio_streams[i]);
-				}
-			}
-
-			ret = bt_audio_unicast_group_create(group_params, ARRAY_SIZE(audio_streams),
-							    &unicast_group);
-			if (ret) {
-				LOG_ERR("Failed to create unicast group: %d", ret);
-				return;
-			}
-
-			group_created = true;
-		}
-#endif
 	}
 }
 
