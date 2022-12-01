@@ -16,12 +16,22 @@
 #define HCI_OPCODE_VS_SET_LED_PIN_MAP BT_OP(BT_OGF_VS, 0x001)
 #define HCI_OPCODE_VS_SET_RADIO_FE_CFG BT_OP(BT_OGF_VS, 0x3A3)
 #define HCI_OPCODE_VS_SET_PRI_EXT_ADV_MAX_TX_PWR BT_OP(BT_OGF_VS, 0x000)
+#define HCI_OPCODE_VS_CONFIG_FEM_PIN BT_OP(BT_OGF_VS, 0x002)
 
 /* This bit setting enables the flag from controller from controller
  * if an ISO packet is lost.
  */
 #define BLE_HCI_VSC_OP_ISO_LOST_NOTIFY (1 << 17)
 #define BLE_HCI_VSC_OP_DIS_POWER_MONITOR (1 << 15)
+
+struct ble_hci_vs_cp_set_fem_pin {
+	uint16_t mode;
+	uint16_t txen;
+	uint16_t rxen;
+	uint16_t antsel;
+	uint16_t pdn;
+	uint16_t csn;
+} __packed;
 
 struct ble_hci_vs_rp_status {
 	int8_t status;
@@ -56,6 +66,13 @@ struct ble_hci_vs_cp_set_radio_fe_cfg {
 	uint8_t ant_id;
 } __packed;
 
+enum ble_hci_vs_max_tx_power {
+	BLE_HCI_VSC_MAX_TX_PWR_0dBm = 0,
+	BLE_HCI_VSC_MAX_TX_PWR_3dBm = 3,
+	BLE_HCI_VSC_MAX_TX_PWR_10dBm = 10,
+	BLE_HCI_VSC_MAX_TX_PWR_20dBm = 20
+};
+
 enum ble_hci_vs_tx_power {
 	BLE_HCI_VSC_TX_PWR_0dBm = 0,
 	BLE_HCI_VSC_TX_PWR_Neg1dBm = -1,
@@ -70,7 +87,6 @@ enum ble_hci_vs_tx_power {
 	BLE_HCI_VSC_TX_PWR_Neg16dBm = -16,
 	BLE_HCI_VSC_TX_PWR_Neg20dBm = -20,
 	BLE_HCI_VSC_TX_PWR_Neg40dBm = -40,
-	BLE_HCI_VSC_TX_PWR_INVALID = 99,
 	BLE_HCI_VSC_PRI_EXT_ADV_MAX_TX_PWR_DISABLE = 127,
 };
 
@@ -87,15 +103,9 @@ enum ble_hci_vs_led_function_mode {
 	PAL_LED_MODE_DISABLE_TOGGLE = 0xFF,
 };
 
-/**
- * @brief Enable VREGRADIO.VREQH in NET core for getting +3dBm TX power
- *        Note, this will add +3 dBm for the primary advertisement channels
- *        as well even ble_hci_vsc_set_pri_ext_adv_max_tx_pwr() has been used
- * @param high_power_mode	Enable VREGRADIO.VREQH or not
- *
- * @return 0 for success, error otherwise.
- */
-int ble_hci_vsc_set_radio_high_pwr_mode(bool high_power_mode);
+int ble_hci_vsc_set_fem_pin(struct ble_hci_vs_cp_set_fem_pin *fem_pin);
+
+int ble_hci_vsc_set_radio_high_pwr_mode(enum ble_hci_vs_max_tx_power max_tx_power);
 
 /**
  * @brief Set Bluetooth MAC device address

@@ -12,12 +12,7 @@
 #include <zephyr/logging/log.h>
 LOG_MODULE_DECLARE(ble, CONFIG_BLE_LOG_LEVEL);
 
-enum ble_hci_vs_max_tx_power {
-	BLE_HCI_VSC_MAX_TX_PWR_0dBm = 0,
-	BLE_HCI_VSC_MAX_TX_PWR_3dBm = 3,
-};
-
-int ble_hci_vsc_set_radio_high_pwr_mode(bool high_power_mode)
+int ble_hci_vsc_set_radio_high_pwr_mode(enum ble_hci_vs_max_tx_power max_tx_power)
 {
 	int ret;
 	struct ble_hci_vs_cp_set_radio_fe_cfg *cp;
@@ -30,13 +25,7 @@ int ble_hci_vsc_set_radio_high_pwr_mode(bool high_power_mode)
 		return -ENOMEM;
 	}
 	cp = net_buf_add(buf, sizeof(*cp));
-	if (high_power_mode) {
-		LOG_DBG("Enable VREGRADIO.VREQH");
-		cp->max_tx_power = BLE_HCI_VSC_MAX_TX_PWR_3dBm;
-	} else {
-		LOG_DBG("Disable VREGRADIO.VREQH");
-		cp->max_tx_power = BLE_HCI_VSC_MAX_TX_PWR_0dBm;
-	}
+	cp->max_tx_power = max_tx_power;
 	cp->ant_id = 0;
 
 	ret = bt_hci_cmd_send_sync(HCI_OPCODE_VS_SET_RADIO_FE_CFG, buf, &rsp);
@@ -217,5 +206,28 @@ int ble_hci_vsc_map_led_pin(enum ble_hci_vs_led_function_id id,
 	ret = rp->status;
 	net_buf_unref(rsp);
 
+	return ret;
+}
+
+int ble_hci_vsc_set_fem_pin(struct ble_hci_vs_cp_set_fem_pin *fem_pin)
+{
+	int ret;
+	struct ble_hci_vs_cp_set_fem_pin *cp;
+	struct net_buf *buf = NULL;
+
+	buf = bt_hci_cmd_create(HCI_OPCODE_VS_CONFIG_FEM_PIN, sizeof(*cp));
+	if (!buf) {
+		LOG_ERR("Unable to allocate command buffer");
+		return -ENOMEM;
+	}
+	cp = net_buf_add(buf, sizeof(*cp));
+	cp->mode = fem_pin->mode;
+	cp->txen = fem_pin->txen;
+	cp->rxen = fem_pin->rxen;
+	cp->antsel = fem_pin->antsel;
+	cp->pdn = fem_pin->pdn;
+	cp->csn = fem_pin->csn;
+
+	ret = bt_hci_cmd_send(HCI_OPCODE_VS_CONFIG_FEM_PIN, buf);
 	return ret;
 }

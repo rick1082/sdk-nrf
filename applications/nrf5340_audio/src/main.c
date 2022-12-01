@@ -25,6 +25,7 @@
 #include "audio_system.h"
 #include "channel_assignment.h"
 #include "streamctrl.h"
+#include "ble_hci_vsc.h"
 
 #if defined(CONFIG_AUDIO_DFU_ENABLE)
 #include "dfu_entry.h"
@@ -213,6 +214,21 @@ void main(void)
 
 	ret = leds_set();
 	ERR_CHK(ret);
+
+#if (CONFIG_AUDIO_DEV == 2)
+	struct ble_hci_vs_cp_set_fem_pin fem_pin = {
+		.mode = 31, .txen = 46, .rxen = 32, .antsel = 33, .pdn = 45, .csn = 0xffff
+	};
+
+	ret = ble_hci_vsc_set_fem_pin(&fem_pin);
+	ERR_CHK(ret);
+
+	ret = ble_hci_vsc_set_radio_high_pwr_mode(BLE_HCI_VSC_MAX_TX_PWR_20dBm);
+	ERR_CHK(ret);
+
+	ret = ble_hci_vsc_set_adv_tx_pwr(BLE_HCI_VSC_MAX_TX_PWR_20dBm);
+	ERR_CHK(ret);
+#endif
 
 	audio_system_init();
 
