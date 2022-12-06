@@ -162,6 +162,10 @@ config BLE_ISO_TEST_PATTERN
 	  data will be an incrementing value ranging from 0-255 and repeating.
 	  Note that enabling this feature will disable the audio stream.
 
+config STEREO_HEADSET
+	bool "Support for stereo headset"
+	default n
+
 config BLE_ISO_RX_STATS_S
 	int "Interval in seconds to print BLE ISO RX stats. 0 to deactivate"
 	default 0

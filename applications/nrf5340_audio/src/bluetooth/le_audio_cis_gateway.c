@@ -65,7 +65,13 @@ static struct bt_audio_stream audio_streams[CONFIG_BT_AUDIO_UNICAST_CLIENT_ASE_S
 static struct bt_audio_unicast_group *unicast_group;
 static struct bt_codec *remote_codec[CONFIG_BT_AUDIO_UNICAST_CLIENT_PAC_COUNT * CONFIG_BT_MAX_CONN];
 
+#if CONFIG_STEREO_HEADSET
+static struct bt_audio_lc3_preset lc3_preset_nrf5340 = BT_AUDIO_LC3_UNICAST_PRESET_RECOMMENDED(
+	(BT_AUDIO_LOCATION_FRONT_LEFT | BT_AUDIO_LOCATION_FRONT_RIGHT),
+	BT_AUDIO_CONTEXT_TYPE_MEDIA);
+#else
 static struct bt_audio_lc3_preset lc3_preset_nrf5340 = BT_AUDIO_LC3_UNICAST_PRESET_NRF5340_AUDIO;
+#endif
 
 struct worker_data {
 	uint8_t stream_index;
@@ -1120,17 +1126,20 @@ int le_audio_send(uint8_t const *const data, size_t size)
 {
 	int ret;
 	struct bt_iso_tx_info tx_info = { 0 };
+
 	size_t sdu_size = LE_AUDIO_SDU_SIZE_OCTETS(CONFIG_LC3_BITRATE);
 
+#if !CONFIG_STEREO_HEADSET
 	if (size != (sdu_size * 2)) {
 		LOG_ERR("Not enough data for stereo stream");
 		return -ECANCELED;
 	}
+#endif
 
 	if (headsets[AUDIO_CH_L].sink_stream->ep->status.state == BT_AUDIO_EP_STATE_STREAMING) {
 		ret = bt_iso_chan_get_tx_sync(headsets[AUDIO_CH_L].sink_stream->iso, &tx_info);
 	}
-#if !CONFIG_STREAM_BIDIRECTIONAL
+#if !CONFIG_STREAM_BIDIRECTIONAL || !CONFIG_STEREO_HEADSET
 	else if (headsets[AUDIO_CH_R].sink_stream->ep->status.state ==
 		 BT_AUDIO_EP_STATE_STREAMING) {
 		ret = bt_iso_chan_get_tx_sync(headsets[AUDIO_CH_R].sink_stream->iso, &tx_info);
@@ -1157,7 +1166,7 @@ int le_audio_send(uint8_t const *const data, size_t size)
 		LOG_DBG("Failed to send data to left channel");
 	}
 
-#if !CONFIG_STREAM_BIDIRECTIONAL
+#if !CONFIG_STREAM_BIDIRECTIONAL || !CONFIG_STEREO_HEADSET
 	ret = iso_stream_send(&data[sdu_size], sdu_size, headsets[AUDIO_CH_R]);
 	if (ret) {
 		LOG_DBG("Failed to send data to right channel");

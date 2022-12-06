@@ -85,7 +85,11 @@ static void audio_headset_configure(void)
 	}
 #endif /* (CONFIG_STREAM_BIDIRECTIONAL) */
 
+#if CONFIG_STEREO_HEADSET
+	sw_codec_cfg.decoder.channel_mode = SW_CODEC_STEREO;
+#else
 	sw_codec_cfg.decoder.channel_mode = SW_CODEC_MONO;
+#endif
 	sw_codec_cfg.decoder.enabled = true;
 }
 

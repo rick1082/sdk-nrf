@@ -25,6 +25,7 @@
 LOG_MODULE_REGISTER(cis_headset, CONFIG_BLE_LOG_LEVEL);
 
 #define CHANNEL_COUNT_1 BIT(0)
+#define CHANNEL_COUNT_2 BIT(1)
 #define BLE_ISO_LATENCY_MS 10
 #define BLE_ISO_RETRANSMITS 2
 #define BT_LE_ADV_FAST_CONN                                                                        \
@@ -94,8 +95,13 @@ static le_audio_receive_cb receive_cb;
 
 static struct bt_codec lc3_codec = BT_CODEC_LC3(
 	BT_CODEC_LC3_FREQ_48KHZ, (BT_CODEC_LC3_DURATION_10 | BT_CODEC_LC3_DURATION_PREFER_10),
+#if !CONFIG_STEREO_HEADSET
 	CHANNEL_COUNT_1, LE_AUDIO_SDU_SIZE_OCTETS(CONFIG_LC3_BITRATE_MIN),
 	LE_AUDIO_SDU_SIZE_OCTETS(CONFIG_LC3_BITRATE_MAX), 1u, BT_AUDIO_CONTEXT_TYPE_MEDIA);
+#else
+	BT_CODEC_LC3_CHAN_COUNT_SUPPORT(2), LE_AUDIO_SDU_SIZE_OCTETS(CONFIG_LC3_BITRATE_MIN),
+	LE_AUDIO_SDU_SIZE_OCTETS(CONFIG_LC3_BITRATE_MAX), 1u, BT_AUDIO_CONTEXT_TYPE_MEDIA);
+#endif
 
 static enum bt_audio_dir caps_dirs[] = {
 	BT_AUDIO_DIR_SINK,
@@ -195,6 +201,7 @@ static void advertising_process(struct k_work *work)
 	} else
 #endif /* CONFIG_BT_BONDABLE */
 	{
+
 		ret = bt_csis_generate_rsi(csis, csis_rsi);
 		if (ret) {
 			LOG_ERR("Failed to generate RSI (ret %d)", ret);
@@ -519,7 +526,12 @@ static int initialize(le_audio_receive_cb recv_cb)
 		}
 		if (channel == AUDIO_CH_L) {
 			csis_param.rank = CSIS_HL_RANK;
-			ret = bt_pacs_set_location(BT_AUDIO_DIR_SINK, BT_AUDIO_LOCATION_FRONT_LEFT);
+			ret = bt_pacs_set_location(BT_AUDIO_DIR_SINK,
+#if CONFIG_STEREO_HEADSET
+				(BT_AUDIO_LOCATION_FRONT_LEFT|BT_AUDIO_LOCATION_FRONT_RIGHT));
+#else
+				BT_AUDIO_LOCATION_FRONT_LEFT);
+#endif
 			if (ret) {
 				LOG_ERR("Location set failed");
 				return ret;
