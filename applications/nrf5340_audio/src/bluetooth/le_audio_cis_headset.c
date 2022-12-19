@@ -27,9 +27,6 @@ LOG_MODULE_REGISTER(cis_headset, CONFIG_BLE_LOG_LEVEL);
 #define CHANNEL_COUNT_1 BIT(0)
 #define BLE_ISO_LATENCY_MS 10
 #define BLE_ISO_RETRANSMITS 2
-#define BT_LE_ADV_FAST_CONN                                                                        \
-	BT_LE_ADV_PARAM(BT_LE_ADV_OPT_CONNECTABLE, BT_GAP_ADV_FAST_INT_MIN_1,                      \
-			BT_GAP_ADV_FAST_INT_MAX_1, NULL)
 
 #if CONFIG_STREAM_BIDIRECTIONAL
 #define HCI_ISO_BUF_ALLOC_PER_CHAN 2
@@ -53,11 +50,32 @@ static struct bt_le_ext_adv *adv_ext;
 /* Advertising data for peer connection */
 static uint8_t csis_rsi[BT_CSIS_RSI_SIZE];
 
+#define AVAILABLE_SINK_CONTEXT CONFIG_BT_PACS_SNK_CONTEXT
+#define AVAILABLE_SOURCE_CONTEXT 0x0000
+
+/* Use short ADV interval for advertising to get connected by phone easier*/
+#define BT_LE_EXT_ADV_HEADSET BT_LE_ADV_PARAM(BT_LE_ADV_OPT_EXT_ADV | \
+						BT_LE_ADV_OPT_CONNECTABLE | \
+						BT_LE_ADV_OPT_USE_NAME, \
+						0x20, \
+						0x60, \
+						NULL)
+
+static uint8_t unicast_server_addata[] = {
+	BT_UUID_16_ENCODE(BT_UUID_ASCS_VAL), /* ASCS UUID */
+	BT_AUDIO_UNICAST_ANNOUNCEMENT_TARGETED, /* Target Announcement */
+	(((AVAILABLE_SINK_CONTEXT) >>  0) & 0xFF),
+	(((AVAILABLE_SINK_CONTEXT) >>  8) & 0xFF),
+	(((AVAILABLE_SOURCE_CONTEXT) >>  0) & 0xFF),
+	(((AVAILABLE_SOURCE_CONTEXT) >>  8) & 0xFF),
+	0x00, /* Metadata length */
+};
+
 static const struct bt_data ad_peer[] = {
+	BT_CSIS_DATA_RSI(csis_rsi),
 	BT_DATA_BYTES(BT_DATA_FLAGS, (BT_LE_AD_GENERAL | BT_LE_AD_NO_BREDR)),
-	BT_DATA_BYTES(BT_DATA_UUID16_ALL, BT_UUID_16_ENCODE(BT_UUID_ASCS_VAL)),
 	BT_DATA_BYTES(BT_DATA_UUID16_ALL, BT_UUID_16_ENCODE(BT_UUID_PACS_VAL)),
-	BT_CSIS_DATA_RSI(csis_rsi)
+	BT_DATA(BT_DATA_SVC_DATA16, unicast_server_addata, ARRAY_SIZE(unicast_server_addata)),
 };
 
 /* Callback for locking state change from server side */
@@ -176,11 +194,13 @@ static void advertising_process(struct k_work *work)
 		adv_param = *BT_LE_ADV_CONN_DIR_LOW_DUTY(&addr);
 		adv_param.id = BT_ID_DEFAULT;
 		adv_param.options |= BT_LE_ADV_OPT_DIR_ADDR_RPA;
+		adv_param.interval_min = 0x20;
+		adv_param.interval_max = 0x30;
 
 		/* Clear ADV data set before update to direct advertising */
 		ret = bt_le_ext_adv_set_data(adv_ext, NULL, 0, NULL, 0);
 		if (ret) {
-			LOG_ERR("Failed to clear advertising data. Err: %d", ret);
+			LOG_ERR("Failed to set advertising data. Err: %d", ret);
 			return;
 		}
 
@@ -199,8 +219,8 @@ static void advertising_process(struct k_work *work)
 		if (ret) {
 			LOG_ERR("Failed to generate RSI (ret %d)", ret);
 			return;
-		}
 
+		}
 		ret = bt_le_ext_adv_set_data(adv_ext, ad_peer, ARRAY_SIZE(ad_peer), NULL, 0);
 		if (ret) {
 			LOG_ERR("Failed to set advertising data. Err: %d", ret);
@@ -577,7 +597,7 @@ static int initialize(le_audio_receive_cb recv_cb)
 			return ret;
 		}
 
-		ret = bt_le_ext_adv_create(BT_LE_EXT_ADV_CONN_NAME, NULL, &adv_ext);
+		ret = bt_le_ext_adv_create(BT_LE_EXT_ADV_HEADSET, NULL, &adv_ext);
 		if (ret) {
 			LOG_ERR("Failed to create advertising set");
 			return ret;
