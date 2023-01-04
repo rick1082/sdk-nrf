@@ -13,7 +13,15 @@
 #define DEVICE_NAME_PEER CONFIG_BT_DEVICE_NAME
 #define DEVICE_NAME_PEER_LEN (sizeof(DEVICE_NAME_PEER) - 1)
 
-#define LE_AUDIO_SDU_SIZE_OCTETS(bitrate) (bitrate / (1000000 / CONFIG_AUDIO_FRAME_DURATION_US) / 8)
+#define CONFIG_STEREO_HEADSET
+#ifdef CONFIG_STEREO_HEADSET
+#define CH_NUM 2
+#else
+#define CH_NUM 1
+#endif
+
+#define LE_AUDIO_SDU_SIZE_OCTETS(bitrate)                                                          \
+	((bitrate / (1000000 / CONFIG_AUDIO_FRAME_DURATION_US) / 8) * CH_NUM)
 #define LE_AUDIO_PRES_DELAY_US 10000u
 
 #if CONFIG_TRANSPORT_CIS
