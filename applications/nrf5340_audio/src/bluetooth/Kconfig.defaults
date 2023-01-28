@@ -82,7 +82,7 @@ config BT_MAX_CONN
 	default 1
 
 config BT_ISO_MAX_CHAN
-	default 2 if STREAM_BIDIRECTIONAL
+	default 2 if STREAM_BIDIRECTIONAL # TODO: Remove?
 	default 1
 
 config BT_ASCS_ASE_SNK_COUNT
@@ -138,24 +138,22 @@ config BT_ISO_TX_BUF_COUNT
 	default 2
 
 config BT_MAX_CONN
-	default 1 if STREAM_BIDIRECTIONAL
 	default 2
 
 config BT_ISO_MAX_CHAN
-	default 2
+	default 4
 
 config BT_MAX_PAIRED
 	default 2
 
 config BT_AUDIO_UNICAST_CLIENT_GROUP_STREAM_COUNT
-	default 2
+	default 4
 
 config BT_AUDIO_UNICAST_CLIENT_ASE_SNK_COUNT
-	default 1 if STREAM_BIDIRECTIONAL
 	default 2
 
 config BT_AUDIO_UNICAST_CLIENT_ASE_SRC_COUNT
-	default 1 if STREAM_BIDIRECTIONAL
+	default 2 if STREAM_BIDIRECTIONAL
 	default 0
 
 config BT_VCP_VOL_CTLR

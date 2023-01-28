@@ -10,7 +10,7 @@ menu "Bluetooth"
 
 config BLE_ACL_CONN_INTERVAL
 	int "Bluetooth LE ACL Connection Interval (x*1.25ms)"
-	default 80
+	default 16 # Here
 
 config BLE_ACL_SLAVE_LATENCY
 	int "Bluetooth LE Slave Latency"

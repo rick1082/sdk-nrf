@@ -179,7 +179,7 @@ visible if SW_CODEC_LC3
 
 config LC3_BITRATE
 	int "Bitrate for LC3"
-	default 96000 if BT_AUDIO_BROADCAST_RECOMMENDED || BT_AUDIO_UNICAST_RECOMMENDED
+	default 64000 if BT_AUDIO_BROADCAST_RECOMMENDED || BT_AUDIO_UNICAST_RECOMMENDED
 	default 32000 if BT_AUDIO_BROADCAST_16_2_1 || BT_AUDIO_BROADCAST_16_2_2 || BT_AUDIO_UNICAST_16_2_1
 	default 48000 if BT_AUDIO_BROADCAST_24_2_1 || BT_AUDIO_BROADCAST_24_2_2 || BT_AUDIO_UNICAST_24_2_1
 
@@ -190,6 +190,10 @@ config LC3_BITRATE_MAX
 config LC3_BITRATE_MIN
 	int "Min bitrate for LC3"
 	default 32000
+
+config LC3_BITRATE_MIC
+	int "Bitrate for LC3 microphone return"
+	default 64000
 
 osource "../nrfxlib/lc3/Kconfig"
 

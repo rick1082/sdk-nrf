@@ -574,10 +574,20 @@ static int initialize(le_audio_receive_cb recv_cb)
 			return ret;
 		}
 
-		ret = bt_pacs_set_location(BT_AUDIO_DIR_SOURCE, BT_AUDIO_LOCATION_FRONT_LEFT);
-		if (ret) {
-			LOG_ERR("Location set failed");
-			return ret;
+		if (channel == AUDIO_CH_L) {
+			ret = bt_pacs_set_location(BT_AUDIO_DIR_SOURCE,
+						   BT_AUDIO_LOCATION_FRONT_LEFT);
+			if (ret) {
+				LOG_ERR("Location set failed");
+				return ret;
+			}
+		} else {
+			ret = bt_pacs_set_location(BT_AUDIO_DIR_SOURCE,
+						   BT_AUDIO_LOCATION_FRONT_RIGHT);
+			if (ret) {
+				LOG_ERR("Location set failed");
+				return ret;
+			}
 		}
 #else
 		ret = bt_pacs_set_available_contexts(BT_AUDIO_DIR_SINK,
