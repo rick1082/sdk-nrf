@@ -250,7 +250,7 @@ int ble_core_init(ble_core_ready_t ready_callback)
 	}
 
 	k_work_init(&net_core_ctrl_version_get_work, work_net_core_ctrl_version_get);
-	k_timer_start(&net_core_watchdog_timer, K_NO_WAIT, K_MSEC(NET_CORE_WATCHDOG_TIME_MS));
+	/* k_timer_start(&net_core_watchdog_timer, K_NO_WAIT, K_MSEC(NET_CORE_WATCHDOG_TIME_MS)); */
 
 	return 0;
 }

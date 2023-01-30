@@ -752,7 +752,7 @@ static void ble_acl_start_scan(void)
 
 	ret = bt_le_scan_start(BT_LE_SCAN_PASSIVE, on_device_found);
 	if (ret && ret != -EALREADY) {
-		LOG_WRN("Scanning failed to start: %d", ret);
+		LOG_ERR("Scanning failed to start: %d", ret);
 		return;
 	}
 
