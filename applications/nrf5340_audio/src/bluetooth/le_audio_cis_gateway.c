@@ -180,9 +180,10 @@ static void unicast_client_location_cb(struct bt_conn *conn, enum bt_audio_dir d
 	int ret;
 
 	if (dir == BT_AUDIO_DIR_SINK) {
-		if (loc == BT_AUDIO_LOCATION_FRONT_LEFT) {
+		if ((loc & BT_AUDIO_LOCATION_FRONT_LEFT) || (loc & BT_AUDIO_LOCATION_SIDE_LEFT)) {
 			headsets[AUDIO_CH_L].headset_conn = conn;
-		} else if (loc == BT_AUDIO_LOCATION_FRONT_RIGHT) {
+		} else if ((loc & BT_AUDIO_LOCATION_FRONT_RIGHT) ||
+			   (loc & BT_AUDIO_LOCATION_SIDE_RIGHT)) {
 			headsets[AUDIO_CH_R].headset_conn = conn;
 		} else {
 			LOG_ERR("Channel location not supported");
@@ -643,14 +644,8 @@ static void ad_parse(struct net_buf_simple *p_ad, const bt_addr_le_t *addr)
 static void on_device_found(const bt_addr_le_t *addr, int8_t rssi, uint8_t type,
 			    struct net_buf_simple *p_ad)
 {
-	/* Direct advertising has no payload, so no need to parse */
-	if (type == BT_GAP_ADV_TYPE_ADV_DIRECT_IND) {
-		if (bonded_num) {
-			bt_foreach_bond(BT_ID_DEFAULT, bond_connect, (void *)addr);
-		}
-		return;
-	} else if ((type == BT_GAP_ADV_TYPE_ADV_IND || type == BT_GAP_ADV_TYPE_EXT_ADV) &&
-		   (bonded_num < CONFIG_BT_MAX_PAIRED)) {
+	if ((type == BT_GAP_ADV_TYPE_ADV_IND || type == BT_GAP_ADV_TYPE_EXT_ADV ||
+	     type == BT_GAP_ADV_TYPE_SCAN_RSP)) {
 		/* Note: May lead to connection creation */
 		ad_parse(p_ad, addr);
 	}
@@ -666,7 +661,7 @@ static void ble_acl_start_scan(void)
 	int scan_window =
 		bt_codec_cfg_get_frame_duration_us(&lc3_preset_sink.codec) / 1000 / 0.625 * 2;
 	struct bt_le_scan_param *scan_param =
-		BT_LE_SCAN_PARAM(BT_LE_SCAN_TYPE_PASSIVE, BT_LE_SCAN_OPT_FILTER_DUPLICATE,
+		BT_LE_SCAN_PARAM(BT_LE_SCAN_TYPE_ACTIVE, BT_LE_SCAN_OPT_FILTER_DUPLICATE,
 				 scan_interval, scan_window);
 
 	/* Reset number of bonds found */
