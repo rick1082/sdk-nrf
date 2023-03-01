@@ -22,6 +22,7 @@
 #include "ble_hci_vsc.h"
 #include "audio_datapath.h"
 #include "channel_assignment.h"
+#include <bluetooth/services/nus.h>
 
 #include <zephyr/logging/log.h>
 LOG_MODULE_REGISTER(cis_headset, CONFIG_BLE_LOG_LEVEL);
@@ -522,10 +523,19 @@ static void security_changed_cb(struct bt_conn *conn, bt_security_t level, enum 
 	}
 }
 
+static void bt_receive_cb(struct bt_conn *conn, const uint8_t *const data, uint16_t len)
+{
+	LOG_HEXDUMP_INF(data, len, "NUS received:");
+}
+
 static struct bt_conn_cb conn_callbacks = {
 	.connected = connected_cb,
 	.disconnected = disconnected_cb,
 	.security_changed = security_changed_cb,
+};
+
+static struct bt_nus_cb nus_cb = {
+	.received = bt_receive_cb,
 };
 
 static struct bt_audio_stream_ops stream_ops = { .recv = stream_recv_cb,
@@ -539,6 +549,7 @@ static int initialize(le_audio_receive_cb recv_cb)
 	static bool initialized;
 
 	if (!initialized) {
+		bt_nus_init(&nus_cb);
 		bt_audio_unicast_server_register_cb(&unicast_server_cb);
 		bt_conn_cb_register(&conn_callbacks);
 #if (CONFIG_BT_VCP_VOL_REND)
