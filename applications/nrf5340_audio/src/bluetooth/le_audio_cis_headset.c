@@ -22,6 +22,8 @@
 #include "ble_hci_vsc.h"
 #include "audio_datapath.h"
 #include "channel_assignment.h"
+#include <bluetooth/services/nus.h>
+#include <stdio.h>
 
 #include <zephyr/logging/log.h>
 LOG_MODULE_REGISTER(cis_headset, CONFIG_BLE_LOG_LEVEL);
@@ -97,6 +99,8 @@ struct bt_csip_set_member_register_param csip_param = {
 
 static le_audio_receive_cb receive_cb;
 
+struct k_work_delayable dummy_data_send_work;
+
 static struct bt_codec lc3_codec = BT_CODEC_LC3(
 	BT_AUDIO_CODEC_CAPABILIY_FREQ, (BT_CODEC_LC3_DURATION_10 | BT_CODEC_LC3_DURATION_PREFER_10),
 	CHANNEL_COUNT_1, LE_AUDIO_SDU_SIZE_OCTETS(CONFIG_LC3_BITRATE_MIN),
@@ -144,6 +148,16 @@ static enum audio_channel channel;
 
 /* Bonded address queue */
 K_MSGQ_DEFINE(bonds_queue, sizeof(bt_addr_le_t), CONFIG_BT_MAX_PAIRED, 4);
+
+static void work_dummy_data_send(struct k_work *work)
+{
+	char dummy_string[30];
+
+	sprintf(dummy_string, "message from ch %d", channel);
+	bt_nus_send(NULL, dummy_string, sizeof(dummy_string));
+	k_work_reschedule(&dummy_data_send_work, K_MSEC(100));
+}
+
 
 static void print_codec(const struct bt_codec *codec)
 {
@@ -486,6 +500,8 @@ static void connected_cb(struct bt_conn *conn, uint8_t err)
 #endif /* (CONFIG_NRF_21540_ACTIVE) */
 
 	default_conn = bt_conn_ref(conn);
+
+	k_work_schedule(&dummy_data_send_work, K_MSEC(1000));
 }
 
 static void disconnected_cb(struct bt_conn *conn, uint8_t reason)
@@ -496,6 +512,8 @@ static void disconnected_cb(struct bt_conn *conn, uint8_t reason)
 		LOG_WRN("Disconnected on wrong conn");
 		return;
 	}
+
+	k_work_cancel_delayable(&dummy_data_send_work);
 
 	bt_addr_le_to_str(bt_conn_get_dst(conn), addr, sizeof(addr));
 
@@ -522,10 +540,19 @@ static void security_changed_cb(struct bt_conn *conn, bt_security_t level, enum 
 	}
 }
 
+static void bt_receive_cb(struct bt_conn *conn, const uint8_t *const data, uint16_t len)
+{
+	LOG_HEXDUMP_INF(data, len, "NUS received:");
+}
+
 static struct bt_conn_cb conn_callbacks = {
 	.connected = connected_cb,
 	.disconnected = disconnected_cb,
 	.security_changed = security_changed_cb,
+};
+
+static struct bt_nus_cb nus_cb = {
+	.received = bt_receive_cb,
 };
 
 static struct bt_audio_stream_ops stream_ops = { .recv = stream_recv_cb,
@@ -539,8 +566,10 @@ static int initialize(le_audio_receive_cb recv_cb)
 	static bool initialized;
 
 	if (!initialized) {
+		bt_nus_init(&nus_cb);
 		bt_audio_unicast_server_register_cb(&unicast_server_cb);
 		bt_conn_cb_register(&conn_callbacks);
+		k_work_init_delayable(&dummy_data_send_work, work_dummy_data_send);
 #if (CONFIG_BT_VCP_VOL_REND)
 		ret = ble_vcs_server_init();
 		if (ret) {

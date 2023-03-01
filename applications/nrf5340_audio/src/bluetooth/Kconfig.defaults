@@ -75,6 +75,9 @@ config NVS_LOG_LEVEL
 # HEADSET
 if AUDIO_DEV = 1
 
+config BT_NUS
+	default y
+
 config BT_AUDIO_UNICAST_SERVER
 	default y
 
@@ -133,6 +136,12 @@ endif # AUDIO_DEV = 1 (HEADSET)
 
 # GATEWAY
 if AUDIO_DEV = 2
+
+config BT_GATT_DM
+	default y
+
+config BT_NUS_CLIENT
+	default y
 
 config BT_AUDIO_UNICAST_CLIENT
 	default y

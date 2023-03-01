@@ -18,6 +18,10 @@
 #include "ble_hci_vsc.h"
 #include "ble_audio_services.h"
 #include "channel_assignment.h"
+#include <bluetooth/services/nus.h>
+#include <bluetooth/services/nus_client.h>
+#include <bluetooth/gatt_dm.h>
+#include <stdio.h>
 
 #include <zephyr/logging/log.h>
 LOG_MODULE_REGISTER(cis_gateway, CONFIG_BLE_LOG_LEVEL);
@@ -39,7 +43,6 @@ LISTIFY(CONFIG_BT_AUDIO_UNICAST_CLIENT_ASE_SNK_COUNT, NET_BUF_POOL_ITERATE, (;))
 static struct net_buf_pool *iso_tx_pools[] = { LISTIFY(CONFIG_BT_AUDIO_UNICAST_CLIENT_ASE_SNK_COUNT,
 						       NET_BUF_POOL_PTR_ITERATE, (,)) };
 /* clang-format on */
-
 struct le_audio_headset {
 	char *ch_name;
 	bool hci_wrn_printed;
@@ -55,6 +58,7 @@ struct le_audio_headset {
 	atomic_t iso_tx_pool_alloc;
 	struct k_work_delayable stream_start_sink_work;
 	struct k_work_delayable stream_start_source_work;
+	struct k_work_delayable dummy_data_send_work;
 };
 
 struct worker_data {
@@ -69,6 +73,8 @@ struct temp_codec_cap_storage {
 	struct bt_codec *cap[CONFIG_BT_AUDIO_UNICAST_CLIENT_PAC_COUNT];
 };
 
+static struct bt_nus_client *nus[CONFIG_BT_MAX_CONN];
+static struct bt_nus_client nus_client[CONFIG_BT_MAX_CONN];
 static struct le_audio_headset headsets[CONFIG_BT_MAX_CONN];
 
 K_MSGQ_DEFINE(kwork_msgq, sizeof(struct worker_data),
@@ -107,6 +113,8 @@ static struct bt_audio_discover_params audio_source_discover_param[CONFIG_BT_MAX
 
 static int discover_source(struct bt_conn *conn);
 #endif /* CONFIG_STREAM_BIDIRECTIONAL */
+
+static void gatt_discover(struct bt_conn *conn);
 
 /**
  * @brief  Check if an endpoint is in the given state
@@ -181,8 +189,10 @@ static void unicast_client_location_cb(struct bt_conn *conn, enum bt_audio_dir d
 	if (dir == BT_AUDIO_DIR_SINK) {
 		if (loc == BT_AUDIO_LOCATION_FRONT_LEFT) {
 			headsets[AUDIO_CH_L].headset_conn = conn;
+			k_work_schedule(&headsets[AUDIO_CH_L].dummy_data_send_work, K_MSEC(1000));
 		} else if (loc == BT_AUDIO_LOCATION_FRONT_RIGHT) {
 			headsets[AUDIO_CH_R].headset_conn = conn;
+			k_work_schedule(&headsets[AUDIO_CH_R].dummy_data_send_work, K_MSEC(1000));
 		} else {
 			LOG_ERR("Channel location not supported");
 			ret = bt_conn_disconnect(conn, BT_HCI_ERR_REMOTE_USER_TERM_CONN);
@@ -429,6 +439,25 @@ static struct bt_audio_stream_ops stream_ops = {
 	.recv = stream_recv_cb,
 };
 
+static void work_dummy_data_send(struct k_work *work)
+{
+	int ret;
+	char dummy_string[30];
+	static uint8_t channel_index;
+
+	struct le_audio_headset *headset =
+		CONTAINER_OF(work, struct le_audio_headset, dummy_data_send_work);
+
+	ret = channel_index_get(headset->headset_conn, &channel_index);
+	if (ret) {
+		LOG_ERR("Channel index not found");
+		return;
+	}
+	sprintf(dummy_string, "message to headset %d", channel_index);
+	bt_nus_client_send(&nus_client[channel_index], dummy_string, sizeof(dummy_string));
+	k_work_reschedule(&headsets[channel_index].dummy_data_send_work, K_MSEC(10));
+}
+
 static void work_stream_start(struct k_work *work)
 {
 	int ret;
@@ -626,6 +655,8 @@ static void discover_sink_cb(struct bt_conn *conn, struct bt_codec *codec, struc
 	/* Free up the slot in temp_codec_cap */
 	temp_codec_cap[temp_cap_index].conn = NULL;
 	memset(temp_codec_cap[temp_cap_index].cap, 0, sizeof(temp_codec_cap[temp_cap_index].cap));
+
+	gatt_discover(conn);
 
 #if CONFIG_STREAM_BIDIRECTIONAL
 	ret = discover_source(conn);
@@ -918,6 +949,7 @@ static void connected_cb(struct bt_conn *conn, uint8_t err)
 
 static void disconnected_headset_cleanup(uint8_t chan_idx)
 {
+	k_work_cancel_delayable(&headsets[chan_idx].dummy_data_send_work);
 	headsets[chan_idx].headset_conn = NULL;
 	k_work_cancel_delayable(&headsets[chan_idx].stream_start_sink_work);
 	headsets[chan_idx].sink_ep = NULL;
@@ -987,6 +1019,62 @@ static int discover_source(struct bt_conn *conn)
 }
 #endif /* CONFIG_STREAM_BIDIRECTIONAL */
 
+static void discovery_complete(struct bt_gatt_dm *dm, void *context)
+{
+	int ret;
+	uint8_t channel_index;
+
+	ret = channel_index_get(bt_gatt_dm_conn_get(dm), &channel_index);
+	if (ret) {
+		LOG_ERR("Channel index not found");
+	}
+
+	LOG_INF("Service discovery completed");
+	nus[channel_index] = context;
+
+	bt_gatt_dm_data_print(dm);
+
+	bt_nus_handles_assign(dm, nus[channel_index]);
+	bt_nus_subscribe_receive(nus[channel_index]);
+
+	bt_gatt_dm_data_release(dm);
+}
+
+static void discovery_service_not_found(struct bt_conn *conn, void *context)
+{
+	LOG_INF("Service not found");
+}
+
+static void discovery_error(struct bt_conn *conn, int err, void *context)
+{
+	LOG_WRN("Error while discovering GATT database: (%d)", err);
+}
+
+struct bt_gatt_dm_cb discovery_cb = {
+	.completed = discovery_complete,
+	.service_not_found = discovery_service_not_found,
+	.error_found = discovery_error,
+};
+
+static void gatt_discover(struct bt_conn *conn)
+{
+	int ret;
+	uint8_t channel_index;
+
+	ret = channel_index_get(conn, &channel_index);
+	if (ret) {
+		LOG_ERR("Channel index not found");
+	}
+
+	ret = bt_gatt_dm_start(conn, BT_UUID_NUS_SERVICE, &discovery_cb,
+			       &nus_client[channel_index]);
+	if (ret) {
+		LOG_ERR("could not start the discovery procedure, error "
+			"code: %d",
+			ret);
+	}
+}
+
 static void security_changed_cb(struct bt_conn *conn, bt_security_t level, enum bt_security_err err)
 {
 	int ret;
@@ -999,6 +1087,7 @@ static void security_changed_cb(struct bt_conn *conn, bt_security_t level, enum 
 		}
 	} else {
 		LOG_DBG("Security changed: level %d", level);
+
 		ret = discover_sink(conn);
 		if (ret) {
 			LOG_WRN("Failed to discover sink: %d", ret);
@@ -1129,6 +1218,35 @@ static int iso_stream_send(uint8_t const *const data, size_t size, struct le_aud
 	return 0;
 }
 
+static uint8_t ble_data_received(struct bt_nus_client *nus, const uint8_t *data, uint16_t len)
+{
+	LOG_HEXDUMP_INF(data, len, "NUS received:");
+	return BT_GATT_ITER_CONTINUE;
+}
+
+static int nus_client_init(void)
+{
+	int err;
+	struct bt_nus_client_init_param init = { .cb = {
+							 .received = ble_data_received,
+						 } };
+
+	err = bt_nus_client_init(&nus_client[0], &init);
+	if (err) {
+		LOG_ERR("NUS Client initialization failed (err %d)", err);
+		return err;
+	}
+
+	err = bt_nus_client_init(&nus_client[1], &init);
+	if (err) {
+		LOG_ERR("NUS Client initialization failed (err %d)", err);
+		return err;
+	}
+
+	LOG_INF("NUS Client module initialized");
+	return err;
+}
+
 static int initialize(le_audio_receive_cb recv_cb)
 {
 	int ret;
@@ -1150,7 +1268,10 @@ static int initialize(le_audio_receive_cb recv_cb)
 		headsets[i].source_stream.ops = &stream_ops;
 		k_work_init_delayable(&headsets[i].stream_start_sink_work, work_stream_start);
 		k_work_init_delayable(&headsets[i].stream_start_source_work, work_stream_start);
+		k_work_init_delayable(&headsets[i].dummy_data_send_work, work_dummy_data_send);
 	}
+
+	nus_client_init();
 
 	ret = bt_audio_unicast_client_register_cb(&unicast_client_cbs);
 	if (ret != 0) {
