@@ -407,12 +407,16 @@ int le_audio_send(struct encoded_audio enc_audio)
 	size_t num_streams = ARRAY_SIZE(audio_streams);
 	size_t data_size_pr_stream;
 
+#if (CONFIG_BIS_STEREO_HEADSET)
+	data_size_pr_stream = enc_audio.size;
+#else
 	if ((enc_audio.num_ch == 1) || (enc_audio.num_ch == num_streams)) {
 		data_size_pr_stream = enc_audio.size / enc_audio.num_ch;
 	} else {
 		LOG_ERR("Num encoded channels must be 1 or equal to num streams");
 		return -EINVAL;
 	}
+#endif
 
 	if (data_size_pr_stream != LE_AUDIO_SDU_SIZE_OCTETS(CONFIG_LC3_BITRATE)) {
 		LOG_ERR("The encoded data size does not match the SDU size");

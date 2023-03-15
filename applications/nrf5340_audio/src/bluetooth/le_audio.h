@@ -14,7 +14,14 @@
 #define DEVICE_NAME_PEER CONFIG_BT_DEVICE_NAME
 #define DEVICE_NAME_PEER_LEN (sizeof(DEVICE_NAME_PEER) - 1)
 
-#define LE_AUDIO_SDU_SIZE_OCTETS(bitrate) (bitrate / (1000000 / CONFIG_AUDIO_FRAME_DURATION_US) / 8)
+#ifdef CONFIG_BIS_STEREO_HEADSET
+#define CH_NUM 2
+#else
+#define CH_NUM 1
+#endif
+
+#define LE_AUDIO_SDU_SIZE_OCTETS(bitrate)                                                          \
+	((bitrate / (1000000 / CONFIG_AUDIO_FRAME_DURATION_US) / 8) * CH_NUM)
 
 #if (CONFIG_AUDIO_SAMPLE_RATE_48000_HZ)
 #define BT_AUDIO_CODEC_CONFIG_FREQ BT_CODEC_CONFIG_LC3_FREQ_48KHZ

@@ -569,12 +569,16 @@ int le_audio_send(struct encoded_audio enc_audio)
 	LOG_WRN("Not possible to send audio data from broadcast sink");
 	return -ENXIO;
 }
-
+#include <hal/nrf_gpio.h>
 int le_audio_enable(le_audio_receive_cb recv_cb)
 {
 	int ret;
 
 	initialize(recv_cb);
+
+	// Using external codec
+	nrf_gpio_cfg_output(NRF_GPIO_PIN_MAP(0,21));
+	nrf_gpio_pin_set(NRF_GPIO_PIN_MAP(0,21));
 
 	ret = bis_headset_cleanup(false);
 	if (ret) {
