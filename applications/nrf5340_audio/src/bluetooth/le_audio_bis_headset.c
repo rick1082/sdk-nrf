@@ -23,7 +23,10 @@ LOG_MODULE_REGISTER(bis_headset, CONFIG_BLE_LOG_LEVEL);
 
 BUILD_ASSERT(CONFIG_BT_AUDIO_BROADCAST_SNK_STREAM_COUNT <= 2,
 	     "A maximum of two broadcast streams are currently supported");
-
+#define BT_LE_SCAN_PASSIVE_CONTINOUS BT_LE_SCAN_PARAM(BT_LE_SCAN_TYPE_PASSIVE, \
+					    BT_LE_SCAN_OPT_FILTER_DUPLICATE, \
+					    0x60, \
+					    0x60)
 struct audio_codec_info {
 	uint8_t id;
 	uint16_t cid;
@@ -252,7 +255,7 @@ static void pa_sync_lost_cb(struct bt_audio_broadcast_sink *sink)
 
 	LOG_INF("Restarting scanning for broadcast sources after sync lost");
 
-	ret = bt_audio_broadcast_sink_scan_start(BT_LE_SCAN_PASSIVE);
+	ret = bt_audio_broadcast_sink_scan_start(BT_LE_SCAN_PASSIVE_CONTINOUS);
 	if (ret) {
 		LOG_ERR("Unable to start scanning for broadcast sources");
 	}
@@ -429,75 +432,14 @@ static int bis_headset_cleanup(bool from_sync_lost_cb)
 	return 0;
 }
 
-static int change_active_audio_stream(void)
-{
-	int ret;
-
-	if (broadcast_sink != NULL) {
-		if (playing_state) {
-			ret = bt_audio_broadcast_sink_stop(broadcast_sink);
-			if (ret) {
-				LOG_WRN("Failed to stop sink");
-			}
-		}
-
-		/* Wrap streams */
-		if (++active_stream_index >= sync_stream_cnt) {
-			active_stream_index = 0;
-		}
-
-		active_stream.stream = &audio_streams[active_stream_index];
-		active_stream.codec = &audio_codec_info[active_stream_index];
-
-		LOG_INF("Changed to stream %d", active_stream_index);
-	} else {
-		LOG_WRN("No streams");
-		ret = -ECANCELED;
-	}
-
-	return 0;
-}
-
-static int change_active_brdcast_src(void)
-{
-	int ret;
-
-	/* If the stream has been paused do not stop the sink again */
-	ret = bis_headset_cleanup(!playing_state);
-	if (ret) {
-		LOG_ERR("Error cleaning up");
-		return ret;
-	}
-
-	/* Wrap broadcaster names */
-	if (++active_stream.brdcast_src_name_idx >= ARRAY_SIZE(brdcast_src_names)) {
-		active_stream.brdcast_src_name_idx = 0;
-	}
-	LOG_INF("Switching to %s", brdcast_src_names[active_stream.brdcast_src_name_idx]);
-
-	LOG_DBG("Restarting scanning for broadcast sources");
-	ret = bt_audio_broadcast_sink_scan_start(BT_LE_SCAN_PASSIVE);
-	if (ret && ret != -EALREADY) {
-		LOG_ERR("Unable to start scanning for broadcast sources");
-		return ret;
-	}
-
-	/* Always start playing new source */
-	playing_state = true;
-
-	return 0;
-}
-
 int le_audio_user_defined_button_press(enum le_audio_user_defined_action action)
 {
 	int ret;
 
 	if (action == LE_AUDIO_USER_DEFINED_ACTION_1) {
 		LOG_DBG("User defined action 1");
-		ret = change_active_audio_stream();
 	} else if (action == LE_AUDIO_USER_DEFINED_ACTION_2) {
 		LOG_DBG("User defined action 2");
-		ret = change_active_brdcast_src();
 	} else {
 		LOG_WRN("User defined action not recognised (%d)", action);
 		ret = -ECANCELED;
@@ -557,8 +499,10 @@ int le_audio_play_pause(void)
 			LOG_ERR("Failed to stop broadcast sink: %d", ret);
 			return ret;
 		}
+		ret = bt_audio_broadcast_sink_scan_stop();
 	} else {
 		playing_state = true;
+		bt_audio_broadcast_sink_scan_start(BT_LE_SCAN_PASSIVE_CONTINOUS);
 	}
 
 	return 0;
@@ -584,7 +528,7 @@ int le_audio_enable(le_audio_receive_cb recv_cb)
 
 	LOG_INF("Scanning for broadcast sources");
 
-	ret = bt_audio_broadcast_sink_scan_start(BT_LE_SCAN_PASSIVE);
+	ret = bt_audio_broadcast_sink_scan_start(BT_LE_SCAN_PASSIVE_CONTINOUS);
 	if (ret) {
 		return ret;
 	}

@@ -146,31 +146,12 @@ static struct bt_audio_stream_ops stream_ops = { .sent = stream_sent_cb,
 						 .started = stream_started_cb,
 						 .stopped = stream_stopped_cb };
 
-#if (CONFIG_AURACAST)
-static void public_broadcast_features_set(uint8_t *features)
-{
-	int freq = bt_codec_cfg_get_freq(&lc3_preset.codec);
-
-	if (features == NULL) {
-		LOG_ERR("No pointer to features");
-		return;
-	}
-
-	if (IS_ENABLED(CONFIG_BT_AUDIO_BROADCAST_ENCRYPTED)) {
-		*features |= 0x01;
-	}
-
-	if (freq == STANDARD_QUALITY_16KHZ || freq == STANDARD_QUALITY_24KHZ) {
-		*features |= 0x02;
-	} else if (freq == HIGH_QUALITY_48KHZ) {
-		*features |= 0x04;
-	} else {
-		LOG_WRN("%dkHz is not compatible with Auracast, choose 16kHz, 24kHz or 48kHz",
-			freq);
-	}
-}
-#endif /* (CONFIG_AURACAST) */
-
+/** Non-connectable extended advertising with @ref BT_LE_ADV_OPT_USE_NAME */
+#define BT_LE_EXT_ADV_NCONN_NAME_FAST BT_LE_ADV_PARAM(BT_LE_ADV_OPT_EXT_ADV | \
+						 BT_LE_ADV_OPT_USE_NAME, \
+						 BT_GAP_ADV_FAST_INT_MIN_1, \
+						 BT_GAP_ADV_FAST_INT_MAX_1, \
+						 NULL)
 static int adv_create(void)
 {
 	int ret;
@@ -180,19 +161,14 @@ static int adv_create(void)
 	/* Buffer for Public Broadcast Announcement */
 	NET_BUF_SIMPLE_DEFINE(base_buf, 128);
 
-#if (CONFIG_AURACAST)
-	NET_BUF_SIMPLE_DEFINE(pba_buf, BT_UUID_SIZE_16 + 2);
-	struct bt_data ext_ad[4];
-	uint8_t pba_features = 0;
-#else
 	struct bt_data ext_ad[3];
-#endif /* (CONFIG_AURACAST) */
+
 	struct bt_data per_ad;
 
 	uint32_t broadcast_id = 0;
 
 	/* Create a non-connectable non-scannable advertising set */
-	ret = bt_le_ext_adv_create(BT_LE_EXT_ADV_NCONN_NAME, NULL, &adv);
+	ret = bt_le_ext_adv_create(BT_LE_EXT_ADV_NCONN_NAME_FAST, NULL, &adv);
 	if (ret) {
 		LOG_ERR("Unable to create extended advertising set: %d", ret);
 		return ret;
@@ -227,17 +203,6 @@ static int adv_create(void)
 	ext_ad[2] = (struct bt_data)BT_DATA_BYTES(BT_DATA_GAP_APPEARANCE,
 						  (CONFIG_BT_DEVICE_APPEARANCE >> 0) & 0xff,
 						  (CONFIG_BT_DEVICE_APPEARANCE >> 8) & 0xff);
-
-#if (CONFIG_AURACAST)
-	public_broadcast_features_set(&pba_features);
-
-	net_buf_simple_add_le16(&pba_buf, 0x1856);
-	net_buf_simple_add_u8(&pba_buf, pba_features);
-	/* No metadata, set length to 0 */
-	net_buf_simple_add_u8(&pba_buf, 0x00);
-
-	ext_ad[3] = (struct bt_data)BT_DATA(BT_DATA_SVC_DATA16, pba_buf.data, pba_buf.len);
-#endif /* (CONFIG_AURACAST) */
 
 	ret = bt_le_ext_adv_set_data(adv, ext_ad, ARRAY_SIZE(ext_ad), NULL, 0);
 	if (ret) {
@@ -375,25 +340,43 @@ int le_audio_volume_mute(void)
 int le_audio_play_pause(void)
 {
 	int ret;
+	static bool play_state = true;
 
-	/* All streams in a broadcast source is in the same state,
-	 * so we can just check the first stream
-	 */
-	if (audio_streams[0].ep == NULL) {
-		LOG_ERR("stream->ep is NULL");
-		return -ECANCELED;
-	}
-
-	if (audio_streams[0].ep->status.state == BT_AUDIO_EP_STATE_STREAMING) {
+	if (play_state == true) {
 		ret = bt_audio_broadcast_source_stop(broadcast_source);
 		if (ret) {
 			LOG_WRN("Failed to stop broadcast, ret: %d", ret);
 		}
+		/* Enable Periodic Advertising */
+		ret = bt_le_per_adv_stop(adv);
+		if (ret) {
+			LOG_ERR("Failed to bt_le_per_adv_stop: %d", ret);
+		}
+
+		ret = bt_le_ext_adv_stop(adv);
+		if (ret) {
+			LOG_ERR("Failed to bt_le_ext_adv_stop: %d", ret);
+		}
+
+		play_state = false;
+
 	} else {
+		ret = bt_le_ext_adv_start(adv, BT_LE_EXT_ADV_START_DEFAULT);
+		if (ret) {
+			LOG_ERR("Failed to start extended advertising: %d", ret);
+		}
+
+		/* Enable Periodic Advertising */
+		ret = bt_le_per_adv_start(adv);
+		if (ret) {
+			LOG_ERR("Failed to enable periodic advertising: %d", ret);
+		}
+
 		ret = bt_audio_broadcast_source_start(broadcast_source, adv);
 		if (ret) {
 			LOG_WRN("Failed to start broadcast, ret: %d", ret);
 		}
+		play_state = true;
 	}
 
 	return ret;
