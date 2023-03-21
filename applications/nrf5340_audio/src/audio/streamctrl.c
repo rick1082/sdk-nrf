@@ -293,10 +293,7 @@ static void button_evt_handler(struct button_evt event)
 
 	switch (event.button_pin) {
 	case BUTTON_PLAY_PAUSE:
-		if (IS_ENABLED(CONFIG_WALKIE_TALKIE_DEMO)) {
-			LOG_DBG("Play/pause not supported in walkie-talkie mode");
-			return;
-		}
+
 		/* Starts/pauses the audio stream */
 		ret = le_audio_play_pause();
 		if (ret) {

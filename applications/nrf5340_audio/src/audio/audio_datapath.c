@@ -597,8 +597,8 @@ static void audio_datapath_i2s_blk_complete(uint32_t frame_start_ts, uint32_t *r
 
 					if ((ctrl_blk.out.total_blk_underruns %
 					     UNDERRUN_LOG_INTERVAL_BLKS) == 0) {
-						LOG_WRN("In I2S TX underrun condition, total: %d",
-							ctrl_blk.out.total_blk_underruns);
+						//LOG_WRN("In I2S TX underrun condition, total: %d",
+						//	ctrl_blk.out.total_blk_underruns);
 					}
 				}
 

@@ -55,15 +55,15 @@ static const char *const brdcast_src_names[] = { CONFIG_BT_AUDIO_BROADCAST_NAME,
 
 static struct bt_audio_broadcast_sink *broadcast_sink;
 
-static struct bt_audio_stream audio_streams[CONFIG_BT_AUDIO_BROADCAST_SNK_STREAM_COUNT];
-static struct bt_audio_stream *audio_streams_p[ARRAY_SIZE(audio_streams)];
+static struct bt_audio_stream audio_streams_sink[CONFIG_BT_AUDIO_BROADCAST_SNK_STREAM_COUNT];
+static struct bt_audio_stream *audio_streams_sink_p[ARRAY_SIZE(audio_streams_sink)];
 static struct audio_codec_info audio_codec_info[CONFIG_BT_AUDIO_BROADCAST_SNK_STREAM_COUNT];
 static uint32_t bis_index_bitfields[CONFIG_BT_AUDIO_BROADCAST_SNK_STREAM_COUNT];
 
 static struct active_audio_stream active_stream;
 
 /* The values of sync_stream_cnt and active_stream_index must never become larger
- * than the sizes of the arrays above (audio_streams etc.)
+ * than the sizes of the arrays above (audio_streams_sink etc.)
  */
 static uint8_t sync_stream_cnt;
 static uint8_t active_stream_index;
@@ -286,9 +286,9 @@ static void base_recv_cb(struct bt_audio_broadcast_sink *sink, const struct bt_a
 
 				bis_index_bitfields[sync_stream_cnt] = BIT(index);
 
-				audio_streams[sync_stream_cnt].codec =
+				audio_streams_sink[sync_stream_cnt].codec =
 					(struct bt_codec *)&base->subgroups[i].codec;
-				get_codec_info(audio_streams[sync_stream_cnt].codec,
+				get_codec_info(audio_streams_sink[sync_stream_cnt].codec,
 					       &audio_codec_info[sync_stream_cnt]);
 				print_codec(&audio_codec_info[sync_stream_cnt]);
 
@@ -296,20 +296,20 @@ static void base_recv_cb(struct bt_audio_broadcast_sink *sink, const struct bt_a
 					sync_stream_cnt, i);
 
 				sync_stream_cnt += 1;
-				if (sync_stream_cnt >= ARRAY_SIZE(audio_streams)) {
+				if (sync_stream_cnt >= ARRAY_SIZE(audio_streams_sink)) {
 					break;
 				}
 			}
 		}
 
-		if (sync_stream_cnt >= ARRAY_SIZE(audio_streams)) {
+		if (sync_stream_cnt >= ARRAY_SIZE(audio_streams_sink)) {
 			break;
 		}
 	}
 
 	/* Set the initial active stream based on the defined channel of the device */
 	channel_assignment_get((enum audio_channel *)&active_stream_index);
-	active_stream.stream = &audio_streams[active_stream_index];
+	active_stream.stream = &audio_streams_sink[active_stream_index];
 	active_stream.codec = &audio_codec_info[active_stream_index];
 
 	if (suitable_stream_found) {
@@ -344,7 +344,7 @@ static void syncable_cb(struct bt_audio_broadcast_sink *sink, bool encrypted)
 	LOG_INF("Syncing to broadcast stream index %d", active_stream_index);
 
 	ret = bt_audio_broadcast_sink_sync(broadcast_sink, bis_index_bitfields[active_stream_index],
-					   audio_streams_p, bis_encryption_key);
+					   audio_streams_sink_p, bis_encryption_key);
 	if (ret) {
 		LOG_WRN("Unable to sync to broadcast source, ret: %d", ret);
 		return;
@@ -393,9 +393,9 @@ static void initialize(le_audio_receive_cb recv_cb)
 
 		bt_audio_broadcast_sink_register_cb(&broadcast_sink_cbs);
 
-		for (int i = 0; i < ARRAY_SIZE(audio_streams); i++) {
-			audio_streams_p[i] = &audio_streams[i];
-			audio_streams[i].ops = &stream_ops;
+		for (int i = 0; i < ARRAY_SIZE(audio_streams_sink); i++) {
+			audio_streams_sink_p[i] = &audio_streams_sink[i];
+			audio_streams_sink[i].ops = &stream_ops;
 		}
 
 		initialized = true;
