@@ -100,7 +100,7 @@ config BT_DEVICE_APPEARANCE
 	default 2112
 
 config BT_GAP_PERIPHERAL_PREF_PARAMS
-	default n
+	default y
 
 config BT_VCP_VOL_REND
 	default y

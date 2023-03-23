@@ -1165,10 +1165,27 @@ static void security_changed_cb(struct bt_conn *conn, bt_security_t level, enum 
 	}
 }
 
+void le_param_updated_cb(struct bt_conn *conn, uint16_t interval, uint16_t latency,
+			 uint16_t timeout)
+{
+	LOG_WRN("Connection parameter updated");
+	LOG_WRN("\tCI = 0x%X, latency = %d, timeout = %d", interval, latency, timeout);
+}
+
+bool le_param_req_cb(struct bt_conn *conn, struct bt_le_conn_param *param)
+{
+	LOG_WRN("Got request from peripheral");
+	LOG_WRN("\tCI min = 0x%X, CI max = 0x%X, lat = %d, timeout = %d", param->interval_min,
+		param->interval_max, param->latency, param->timeout);
+	return true;
+}
+
 static struct bt_conn_cb conn_callbacks = {
 	.connected = connected_cb,
 	.disconnected = disconnected_cb,
 	.security_changed = security_changed_cb,
+	.le_param_req = le_param_req_cb,
+	.le_param_updated = le_param_updated_cb,
 };
 
 #if (CONFIG_BT_MCS)
