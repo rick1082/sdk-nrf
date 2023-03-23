@@ -212,7 +212,7 @@ int button_handler_init(void)
 		}
 
 		ret = gpio_pin_interrupt_configure(gpio_53_dev, btn_cfg[i].btn_pin,
-						   GPIO_INT_EDGE_TO_INACTIVE);
+						   GPIO_INT_EDGE_BOTH);
 		if (ret) {
 			return ret;
 		}

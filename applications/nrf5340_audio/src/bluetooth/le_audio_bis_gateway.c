@@ -502,6 +502,10 @@ static struct bt_audio_stream_ops stream_ops = { .sent = stream_sent_cb,
 						 BT_GAP_ADV_FAST_INT_MIN_1, \
 						 BT_GAP_ADV_FAST_INT_MAX_1, \
 						 NULL)
+
+#define BT_LE_PER_ADV_FAST BT_LE_PER_ADV_PARAM(0x0050, \
+						  0x0078, \
+						  BT_LE_PER_ADV_OPT_NONE)
 static int adv_create(void)
 {
 	int ret;
@@ -525,7 +529,7 @@ static int adv_create(void)
 	}
 
 	/* Set periodic advertising parameters */
-	ret = bt_le_per_adv_set_param(adv, BT_LE_PER_ADV_DEFAULT);
+	ret = bt_le_per_adv_set_param(adv, BT_LE_PER_ADV_FAST);
 	if (ret) {
 		LOG_ERR("Failed to set periodic advertising parameters (ret %d)", ret);
 		return ret;
@@ -893,7 +897,7 @@ int le_audio_enable(le_audio_receive_cb recv_cb)
 	}
 
 	LOG_DBG("LE Audio enabled");
-
+	le_audio_play_pause();
 	return 0;
 }
 
