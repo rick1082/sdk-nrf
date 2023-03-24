@@ -476,7 +476,9 @@ static void stream_stop_cb(struct bt_audio_stream *stream)
 
 static void connected_cb(struct bt_conn *conn, uint8_t err)
 {
+	int ret;
 	char addr[BT_ADDR_LE_STR_LEN];
+	struct bt_conn_info info;
 
 	if (err) {
 		default_conn = NULL;
@@ -485,7 +487,12 @@ static void connected_cb(struct bt_conn *conn, uint8_t err)
 
 	bt_addr_le_to_str(bt_conn_get_dst(conn), addr, sizeof(addr));
 	LOG_INF("Connected: %s", addr);
-
+	ret = bt_conn_get_info(conn, &info);
+	if (ret) {
+		LOG_ERR("bt_conn_get_info() returned %d", err);
+		return;
+	}
+	LOG_WRN("\tCI = 0x%X, latency = %d, timeout = %d", info.le.interval, info.le.latency, info.le.timeout);
 #if (CONFIG_NRF_21540_ACTIVE)
 	int ret;
 	uint16_t conn_handle;
@@ -555,7 +562,7 @@ void le_param_updated_cb(struct bt_conn *conn, uint16_t interval, uint16_t laten
 
 bool le_param_req_cb(struct bt_conn *conn, struct bt_le_conn_param *param)
 {
-	LOG_WRN("Connection parameter request");
+	LOG_WRN("Connection parameter request from gateway");
 	LOG_WRN("\tCI min = 0x%X, CI max = 0x%X, lat = %d, timeout = %d", param->interval_min,
 		param->interval_max, param->latency, param->timeout);
 	return true;

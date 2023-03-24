@@ -489,7 +489,20 @@ static void stream_enabled_cb(struct bt_audio_stream *stream)
 	}
 #endif /* CONFIG_STREAM_BIDIRECTIONAL */
 }
+static void headset_connection_parameter_update(struct bt_conn *conn)
+{
+	int ret;
+	struct bt_le_conn_param param;
 
+	param.interval_max = 0x100;
+	param.interval_min = 0x80;
+	param.latency = 0;
+	param.timeout = 400;
+	ret = bt_conn_le_param_update(conn, &param);
+	if (ret) {
+		LOG_ERR("Failed to trigger connection parameter update");
+	}
+}
 static void stream_started_cb(struct bt_audio_stream *stream)
 {
 	int ret;
@@ -504,6 +517,8 @@ static void stream_started_cb(struct bt_audio_stream *stream)
 
 	ret = ctrl_events_le_audio_event_send(LE_AUDIO_EVT_STREAMING);
 	ERR_CHK(ret);
+
+	headset_connection_parameter_update(stream->conn);
 }
 
 static void stream_metadata_updated_cb(struct bt_audio_stream *stream)
@@ -1038,6 +1053,7 @@ static void connected_cb(struct bt_conn *conn, uint8_t err)
 {
 	int ret;
 	char addr[BT_ADDR_LE_STR_LEN];
+	struct bt_conn_info info;
 
 	(void)bt_addr_le_to_str(bt_conn_get_dst(conn), addr, sizeof(addr));
 
@@ -1052,6 +1068,14 @@ static void connected_cb(struct bt_conn *conn, uint8_t err)
 
 	/* ACL connection established */
 	LOG_INF("Connected: %s", addr);
+
+	ret = bt_conn_get_info(conn, &info);
+	if (ret) {
+		LOG_ERR("bt_conn_get_info() returned %d", err);
+		return;
+	}
+	LOG_WRN("\tCI = 0x%X, latency = %d, timeout = %d", info.le.interval, info.le.latency, info.le.timeout);
+
 
 #if (CONFIG_NRF_21540_ACTIVE)
 	uint16_t conn_handle;
