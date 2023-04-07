@@ -6,31 +6,36 @@
 
 #include <zephyr/types.h>
 #include <stddef.h>
-#include <string.h>
 #include <errno.h>
-#include <zephyr/sys/byteorder.h>
 #include <zephyr/kernel.h>
 
 #include <zephyr/bluetooth/bluetooth.h>
 #include <zephyr/bluetooth/hci.h>
 #include <zephyr/bluetooth/conn.h>
+#include <zephyr/bluetooth/uuid.h>
+#include <zephyr/bluetooth/gatt.h>
 #include <zephyr/bluetooth/iso.h>
 #include <zephyr/settings/settings.h>
+#include <zephyr/sys/byteorder.h>
 #include <zephyr/logging/log.h>
-#include "nrf5340_audio_common.h"
-#include "nrfx_clock.h"
+#include <nrfx_timer.h>
+#include <nrfx_clock.h>
+#include <zephyr/init.h>
+#include <nrfx_dppi.h>
+#include <nrfx_ipc.h>
 #include <dk_buttons_and_leds.h>
+
 LOG_MODULE_REGISTER(ble);
 
-#define IS_LEFT_PERIPHERAL 0
+#define IS_LEFT_PERIPHERAL 1
 
 #if IS_LEFT_PERIPHERAL
-#define DEVICE_NAME             "sync_demo_L"
+#define DEVICE_NAME "sync_demo_L"
 #else
-#define DEVICE_NAME             "sync_demo_R"
+#define DEVICE_NAME "sync_demo_R"
 #endif
 
-#define DEVICE_NAME_LEN         (sizeof(DEVICE_NAME) - 1)
+#define DEVICE_NAME_LEN (sizeof(DEVICE_NAME) - 1)
 static const struct bt_data ad[] = {
 	BT_DATA_BYTES(BT_DATA_FLAGS, (BT_LE_AD_GENERAL | BT_LE_AD_NO_BREDR)),
 	BT_DATA(BT_DATA_NAME_COMPLETE, DEVICE_NAME, DEVICE_NAME_LEN),
@@ -39,10 +44,28 @@ static struct k_work_delayable iso_send_work;
 static struct bt_iso_chan iso_chan;
 static uint16_t seq_num;
 static atomic_t iso_tx_pool_alloc;
-NET_BUF_POOL_FIXED_DEFINE(tx_pool, 1, BT_ISO_SDU_BUF_SIZE(CONFIG_BT_ISO_TX_MTU), 8,
-			  NULL);
+NET_BUF_POOL_FIXED_DEFINE(tx_pool, 1, BT_ISO_SDU_BUF_SIZE(CONFIG_BT_ISO_TX_MTU), 8, NULL);
 #define HCI_ISO_BUF_ALLOC_PER_CHAN 2
 #define PRESENTATION_DELAY_US 20000
+#define ISO_MAX_PAYLOAD_RX 5
+#define ISO_MAX_PAYLOAD_TX 30
+
+#define ISO_SYNC_TIMER_I2S_FRAME_START_EVT_CAPTURE_CHANNEL 0
+#define ISO_SYNC_TIMER_CURR_TIME_CAPTURE_CHANNEL 1
+#define ISO_SYNC_TIMER_INSTANCE_NUMBER 1
+
+#define ISO_SYNC_TIMER_NET_APP_IPC_EVT NRF_IPC_EVENT_RECEIVE_4
+
+const nrfx_timer_t iso_sync_timer_instance = NRFX_TIMER_INSTANCE(ISO_SYNC_TIMER_INSTANCE_NUMBER);
+
+static uint8_t dppi_channel_timer_clear;
+static uint8_t test_led_state;
+static nrfx_timer_config_t cfg = { .frequency = NRF_TIMER_FREQ_1MHz,
+				   .mode = NRF_TIMER_MODE_TIMER,
+				   .bit_width = NRF_TIMER_BIT_WIDTH_32,
+				   .interrupt_priority = NRFX_TIMER_DEFAULT_CONFIG_IRQ_PRIORITY,
+				   .p_context = &test_led_state };
+
 static void iso_timer_timeout(struct k_work *work)
 {
 	int ret;
@@ -105,18 +128,18 @@ BT_CONN_CB_DEFINE(conn_callbacks) = {
 	.connected = connected,
 	.disconnected = disconnected,
 };
-int test_led_state;
+
 static void iso_recv(struct bt_iso_chan *chan, const struct bt_iso_recv_info *info,
-		struct net_buf *buf)
+		     struct net_buf *buf)
 {
-	//LOG_INF("Incoming data channel %p len %u", chan, buf->len);
-	uint32_t recv_frame_ts = nrfx_timer_capture(&audio_sync_timer_instance,
-						AUDIO_SYNC_TIMER_CURR_TIME_CAPTURE_CHANNEL);
+	uint32_t recv_frame_ts = nrfx_timer_capture(&iso_sync_timer_instance,
+						    ISO_SYNC_TIMER_CURR_TIME_CAPTURE_CHANNEL);
 	uint32_t wait_time = PRESENTATION_DELAY_US - (recv_frame_ts - info->ts);
 	test_led_state = buf->data[0];
-	nrfx_timer_compare(&audio_sync_timer_instance, AUDIO_SYNC_TIMER_CURR_TIME_CAPTURE_CHANNEL, recv_frame_ts+wait_time, true);
-	LOG_INF("%d sdu_ref = %d, ts = %d, diff = %d, wait = %d",test_led_state, info->ts, recv_frame_ts, recv_frame_ts - info->ts, wait_time);
-
+	nrfx_timer_compare(&iso_sync_timer_instance, ISO_SYNC_TIMER_CURR_TIME_CAPTURE_CHANNEL,
+			   recv_frame_ts + wait_time, true);
+	LOG_INF("%d sdu_ref = %d, ts = %d, diff = %d, wait = %d", test_led_state, info->ts,
+		recv_frame_ts, recv_frame_ts - info->ts, wait_time);
 }
 
 static void iso_connected(struct bt_iso_chan *chan)
@@ -137,19 +160,19 @@ static void iso_sent(struct bt_iso_chan *chan)
 	atomic_dec(&iso_tx_pool_alloc);
 }
 static struct bt_iso_chan_ops iso_ops = {
-	.recv		= iso_recv,
-	.connected	= iso_connected,
-	.disconnected	= iso_disconnected,
+	.recv = iso_recv,
+	.connected = iso_connected,
+	.disconnected = iso_disconnected,
 	.sent = iso_sent,
 };
 
 static struct bt_iso_chan_io_qos iso_rx = {
-	.sdu = 3,
+	.sdu = ISO_MAX_PAYLOAD_RX,
 	.path = NULL,
 };
 
 static struct bt_iso_chan_io_qos iso_tx = {
-	//.sdu = CONFIG_BT_ISO_TX_MTU,
+	.sdu = ISO_MAX_PAYLOAD_TX,
 	.path = NULL,
 };
 
@@ -163,8 +186,7 @@ static struct bt_iso_chan iso_chan = {
 	.qos = &iso_qos,
 };
 
-static int iso_accept(const struct bt_iso_accept_info *info,
-		      struct bt_iso_chan **chan)
+static int iso_accept(const struct bt_iso_accept_info *info, struct bt_iso_chan **chan)
 {
 	LOG_INF("Incoming request from %p", (void *)info->acl);
 
@@ -184,6 +206,13 @@ static struct bt_iso_server iso_server = {
 #endif /* CONFIG_BT_SMP */
 	.accept = iso_accept,
 };
+
+static void iso_sync_timer_event_handler(nrf_timer_event_t event_type, void *ctx)
+{
+	uint8_t led_state = *(uint8_t *)ctx;
+	dk_set_led(DK_LED2, led_state);
+}
+
 
 static int hfclock_config_and_start(void)
 {
@@ -207,6 +236,7 @@ static int hfclock_config_and_start(void)
 void main(void)
 {
 	int err;
+
 	hfclock_config_and_start();
 	err = bt_enable(NULL);
 	if (err) {
@@ -239,3 +269,42 @@ void main(void)
 	LOG_INF("Advertising successfully started");
 	k_work_init_delayable(&iso_send_work, iso_timer_timeout);
 }
+
+
+
+static int iso_sync_timer_init(const struct device *unused)
+{
+	nrfx_err_t ret;
+
+	ARG_UNUSED(unused);
+
+	ret = nrfx_timer_init(&iso_sync_timer_instance, &cfg, iso_sync_timer_event_handler);
+	if (ret - NRFX_ERROR_BASE_NUM) {
+		LOG_ERR("nrfx timer init error - Return value: %d", ret);
+		return ret;
+	}
+	IRQ_CONNECT(TIMER1_IRQn, 4, nrfx_timer_1_irq_handler, NULL, 0);
+	nrfx_timer_enable(&iso_sync_timer_instance);
+
+	/* Initialize functionality for synchronization between APP and NET core */
+	ret = nrfx_dppi_channel_alloc(&dppi_channel_timer_clear);
+	if (ret - NRFX_ERROR_BASE_NUM) {
+		LOG_ERR("nrfx DPPI channel alloc error (timer clear) - Return value: %d", ret);
+		return ret;
+	}
+
+	nrf_ipc_publish_set(NRF_IPC, ISO_SYNC_TIMER_NET_APP_IPC_EVT, dppi_channel_timer_clear);
+	nrf_timer_subscribe_set(iso_sync_timer_instance.p_reg, NRF_TIMER_TASK_CLEAR,
+				dppi_channel_timer_clear);
+	ret = nrfx_dppi_channel_enable(dppi_channel_timer_clear);
+	if (ret - NRFX_ERROR_BASE_NUM) {
+		LOG_ERR("nrfx DPPI channel enable error (timer clear) - Return value: %d", ret);
+		return ret;
+	}
+
+	LOG_DBG("ISO sync timer initialized");
+
+	return 0;
+}
+
+SYS_INIT(iso_sync_timer_init, POST_KERNEL, CONFIG_KERNEL_INIT_PRIORITY_DEFAULT);

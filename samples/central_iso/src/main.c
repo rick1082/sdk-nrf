@@ -19,7 +19,7 @@
 #include <zephyr/sys/byteorder.h>
 #include <zephyr/logging/log.h>
 #include <nrfx_timer.h>
-#include "nrfx_clock.h"
+#include <nrfx_clock.h>
 #include <zephyr/init.h>
 #include <nrfx_dppi.h>
 #include <nrfx_ipc.h>
@@ -34,11 +34,20 @@ static void start_scan(void);
 #define DEVICE_NAME_PEER_R_LEN (sizeof(DEVICE_NAME_PEER_R) - 1)
 #define CIS_CONN_RETRY_TIMES 5
 #define ISO_MAX_PAYLOAD_TX 5
-#define BT_LE_CONN_PARAM_MULTI BT_LE_CONN_PARAM(80, 80, 0, 400)
+#define ISO_MAX_PAYLOAD_RX 30
+#define ISO_RTN_TIMES 1
+#define BT_LE_SCAN_PASSIVE_INTENSIVE                                                               \
+	BT_LE_SCAN_PARAM(BT_LE_SCAN_TYPE_PASSIVE, BT_LE_SCAN_OPT_FILTER_DUPLICATE, 0x10,           \
+			 0x10) /* set scan window and interval to 10ms*/
+
+#define BT_LE_CONN_PARAM_MULTI BT_LE_CONN_PARAM(80, 80, 0, 400) /* set ACL interval to 100ms*/
 #define ISO_SYNC_TIMER_CURR_TIME_CAPTURE_CHANNEL 1
 #define ISO_SYNC_TIMER_TIMER_TRIGGER_CHANNEL 0
-
-const nrfx_timer_t iso_sync_timer_instance;
+#define LED_TOGGLE_INTERVAL_US (1000000) /* 1 s */
+#define PRESENTATION_DELAY_US (20000) /*20 ms*/
+#define ISO_INTERVAL_US (5000) /* 5ms */
+#define SELF_OFFSET_US (1302)
+//const nrfx_timer_t iso_sync_timer_instance;
 
 static struct bt_conn *gateway_conn_peer[CONFIG_BT_MAX_CONN];
 static struct k_work iso_send_work;
@@ -47,12 +56,12 @@ static struct bt_iso_chan iso_chan[CONFIG_BT_ISO_MAX_CHAN];
 static struct bt_iso_chan *iso_chan_p[CONFIG_BT_ISO_MAX_CHAN];
 static struct k_work_delayable iso_cis_conn_work;
 
-#define ISO_INTERVAL_US 5000 //(5U * USEC_PER_MSEC) /* 10 ms */
+#define HCI_ISO_BUF_ALLOC_PER_CHAN 1
 NET_BUF_POOL_FIXED_DEFINE(tx_pool_l, 1, BT_ISO_SDU_BUF_SIZE(ISO_MAX_PAYLOAD_TX), 8, NULL);
 NET_BUF_POOL_FIXED_DEFINE(tx_pool_r, 1, BT_ISO_SDU_BUF_SIZE(ISO_MAX_PAYLOAD_TX), 8, NULL);
+
 #define ISO_SYNC_TIMER_INSTANCE_NUMBER 1
 #define LED_TOGGLING_TIMER_INSTANCE_NUMBER 2
-
 #define ISO_SYNC_TIMER_NET_APP_IPC_EVT NRF_IPC_EVENT_RECEIVE_4
 
 const nrfx_timer_t iso_sync_timer_instance = NRFX_TIMER_INSTANCE(ISO_SYNC_TIMER_INSTANCE_NUMBER);
@@ -60,7 +69,7 @@ const nrfx_timer_t led_toggling_timer_instance =
 	NRFX_TIMER_INSTANCE(LED_TOGGLING_TIMER_INSTANCE_NUMBER);
 
 static uint8_t dppi_channel_timer_clear;
-static uint8_t toggle_state = 0;
+
 static nrfx_timer_config_t cfg = { .frequency = NRF_TIMER_FREQ_1MHz,
 				   .mode = NRF_TIMER_MODE_TIMER,
 				   .bit_width = NRF_TIMER_BIT_WIDTH_32,
@@ -70,6 +79,7 @@ static nrfx_timer_config_t cfg = { .frequency = NRF_TIMER_FREQ_1MHz,
 atomic_t iso_tx_pool_alloc[2];
 
 static uint32_t seq_num[2];
+static uint8_t self_led_state;
 
 struct worker_data {
 	uint8_t channel;
@@ -191,51 +201,41 @@ static uint8_t iso_chan_to_idx(struct bt_iso_chan *chan)
 	return UINT8_MAX;
 }
 
-/**
- * @brief Send ISO data on timeout
- *
- * This will send an increasing amount of ISO data, starting from 1 octet.
- *
- * First iteration : 0x00
- * Second iteration: 0x00 0x01
- * Third iteration : 0x00 0x01 0x02
- *
- * And so on, until it wraps around the configured ISO TX MTU (CONFIG_BT_ISO_TX_MTU)
- *
- * @param work Pointer to the work structure
- */
-#define HCI_ISO_BUF_ALLOC_PER_CHAN 1
-static void iso_timer_timeout(struct k_work *work)
-//static void iso_timer_timeout()
+static void iso_send_work_handler(struct k_work *work)
 {
 	int ret;
 	static uint8_t buf_data[ISO_MAX_PAYLOAD_TX];
 	static bool hci_wrn_printed[2];
 	struct net_buf *buf;
 	struct bt_iso_tx_info tx_info = { 0 };
-
 	static int prev_tx_info[2];
-	static int delay_time = 0;
-	buf_data[0] = toggle_state;
+	static uint8_t led_toggling_state = 0;
+	uint32_t last_sent;
+
+	buf_data[0] = led_toggling_state;
 
 	if (iso_chan[0].state == BT_ISO_STATE_CONNECTED) {
+		/* Try to get the time when last ISO packet is sent */
 		ret = bt_iso_chan_get_tx_sync(&iso_chan[0], &tx_info);
 		if (tx_info.ts != 0 && !ret) {
-			uint32_t curr_frame_ts = nrfx_timer_capture(
+			uint32_t curr_time = nrfx_timer_capture(
 				&iso_sync_timer_instance, ISO_SYNC_TIMER_CURR_TIME_CAPTURE_CHANNEL);
-			nrfx_timer_compare(&iso_sync_timer_instance,
-					   ISO_SYNC_TIMER_TIMER_TRIGGER_CHANNEL,
-					   (uint32_t)(curr_frame_ts + 20000 + 1300), true);
-			LOG_WRN("ts0 %d, diff = %d cur %d", tx_info.ts,
-				tx_info.ts - prev_tx_info[0], curr_frame_ts - tx_info.ts);
+			self_led_state = led_toggling_state;
+			nrfx_timer_compare(
+				&iso_sync_timer_instance, ISO_SYNC_TIMER_TIMER_TRIGGER_CHANNEL,
+				(uint32_t)(curr_time + PRESENTATION_DELAY_US + SELF_OFFSET_US),
+				true);
+			/*
+				ts0: the time when last ISO packet sent from CIS0
+				diff: the diff time between two sent ISO pacekts
+				last_sent: the diff between current time and last sent ISO packet
+			*/
+			last_sent = curr_time - tx_info.ts;
+			LOG_WRN("ts0 %d, diff = %d, last_sent %d", tx_info.ts,
+				tx_info.ts - prev_tx_info[0], last_sent);
 			prev_tx_info[0] = tx_info.ts;
-			if (curr_frame_ts - tx_info.ts < 2500 ||
-			    curr_frame_ts - tx_info.ts > 7000) {
-				LOG_ERR("too close");
-				//k_sleep(K_MSEC(1));
-				delay_time = 2500;
-			} else {
-				delay_time = 0;
+			if (last_sent < 2500 || last_sent > 7000) {
+				LOG_ERR("Too close to the last begin or end of last sent packet, might not able to send ISO packets in the same interval");
 			}
 		}
 
@@ -269,10 +269,11 @@ static void iso_timer_timeout(struct k_work *work)
 	if (iso_chan[1].state == BT_ISO_STATE_CONNECTED) {
 		ret = bt_iso_chan_get_tx_sync(&iso_chan[1], &tx_info);
 		if (tx_info.ts != 0 && !ret) {
-			uint32_t curr_frame_ts = nrfx_timer_capture(
+			uint32_t curr_time = nrfx_timer_capture(
 				&iso_sync_timer_instance, ISO_SYNC_TIMER_CURR_TIME_CAPTURE_CHANNEL);
-			LOG_WRN("ts1 %d, diff = %d cur %d", tx_info.ts,
-				tx_info.ts - prev_tx_info[1], curr_frame_ts - tx_info.ts);
+			last_sent = curr_time - tx_info.ts;
+			LOG_WRN("ts1 %d, diff = %d last_sent %d", tx_info.ts,
+				tx_info.ts - prev_tx_info[1], last_sent);
 			prev_tx_info[1] = tx_info.ts;
 		}
 
@@ -301,10 +302,8 @@ static void iso_timer_timeout(struct k_work *work)
 			LOG_INF("Send dummy data to channel 1");
 		}
 	}
-	toggle_state = !toggle_state;
+	led_toggling_state = !led_toggling_state;
 	nrfx_timer_compare_int_enable(&led_toggling_timer_instance, NRF_TIMER_CC_CHANNEL0);
-	//k_work_schedule(&iso_send_work, K_USEC(ISO_INTERVAL_US));
-	//k_work_schedule(&iso_send_work, K_USEC(1000000-500 - delay_time));
 }
 
 static int device_found(uint8_t type, const uint8_t *data, uint8_t data_len,
@@ -393,9 +392,6 @@ static void on_device_found(const bt_addr_le_t *addr, int8_t rssi, uint8_t type,
 	}
 }
 
-#define BT_LE_SCAN_PASSIVE_INTENSIVE                                                               \
-	BT_LE_SCAN_PARAM(BT_LE_SCAN_TYPE_PASSIVE, BT_LE_SCAN_OPT_FILTER_DUPLICATE, 0x10, 0x10)
-
 static void start_scan(void)
 {
 	int err;
@@ -414,7 +410,6 @@ static void iso_recv(struct bt_iso_chan *chan, const struct bt_iso_recv_info *in
 		     struct net_buf *buf)
 {
 	static int pkt_counter[2];
-	//LOG_INF("Incoming data channel %p len %u\n", chan, buf->len);
 	if (chan == iso_chan_p[0]) {
 		pkt_counter[0]++;
 		if (pkt_counter[0] % 1000 == 0) {
@@ -428,7 +423,6 @@ static void iso_recv(struct bt_iso_chan *chan, const struct bt_iso_recv_info *in
 				pkt_counter[1]);
 		}
 	}
-	//iso_print_data(buf->data, buf->len);
 }
 
 static void iso_connected(struct bt_iso_chan *chan)
@@ -438,19 +432,20 @@ static void iso_connected(struct bt_iso_chan *chan)
 	chan_num = iso_chan_to_idx(chan);
 
 	LOG_INF("chan %d connected", chan_num);
-	//k_work_schedule(&iso_send_work, K_MSEC(5000));
+	;
 	nrfx_timer_compare_int_enable(&led_toggling_timer_instance, NRF_TIMER_CC_CHANNEL0);
 }
 
 static void iso_disconnected(struct bt_iso_chan *chan, uint8_t reason)
 {
 	LOG_INF("ISO Channel %p disconnected (reason 0x%02x)", chan, reason);
-	//k_work_cancel_delayable(&iso_send_work);
+
 	if (chan == iso_chan_p[0]) {
 		atomic_clear(&iso_tx_pool_alloc[0]);
 	} else if (chan == iso_chan_p[1]) {
 		atomic_clear(&iso_tx_pool_alloc[1]);
 	}
+	nrfx_timer_compare_int_disable(&led_toggling_timer_instance, NRF_TIMER_CC_CHANNEL0);
 }
 
 static void iso_sent(struct bt_iso_chan *chan)
@@ -500,14 +495,14 @@ int ble_trans_iso_cis_connect(struct bt_conn *conn)
 static struct bt_iso_chan_io_qos iso_tx = {
 	.sdu = ISO_MAX_PAYLOAD_TX,
 	.phy = BT_GAP_LE_PHY_2M,
-	.rtn = 1,
+	.rtn = ISO_RTN_TIMES,
 	.path = NULL,
 };
 
 static struct bt_iso_chan_io_qos iso_rx = {
-	.sdu = 30,
+	.sdu = ISO_MAX_PAYLOAD_RX,
 	.phy = BT_GAP_LE_PHY_2M,
-	.rtn = 1,
+	.rtn = ISO_RTN_TIMES,
 	.path = NULL,
 };
 
@@ -602,7 +597,7 @@ static struct bt_iso_cig_param cis_create_param = {
 	.sca = BT_GAP_SCA_UNKNOWN,
 	.packing = BT_ISO_PACKING_SEQUENTIAL,
 	.framing = BT_ISO_FRAMING_UNFRAMED,
-	.latency = 5,
+	.latency = 5, //ms
 	.interval = ISO_INTERVAL_US,
 };
 
@@ -620,27 +615,68 @@ int ble_trans_iso_cig_create(void)
 
 	return 0;
 }
-static void timer_2_event_handler(nrf_timer_event_t event_type, void *ctx)
+static void led_toggling_timer_event_handler(nrf_timer_event_t event_type, void *ctx)
 {
-	LOG_ERR("test");
 	nrfx_timer_compare_int_disable(&led_toggling_timer_instance, NRF_TIMER_CC_CHANNEL0);
 	k_work_submit(&iso_send_work);
-	//iso_timer_timeout();
 }
 
 static int led_toggling_timer_init()
 {
 	nrfx_err_t ret;
 
-	ret = nrfx_timer_init(&led_toggling_timer_instance, &cfg, timer_2_event_handler);
+	ret = nrfx_timer_init(&led_toggling_timer_instance, &cfg, led_toggling_timer_event_handler);
 	if (ret - NRFX_ERROR_BASE_NUM) {
 		LOG_ERR("nrfx timer init error - Return value: %d", ret);
 		return ret;
 	}
 	IRQ_CONNECT(TIMER2_IRQn, 5, nrfx_timer_2_irq_handler, NULL, 0);
-	nrfx_timer_extended_compare(&led_toggling_timer_instance, NRF_TIMER_CC_CHANNEL0, 1000000,
-				    NRF_TIMER_SHORT_COMPARE0_CLEAR_MASK, false);
+	nrfx_timer_extended_compare(&led_toggling_timer_instance, NRF_TIMER_CC_CHANNEL0,
+				    LED_TOGGLE_INTERVAL_US, NRF_TIMER_SHORT_COMPARE0_CLEAR_MASK,
+				    false);
 	nrfx_timer_enable(&led_toggling_timer_instance);
+
+	return 0;
+}
+
+static void iso_sync_timer_event_handler(nrf_timer_event_t event_type, void *ctx)
+{
+	if (event_type == NRF_TIMER_EVENT_COMPARE0) {
+		dk_set_led(DK_LED2, self_led_state);
+	}
+}
+
+static int iso_sync_timer_init(const struct device *unused)
+{
+	nrfx_err_t ret;
+
+	ARG_UNUSED(unused);
+
+	ret = nrfx_timer_init(&iso_sync_timer_instance, &cfg, iso_sync_timer_event_handler);
+	if (ret - NRFX_ERROR_BASE_NUM) {
+		LOG_ERR("nrfx timer init error - Return value: %d", ret);
+		return ret;
+	}
+	IRQ_CONNECT(TIMER1_IRQn, 4, nrfx_timer_1_irq_handler, NULL, 0);
+	nrfx_timer_enable(&iso_sync_timer_instance);
+
+	/* Initialize functionality for synchronization between APP and NET core */
+	ret = nrfx_dppi_channel_alloc(&dppi_channel_timer_clear);
+	if (ret - NRFX_ERROR_BASE_NUM) {
+		LOG_ERR("nrfx DPPI channel alloc error (timer clear) - Return value: %d", ret);
+		return ret;
+	}
+
+	nrf_ipc_publish_set(NRF_IPC, ISO_SYNC_TIMER_NET_APP_IPC_EVT, dppi_channel_timer_clear);
+	nrf_timer_subscribe_set(iso_sync_timer_instance.p_reg, NRF_TIMER_TASK_CLEAR,
+				dppi_channel_timer_clear);
+	ret = nrfx_dppi_channel_enable(dppi_channel_timer_clear);
+	if (ret - NRFX_ERROR_BASE_NUM) {
+		LOG_ERR("nrfx DPPI channel enable error (timer clear) - Return value: %d", ret);
+		return ret;
+	}
+
+	LOG_DBG("ISO sync timer initialized");
 
 	return 0;
 }
@@ -682,54 +718,9 @@ void main(void)
 	}
 
 	k_work_init_delayable(&iso_cis_conn_work, work_iso_cis_conn);
-	k_work_init(&iso_send_work, iso_timer_timeout);
+	k_work_init(&iso_send_work, iso_send_work_handler);
 	led_toggling_timer_init();
 	start_scan();
-}
-
-static void event_handler(nrf_timer_event_t event_type, void *ctx)
-{
-	//LOG_WRN("event!!!!!!!!");
-	if (toggle_state) {
-		dk_set_led(DK_LED2, 0);
-	} else {
-		dk_set_led(DK_LED2, 1);
-	}
-}
-
-static int iso_sync_timer_init(const struct device *unused)
-{
-	nrfx_err_t ret;
-
-	ARG_UNUSED(unused);
-
-	ret = nrfx_timer_init(&iso_sync_timer_instance, &cfg, event_handler);
-	if (ret - NRFX_ERROR_BASE_NUM) {
-		LOG_ERR("nrfx timer init error - Return value: %d", ret);
-		return ret;
-	}
-	IRQ_CONNECT(TIMER1_IRQn, 4, nrfx_timer_1_irq_handler, NULL, 0);
-	nrfx_timer_enable(&iso_sync_timer_instance);
-
-	/* Initialize functionality for synchronization between APP and NET core */
-	ret = nrfx_dppi_channel_alloc(&dppi_channel_timer_clear);
-	if (ret - NRFX_ERROR_BASE_NUM) {
-		LOG_ERR("nrfx DPPI channel alloc error (timer clear) - Return value: %d", ret);
-		return ret;
-	}
-
-	nrf_ipc_publish_set(NRF_IPC, ISO_SYNC_TIMER_NET_APP_IPC_EVT, dppi_channel_timer_clear);
-	nrf_timer_subscribe_set(iso_sync_timer_instance.p_reg, NRF_TIMER_TASK_CLEAR,
-				dppi_channel_timer_clear);
-	ret = nrfx_dppi_channel_enable(dppi_channel_timer_clear);
-	if (ret - NRFX_ERROR_BASE_NUM) {
-		LOG_ERR("nrfx DPPI channel enable error (timer clear) - Return value: %d", ret);
-		return ret;
-	}
-
-	LOG_DBG("Audio sync timer initialized");
-
-	return 0;
 }
 
 SYS_INIT(iso_sync_timer_init, POST_KERNEL, CONFIG_KERNEL_INIT_PRIORITY_DEFAULT);
