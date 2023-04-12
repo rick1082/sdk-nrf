@@ -442,7 +442,7 @@ static void stream_enabled_cb(struct bt_audio_stream *stream)
 	uint8_t channel_index;
 	struct worker_data work_data;
 
-	LOG_DBG("Stream enabled: %p", stream);
+	LOG_INF("Stream enabled: %p", stream);
 
 	ret = channel_index_get(stream->conn, &channel_index);
 	if (ret) {
@@ -1184,7 +1184,6 @@ static struct bt_conn_cb conn_callbacks = {
 	.security_changed = security_changed_cb,
 };
 
-#if (CONFIG_BT_MCS)
 /**
  * @brief	Callback handler for play/pause.
  *
@@ -1200,6 +1199,33 @@ static void le_audio_play_pause_cb(bool play)
 	LOG_DBG("Play/pause cb, state: %d", play);
 
 	if (play) {
+		LOG_WRN("AUDIO_CH_L sink_stream state = %d",
+			headsets[AUDIO_CH_L].sink_stream.ep->status.state);
+		LOG_WRN("AUDIO_CH_L source_stream state = %d",
+			headsets[AUDIO_CH_L].source_stream.ep->status.state);
+		LOG_WRN("AUDIO_CH_R sink_stream state = %d",
+			headsets[AUDIO_CH_R].sink_stream.ep->status.state);
+		LOG_WRN("AUDIO_CH_R source_stream state = %d",
+			headsets[AUDIO_CH_R].source_stream.ep->status.state);
+
+		if (ep_state_check(headsets[AUDIO_CH_L].source_stream.ep,
+				   BT_AUDIO_EP_STATE_DISABLING)) {
+			ret = bt_audio_stream_stop(&headsets[AUDIO_CH_L].source_stream);
+
+			if (ret) {
+				LOG_WRN("Failed to stop left stream");
+			}
+		}
+
+		if (ep_state_check(headsets[AUDIO_CH_R].source_stream.ep,
+				   BT_AUDIO_EP_STATE_DISABLING)) {
+			ret = bt_audio_stream_stop(&headsets[AUDIO_CH_R].source_stream);
+
+			if (ret) {
+				LOG_WRN("Failed to stop right stream");
+			}
+		}
+
 		if (ep_state_check(headsets[AUDIO_CH_L].sink_stream.ep,
 				   BT_AUDIO_EP_STATE_QOS_CONFIGURED)) {
 			ret = bt_audio_stream_enable(&headsets[AUDIO_CH_L].sink_stream,
@@ -1246,7 +1272,6 @@ static void le_audio_play_pause_cb(bool play)
 
 	playing_state = play;
 }
-#endif /* CONFIG_BT_MCS */
 
 static int iso_stream_send(uint8_t const *const data, size_t size, struct le_audio_headset headset)
 {
@@ -1473,16 +1498,10 @@ int le_audio_volume_mute(void)
 int le_audio_play_pause(void)
 {
 	int ret;
+	static bool play;
 
-	if (IS_ENABLED(CONFIG_STREAM_BIDIRECTIONAL)) {
-		LOG_WRN("Play/pause not supported for bidirectional mode");
-	} else {
-		ret = ble_mcs_play_pause(NULL);
-		if (ret) {
-			LOG_WRN("Failed to change streaming state");
-			return ret;
-		}
-	}
+	le_audio_play_pause_cb(play);
+	play = !play;
 
 	return 0;
 }
