@@ -754,7 +754,7 @@ int le_audio_play_pause(void)
 		if (ret) {
 			LOG_ERR("Failed to stop broadcast sink: %d", ret);
 		}
-		
+
 		ret = bis_headset_cleanup(false);
 		if (ret) {
 			LOG_ERR("Failed to bis_headset_cleanup: %d", ret);
