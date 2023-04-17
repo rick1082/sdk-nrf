@@ -72,7 +72,7 @@ struct bt_name {
 	char *name;
 	size_t size;
 };
-
+static bool receiver_mode = true;
 static const char *const brdcast_src_names[] = { CONFIG_BT_AUDIO_BROADCAST_NAME,
 						 CONFIG_BT_AUDIO_BROADCAST_NAME_ALT };
 
@@ -299,14 +299,9 @@ static void syncable_cb(struct bt_audio_broadcast_sink *sink, bool encrypted)
 #if (CONFIG_BT_AUDIO_BROADCAST_ENCRYPTED)
 	strncpy(bis_encryption_key, CONFIG_BT_AUDIO_BROADCAST_ENCRYPTION_KEY, 16);
 #endif /* (CONFIG_BT_AUDIO_BROADCAST_ENCRYPTED) */
-
-	/*
-	if (active_stream.stream->ep->status.state == BT_AUDIO_EP_STATE_STREAMING ||
-	    !playing_state) {
-		LOG_DBG("Syncable received, but either in paused_state or already in a stream");
+	if (receiver_mode == true) {
 		return;
 	}
-	*/
 	LOG_INF("Syncing to broadcast stream index %d", active_stream_index);
 
 	ret = bt_audio_broadcast_sink_sync(broadcast_sink, bis_index_bitfields[active_stream_index],
@@ -714,16 +709,16 @@ int le_audio_volume_mute(void)
 int le_audio_play_pause(void)
 {
 	int ret;
-	static bool play_state = true;
 
-	if (play_state == true) {
+
+	if (receiver_mode == true) {
 		led_on(LED_APP_RGB, LED_COLOR_BLUE);
 		LOG_WRN("Receive mode");
 		ret = bt_audio_broadcast_source_stop(broadcast_source);
 		if (ret) {
 			LOG_WRN("Failed to stop broadcast, ret: %d", ret);
 		}
-		/* Enable Periodic Advertising */
+
 		ret = bt_le_per_adv_stop(adv);
 		if (ret) {
 			LOG_ERR("Failed to bt_le_per_adv_stop: %d", ret);
@@ -739,11 +734,16 @@ int le_audio_play_pause(void)
 			LOG_ERR("Failed to bt_audio_broadcast_sink_scan_start: %d", ret);
 		}
 
-		play_state = false;
+		receiver_mode = false;
 
 	} else {
 		led_on(LED_APP_RGB, LED_COLOR_GREEN);
 		LOG_WRN("Transmit mode");
+
+		ret = bis_headset_cleanup(false);
+		if (ret) {
+			LOG_ERR("Failed to bis_headset_cleanup: %d", ret);
+		}
 
 		ret = bt_audio_broadcast_sink_scan_stop();
 		if (ret) {
@@ -753,11 +753,6 @@ int le_audio_play_pause(void)
 		ret = bt_audio_broadcast_sink_stop(broadcast_sink);
 		if (ret) {
 			LOG_ERR("Failed to stop broadcast sink: %d", ret);
-		}
-
-		ret = bis_headset_cleanup(false);
-		if (ret) {
-			LOG_ERR("Failed to bis_headset_cleanup: %d", ret);
 		}
 
 		ret = bt_le_ext_adv_start(adv, BT_LE_EXT_ADV_START_DEFAULT);
@@ -776,7 +771,7 @@ int le_audio_play_pause(void)
 			LOG_WRN("Failed to start broadcast, ret: %d", ret);
 		}
 
-		play_state = true;
+		receiver_mode = true;
 	}
 
 	return 0;
