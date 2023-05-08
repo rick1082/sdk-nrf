@@ -18,6 +18,7 @@
 #include <zephyr/settings/settings.h>
 #include <zephyr/sys/byteorder.h>
 #include <zephyr/logging/log.h>
+#include <bluetooth/services/nus.h>
 LOG_MODULE_REGISTER(ble);
 
 static void start_scan(void);
@@ -26,7 +27,16 @@ static struct bt_conn *default_conn;
 static struct bt_iso_chan iso_chan;
 
 static uint32_t interval_us = 10U * USEC_PER_MSEC; /* 10 ms */
-#define DEVICE_NAME_PEER     "Peripheral"
+
+#define DEVICE_NAME "Gateway"
+#define DEVICE_NAME_LEN (sizeof(DEVICE_NAME) - 1)
+
+static const struct bt_data ad[] = {
+	BT_DATA_BYTES(BT_DATA_FLAGS, (BT_LE_AD_GENERAL | BT_LE_AD_NO_BREDR)),
+	BT_DATA(BT_DATA_NAME_COMPLETE, DEVICE_NAME, DEVICE_NAME_LEN),
+};
+
+#define DEVICE_NAME_PEER "Peripheral"
 #define DEVICE_NAME_PEER_LEN (sizeof(DEVICE_NAME_PEER) - 1)
 #define ISO_MAX_PAYLOAD 30
 #define BT_LE_CONN_PARAM_MULTI BT_LE_CONN_PARAM(40, 40, 0, 400)
@@ -38,7 +48,6 @@ static int device_found(uint8_t type, const uint8_t *data, uint8_t data_len,
 
 	if ((data_len == DEVICE_NAME_PEER_LEN) &&
 	    (strncmp(DEVICE_NAME_PEER, data, DEVICE_NAME_PEER_LEN) == 0)) {
-
 		ret = bt_le_scan_stop();
 		if (ret) {
 			LOG_INF("Stop scan failed: %d", ret);
@@ -114,7 +123,7 @@ static void iso_connected(struct bt_iso_chan *chan)
 }
 
 static void iso_recv(struct bt_iso_chan *chan, const struct bt_iso_recv_info *info,
-		struct net_buf *buf)
+		     struct net_buf *buf)
 {
 	LOG_INF("Incoming data channel %p len %u\n", chan, buf->len);
 }
@@ -125,9 +134,9 @@ static void iso_disconnected(struct bt_iso_chan *chan, uint8_t reason)
 }
 
 static struct bt_iso_chan_ops iso_ops = {
-	.recv		= iso_recv,
-	.connected	= iso_connected,
-	.disconnected	= iso_disconnected,
+	.recv = iso_recv,
+	.connected = iso_connected,
+	.disconnected = iso_disconnected,
 };
 
 static struct bt_iso_chan_io_qos iso_rx = {
@@ -144,60 +153,90 @@ static struct bt_iso_chan_qos iso_qos = {
 
 static void connected(struct bt_conn *conn, uint8_t err)
 {
-	char addr[BT_ADDR_LE_STR_LEN];
-	int iso_err;
-	struct bt_iso_connect_param connect_param;
+	int ret;
+	struct bt_conn_info info;
 
-	bt_addr_le_to_str(bt_conn_get_dst(conn), addr, sizeof(addr));
+	ret = bt_conn_get_info(conn, &info);
 
-	if (err) {
-		LOG_INF("Failed to connect to %s (%u)", addr, err);
+	if (info.role == BT_CONN_ROLE_CENTRAL) {
+		LOG_INF("Connect to a peripheral");
+		char addr[BT_ADDR_LE_STR_LEN];
+		int iso_err;
+		struct bt_iso_connect_param connect_param;
 
-		bt_conn_unref(default_conn);
-		default_conn = NULL;
+		bt_addr_le_to_str(bt_conn_get_dst(conn), addr, sizeof(addr));
 
-		start_scan();
-		return;
-	}
+		if (err) {
+			LOG_INF("Failed to connect to %s (%u)", addr, err);
 
-	if (conn != default_conn) {
-		return;
-	}
+			bt_conn_unref(default_conn);
+			default_conn = NULL;
 
-	LOG_INF("Connected: %s", addr);
+			start_scan();
+			return;
+		}
 
-	connect_param.acl = conn;
-	connect_param.iso_chan = &iso_chan;
+		if (conn != default_conn) {
+			return;
+		}
 
-	iso_err = bt_iso_chan_connect(&connect_param, 1);
+		LOG_INF("Connected: %s", addr);
 
-	if (iso_err) {
-		LOG_INF("Failed to connect iso (%d)", iso_err);
-		return;
+		connect_param.acl = conn;
+		connect_param.iso_chan = &iso_chan;
+
+		iso_err = bt_iso_chan_connect(&connect_param, 1);
+
+		if (iso_err) {
+			LOG_INF("Failed to connect iso (%d)", iso_err);
+			return;
+		}
+	} else {
+		LOG_INF("Connected by a central");
 	}
 }
 
 static void disconnected(struct bt_conn *conn, uint8_t reason)
 {
+	int ret;
+	struct bt_conn_info info;
 	char addr[BT_ADDR_LE_STR_LEN];
 
-	if (conn != default_conn) {
-		return;
-	}
-
+	ret = bt_conn_get_info(conn, &info);
 	bt_addr_le_to_str(bt_conn_get_dst(conn), addr, sizeof(addr));
 
-	LOG_INF("Disconnected: %s (reason 0x%02x)", addr, reason);
+	if (info.role == BT_CONN_ROLE_CENTRAL) {
+		if (conn != default_conn) {
+			return;
+		}
 
-	bt_conn_unref(default_conn);
-	default_conn = NULL;
+		bt_addr_le_to_str(bt_conn_get_dst(conn), addr, sizeof(addr));
 
-	start_scan();
+		LOG_INF("Disconnected: %s (reason 0x%02x)", addr, reason);
+
+		bt_conn_unref(default_conn);
+		default_conn = NULL;
+
+		start_scan();
+	} else {
+		LOG_INF("Disconnected from %s (reason 0x%02x)", addr, reason);
+		start_scan();
+	}
 }
 
 BT_CONN_CB_DEFINE(conn_callbacks) = {
 	.connected = connected,
 	.disconnected = disconnected,
+};
+
+static void bt_receive_cb(struct bt_conn *conn, const uint8_t *const data,
+			  uint16_t len)
+{
+	LOG_HEXDUMP_INF(data, len, "NUS:");
+}
+
+static struct bt_nus_cb nus_cb = {
+	.received = bt_receive_cb,
 };
 
 void main(void)
@@ -217,8 +256,13 @@ void main(void)
 		settings_load();
 	}
 
-
 	LOG_INF("Bluetooth initialized");
+
+	err = bt_nus_init(&nus_cb);
+	if (err) {
+		LOG_ERR("Failed to initialize UART service (err: %d)", err);
+		return;
+	}
 
 	iso_chan.ops = &iso_ops;
 	iso_chan.qos = &iso_qos;
@@ -242,6 +286,11 @@ void main(void)
 		return;
 	}
 
-	start_scan();
+	err = bt_le_adv_start(BT_LE_ADV_CONN, ad, ARRAY_SIZE(ad), NULL, 0);
+	if (err) {
+		LOG_INF("Advertising failed to start (err %d)", err);
+		return;
+	}
 
+	start_scan();
 }
