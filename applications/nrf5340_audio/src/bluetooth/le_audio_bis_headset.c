@@ -17,12 +17,16 @@
 #include "ctrl_events.h"
 #include "hw_codec.h"
 #include "channel_assignment.h"
+#include <bluetooth/services/nus.h>
 
 #include <zephyr/logging/log.h>
 LOG_MODULE_REGISTER(bis_headset, CONFIG_BLE_LOG_LEVEL);
 
 BUILD_ASSERT(CONFIG_BT_AUDIO_BROADCAST_SNK_STREAM_COUNT <= 2,
 	     "A maximum of two broadcast streams are currently supported");
+
+#define BT_LE_SCAN_PASSIVE_CONTINUOUS                                                              \
+	BT_LE_SCAN_PARAM(BT_LE_SCAN_TYPE_PASSIVE, BT_LE_SCAN_OPT_FILTER_DUPLICATE, 0x20, 0x20)
 
 struct audio_codec_info {
 	uint8_t id;
@@ -47,8 +51,19 @@ struct bt_name {
 	size_t size;
 };
 
+static void start_advertising(struct k_work *work);
+static K_WORK_DEFINE(start_advertising_worker, start_advertising);
 static const char *const brdcast_src_names[] = { CONFIG_BT_AUDIO_BROADCAST_NAME,
 						 CONFIG_BT_AUDIO_BROADCAST_NAME_ALT };
+
+#define DEVICE_NAME "BIS_HEADSET"
+#define DEVICE_NAME_LEN (sizeof(DEVICE_NAME) - 1)
+static struct bt_le_ext_adv *adv;
+static const struct bt_data ad[] = {
+	BT_DATA_BYTES(BT_DATA_FLAGS, (BT_LE_AD_GENERAL | BT_LE_AD_NO_BREDR)),
+	BT_DATA_BYTES(BT_DATA_UUID128_ALL, BT_UUID_NUS_VAL),
+	BT_DATA(BT_DATA_NAME_COMPLETE, DEVICE_NAME, DEVICE_NAME_LEN)
+};
 
 static struct bt_audio_broadcast_sink *broadcast_sink;
 
@@ -72,6 +87,7 @@ static struct bt_codec codec_capabilities =
 static le_audio_receive_cb receive_cb;
 static bool init_routine_completed;
 static bool playing_state = true;
+static int change_active_audio_stream(void);
 
 static int bis_headset_cleanup(bool from_sync_lost_cb);
 
@@ -252,7 +268,7 @@ static void pa_sync_lost_cb(struct bt_audio_broadcast_sink *sink)
 
 	LOG_INF("Restarting scanning for broadcast sources after sync lost");
 
-	ret = bt_audio_broadcast_sink_scan_start(BT_LE_SCAN_PASSIVE);
+	ret = bt_audio_broadcast_sink_scan_start(BT_LE_SCAN_PASSIVE_CONTINUOUS);
 	if (ret) {
 		LOG_ERR("Unable to start scanning for broadcast sources");
 	}
@@ -321,6 +337,18 @@ static void base_recv_cb(struct bt_audio_broadcast_sink *sink, const struct bt_a
 	}
 }
 
+static void bt_receive_cb(struct bt_conn *conn, const uint8_t *const data, uint16_t len)
+{
+	LOG_HEXDUMP_INF(data, len, " NUS");
+	if (!strncmp(data, "change", 6)) {
+		change_active_audio_stream();
+	}
+}
+
+static struct bt_nus_cb nus_cb = {
+	.received = bt_receive_cb,
+};
+
 static void syncable_cb(struct bt_audio_broadcast_sink *sink, bool encrypted)
 {
 	int ret;
@@ -361,6 +389,79 @@ static struct bt_pacs_cap capabilities = {
 	.codec = &codec_capabilities,
 };
 
+void le_param_updated_cb(struct bt_conn *conn, uint16_t interval, uint16_t latency,
+			 uint16_t timeout)
+{
+	LOG_WRN("Connection parameter updated");
+	LOG_WRN("\tCI = 0x%X, latency = %d, timeout = %d", interval, latency, timeout);
+}
+
+bool le_param_req_cb(struct bt_conn *conn, struct bt_le_conn_param *param)
+{
+	LOG_WRN("Connection parameter request");
+	LOG_WRN("\tCI min = 0x%X, CI max = 0x%X, lat = %d, timeout = %d", param->interval_min,
+		param->interval_max, param->latency, param->timeout);
+	return true;
+}
+
+static void start_advertising(struct k_work *work)
+{
+	int err;
+
+	err = bt_le_ext_adv_start(adv, NULL);
+	if (err) {
+		LOG_INF("Failed to start advertising set (err %d)", err);
+		return;
+	}
+
+	LOG_INF("Advertiser %p set started", (void *)adv);
+}
+
+static void connected(struct bt_conn *conn, uint8_t err)
+{
+	if (err) {
+		LOG_INF("Connection failed (err 0x%02x)", err);
+	} else {
+		LOG_INF("Connected");
+	}
+}
+
+static void disconnected(struct bt_conn *conn, uint8_t reason)
+{
+	LOG_INF("Disconnected (reason 0x%02x)", reason);
+	k_work_submit(&start_advertising_worker);
+}
+
+BT_CONN_CB_DEFINE(conn_callbacks) = {
+	.connected = connected,
+	.disconnected = disconnected,
+	.le_param_req = le_param_req_cb,
+	.le_param_updated = le_param_updated_cb,
+};
+
+static int create_advertising(void)
+{
+	int err;
+	struct bt_le_adv_param param = BT_LE_ADV_PARAM_INIT(
+		BT_LE_ADV_OPT_CONNECTABLE | BT_LE_ADV_OPT_EXT_ADV, 0x40, 0x40, NULL);
+
+	err = bt_le_ext_adv_create(&param, NULL, &adv);
+	if (err) {
+		LOG_INF("Failed to create advertiser set (err %d)", err);
+		return err;
+	}
+
+	LOG_INF("Created adv: %p", (void *)adv);
+
+	err = bt_le_ext_adv_set_data(adv, ad, ARRAY_SIZE(ad), NULL, 0);
+	if (err) {
+		LOG_ERR("Failed to set advertising data (err %d)", err);
+		return err;
+	}
+
+	return 0;
+}
+
 static void initialize(le_audio_receive_cb recv_cb)
 {
 	int ret;
@@ -396,6 +497,9 @@ static void initialize(le_audio_receive_cb recv_cb)
 		}
 
 		initialized = true;
+		create_advertising();
+		bt_nus_init(&nus_cb);
+		k_work_submit(&start_advertising_worker);
 	}
 }
 
@@ -476,7 +580,7 @@ static int change_active_brdcast_src(void)
 	LOG_INF("Switching to %s", brdcast_src_names[active_stream.brdcast_src_name_idx]);
 
 	LOG_DBG("Restarting scanning for broadcast sources");
-	ret = bt_audio_broadcast_sink_scan_start(BT_LE_SCAN_PASSIVE);
+	ret = bt_audio_broadcast_sink_scan_start(BT_LE_SCAN_PASSIVE_CONTINUOUS);
 	if (ret && ret != -EALREADY) {
 		LOG_ERR("Unable to start scanning for broadcast sources");
 		return ret;
@@ -584,7 +688,7 @@ int le_audio_enable(le_audio_receive_cb recv_cb)
 
 	LOG_INF("Scanning for broadcast sources");
 
-	ret = bt_audio_broadcast_sink_scan_start(BT_LE_SCAN_PASSIVE);
+	ret = bt_audio_broadcast_sink_scan_start(BT_LE_SCAN_PASSIVE_CONTINUOUS);
 	if (ret) {
 		return ret;
 	}
