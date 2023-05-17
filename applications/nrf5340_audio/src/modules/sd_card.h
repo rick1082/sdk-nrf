@@ -9,6 +9,12 @@
 
 #include <stddef.h>
 
+int sd_card_segment_read_open(char const *const filename);
+
+int sd_card_segment_read(char *const data, size_t *size);
+
+int sd_card_segment_read_close(void);
+
 /**@brief Print out the contents under SD card root path
  *
  * @param[in] path	Path of the folder which going to list
