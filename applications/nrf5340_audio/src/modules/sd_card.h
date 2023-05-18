@@ -8,6 +8,23 @@
 #define _SD_CARD_H_
 
 #include <stddef.h>
+#include <zephyr/fs/fs.h>
+#include <ff.h>
+
+struct file_setting {
+    char * filename;
+    bool seg_read_started;
+    struct fs_file_t f_seg_read_entry;
+};
+
+int sd_card_file_segment_read_open(struct file_setting * file);
+
+int sd_card_file_segment_read(struct file_setting * file, char *const data, size_t *size);
+
+int sd_card_file_segment_read_close(struct file_setting * file);
+
+
+
 
 int sd_card_segment_read_open(char const *const filename);
 

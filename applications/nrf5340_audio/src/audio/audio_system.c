@@ -21,6 +21,9 @@
 #include "pcm_stream_channel_modifier.h"
 #include "audio_usb.h"
 #include "streamctrl.h"
+#include <nrfx_timer.h>
+#include <nrfx_clock.h>
+#include "sd_card.h"
 
 #include <zephyr/logging/log.h>
 LOG_MODULE_REGISTER(audio_system, CONFIG_AUDIO_SYSTEM_LOG_LEVEL);
@@ -35,13 +38,19 @@ K_THREAD_STACK_DEFINE(encoder_thread_stack, CONFIG_ENCODER_STACK_SIZE);
 DATA_FIFO_DEFINE(fifo_tx, FIFO_TX_BLOCK_COUNT, WB_UP(BLOCK_SIZE_BYTES));
 DATA_FIFO_DEFINE(fifo_rx, FIFO_RX_BLOCK_COUNT, WB_UP(BLOCK_SIZE_BYTES));
 
+
+#if (CONFIG_AUDIO_DEV != GATEWAY)
 static struct k_thread encoder_thread_data;
 static k_tid_t encoder_thread_id;
-
+#endif
 static struct sw_codec_config sw_codec_cfg;
 /* Buffer which can hold max 1 period test tone at 1000 Hz */
 static int16_t test_tone_buf[CONFIG_AUDIO_SAMPLE_RATE_HZ / 1000];
 static size_t test_tone_size;
+struct file_setting file[4] = { { .filename = "enc_1.bin" },
+				{ .filename = "enc_2.bin" },
+				{ .filename = "enc_3.bin" },
+				{ .filename = "enc_4.bin" } };
 
 static void audio_gateway_configure(void)
 {
@@ -94,6 +103,7 @@ static void audio_headset_configure(void)
 	sw_codec_cfg.decoder.enabled = true;
 }
 
+#if (CONFIG_AUDIO_DEV != GATEWAY)
 static void encoder_thread(void *arg1, void *arg2, void *arg3)
 {
 	int ret;
@@ -168,7 +178,7 @@ static void encoder_thread(void *arg1, void *arg2, void *arg3)
 		STACK_USAGE_PRINT("encoder_thread", &encoder_thread_data);
 	}
 }
-
+#endif
 int audio_encode_test_tone_set(uint32_t freq)
 {
 	int ret;
@@ -272,37 +282,36 @@ int audio_decode(void const *const encoded_data, size_t encoded_data_size, bool 
 	return 0;
 }
 
-#include <nrfx_timer.h>
-#include <nrfx_clock.h>
-#include "sd_card.h"
-#define LED_TOGGLING_TIMER_INSTANCE_NUMBER 2
-static uint8_t encoded_data[102];
-const nrfx_timer_t led_toggling_timer_instance =
-	NRFX_TIMER_INSTANCE(LED_TOGGLING_TIMER_INSTANCE_NUMBER);
+#define SD_CARD_READ_TIMER_INSTANCE_NUMBER 2
+static uint8_t encoded_data[500];
+const nrfx_timer_t sd_card_readtimer_instance =
+	NRFX_TIMER_INSTANCE(SD_CARD_READ_TIMER_INSTANCE_NUMBER);
 
-#define LED_TOGGLE_INTERVAL_US (10000) /* 1 s */
+#define ISO_SEND_INTERVAL_US (10000) /* 10 ms */
 static struct k_work iso_send_work;
+static uint8_t temp_data[200];
+static uint8_t empty_data[100] = {0};
 static void iso_send_work_handler(struct k_work *work)
 {
 	int data_len = 102;
-	sd_card_segment_read(encoded_data, &data_len);
-	//LOG_HEXDUMP_WRN(encoded_data, 10, "SD");
-	if (data_len == 102) {
-			k_sleep(K_MSEC(5));
-			streamctrl_encoded_data_send(encoded_data+2, 100, 1);
-	} else {
-		sd_card_segment_read_close();
-		static uint8_t data[18];
-		static int data_size = 18;
-		sd_card_segment_read_open("encoded.bin");
-		sd_card_segment_read(data, &data_size);
-	}
 
+	for (int i = 0; i < 4; i ++){
+		data_len = 102;
+		sd_card_file_segment_read(&file[i], temp_data, &data_len);
+		if (data_len == 102) {
+			memcpy(encoded_data+i*100, temp_data+2, 100);
+		} else {
+			memcpy(encoded_data+i*100, empty_data, 100);
+			sd_card_file_segment_read_close(&file[i]);
+			static int data_size = 18;
+			sd_card_file_segment_read_open(&file[i]);
+			sd_card_file_segment_read(&file[i], encoded_data, &data_size);
+		}
+	}
+	streamctrl_encoded_data_send(encoded_data, 400, 4);
 }
-static void led_toggling_timer_event_handler(nrf_timer_event_t event_type, void *ctx)
+static void sd_card_readtimer_event_handler(nrf_timer_event_t event_type, void *ctx)
 {
-	//LOG_WRN("TIMER");
-	//nrfx_timer_compare_int_disable(&led_toggling_timer_instance, NRF_TIMER_CC_CHANNEL0);
 	k_work_submit(&iso_send_work);
 }
 
@@ -312,20 +321,20 @@ static nrfx_timer_config_t cfg = { .frequency = NRF_TIMER_FREQ_1MHz,
 				   .interrupt_priority = NRFX_TIMER_DEFAULT_CONFIG_IRQ_PRIORITY,
 				   .p_context = NULL };
 
-static int led_toggling_timer_init()
+static int sd_card_readtimer_init(void)
 {
 	nrfx_err_t ret;
 
-	ret = nrfx_timer_init(&led_toggling_timer_instance, &cfg, led_toggling_timer_event_handler);
+	ret = nrfx_timer_init(&sd_card_readtimer_instance, &cfg, sd_card_readtimer_event_handler);
 	if (ret - NRFX_ERROR_BASE_NUM) {
 		LOG_ERR("nrfx timer init error - Return value: %d", ret);
 		return ret;
 	}
 	IRQ_CONNECT(TIMER2_IRQn, 5, nrfx_timer_2_irq_handler, NULL, 0);
-	nrfx_timer_extended_compare(&led_toggling_timer_instance, NRF_TIMER_CC_CHANNEL0,
-				    LED_TOGGLE_INTERVAL_US, NRF_TIMER_SHORT_COMPARE0_CLEAR_MASK,
+	nrfx_timer_extended_compare(&sd_card_readtimer_instance, NRF_TIMER_CC_CHANNEL0,
+				    ISO_SEND_INTERVAL_US, NRF_TIMER_SHORT_COMPARE0_CLEAR_MASK,
 				    true);
-	nrfx_timer_enable(&led_toggling_timer_instance);
+	nrfx_timer_enable(&sd_card_readtimer_instance);
 
 	return 0;
 }
@@ -335,14 +344,13 @@ static int led_toggling_timer_init()
 void audio_system_start(void)
 {
 	int ret;
-	static uint8_t data[18];
-	static int data_size = 18;
-	led_toggling_timer_init();
+
 	k_work_init(&iso_send_work, iso_send_work_handler);
 	if (CONFIG_AUDIO_DEV == HEADSET) {
 		audio_headset_configure();
 	} else if (CONFIG_AUDIO_DEV == GATEWAY) {
 		audio_gateway_configure();
+		sd_card_readtimer_init();
 	} else {
 		LOG_ERR("Invalid CONFIG_AUDIO_DEV: %d", CONFIG_AUDIO_DEV);
 		ERR_CHK(-EINVAL);
@@ -362,7 +370,8 @@ void audio_system_start(void)
 	ERR_CHK_MSG(ret, "Failed to set up codec");
 
 	sw_codec_cfg.initialized = true;
-/*
+
+#if (CONFIG_AUDIO_DEV != GATEWAY)
 	if (sw_codec_cfg.encoder.enabled && encoder_thread_id == NULL) {
 		encoder_thread_id =
 			k_thread_create(&encoder_thread_data, encoder_thread_stack,
@@ -372,8 +381,7 @@ void audio_system_start(void)
 		ret = k_thread_name_set(encoder_thread_id, "ENCODER");
 		ERR_CHK(ret);
 	}
-*/
-
+#endif
 
 #if ((CONFIG_AUDIO_SOURCE_USB) && (CONFIG_AUDIO_DEV == GATEWAY))
 	ret = audio_usb_start(&fifo_tx, &fifo_rx);
@@ -384,9 +392,20 @@ void audio_system_start(void)
 
 	ret = audio_datapath_start(&fifo_rx);
 	ERR_CHK(ret);
-	sd_card_segment_read_open("encoded.bin");
-	sd_card_segment_read(data, &data_size);
 #endif /* ((CONFIG_AUDIO_SOURCE_USB) && (CONFIG_AUDIO_DEV == GATEWAY))) */
+
+
+#if (CONFIG_AUDIO_DEV == GATEWAY)
+	static uint8_t data[18];
+	static int data_size = 18;
+	for(int i = 0; i < 4; i++) {
+		data_size = 18;
+		sd_card_file_segment_read_open(&file[i]);
+		sd_card_file_segment_read(&file[i], data, &data_size);
+		k_sleep(K_MSEC(100));
+	}
+#endif
+
 }
 
 void audio_system_stop(void)

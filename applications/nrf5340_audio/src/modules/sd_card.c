@@ -183,6 +183,52 @@ int sd_card_read(char const *const filename, char *const data, size_t *size)
 static volatile bool seg_read_started = false;
 static struct fs_file_t f_seg_read_entry;
 
+int sd_card_file_segment_read_open(struct file_setting * file)
+{
+	char abs_path_name[PATH_MAX_LEN + 1] = SD_ROOT_PATH;
+	int ret;
+
+	if (!sd_init_success) {
+		return -ENODEV;
+	}
+
+	if (strlen(file->filename) > CONFIG_FS_FATFS_MAX_LFN) {
+		LOG_ERR("Filename is too long");
+		return -FR_INVALID_NAME;
+	}
+
+	strcat(abs_path_name, file->filename);
+	fs_file_t_init(&file->f_seg_read_entry);
+
+	ret = fs_open(&file->f_seg_read_entry, abs_path_name, FS_O_READ);
+	if (ret) {
+		LOG_ERR("Open file failed");
+		return ret;
+	}
+
+	file->seg_read_started = true;
+
+	return 0;	
+}
+
+int sd_card_file_segment_read(struct file_setting * file, char *const data, size_t *size){
+	int ret;
+
+	if(!file->seg_read_started) {
+		return -EBUSY;
+	}
+	
+	ret = fs_read(&file->f_seg_read_entry, data, *size);
+	if (ret < 0) {
+		LOG_ERR("Read file failed");
+		return ret;
+	}
+
+	*size = ret;
+	
+	return 0;
+}
+
 int sd_card_segment_read_open(char const *const filename)
 {
 	char abs_path_name[PATH_MAX_LEN + 1] = SD_ROOT_PATH;
@@ -208,6 +254,23 @@ int sd_card_segment_read_open(char const *const filename)
 
 	seg_read_started = true;
 
+	return 0;
+}
+
+int sd_card_file_segment_read_close(struct file_setting * file)
+{
+	if(!file->seg_read_started) {
+		return -EBUSY;
+	}
+	
+	int ret = fs_close(&file->f_seg_read_entry);
+	if (ret) {
+		LOG_ERR("Close file failed");
+		return ret;
+	}
+
+	file->seg_read_started = false;
+	
 	return 0;
 }
 
