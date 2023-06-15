@@ -34,6 +34,7 @@ config LC3_ENC_CHAN_MAX
 	default 1
 
 config LC3_DEC_CHAN_MAX
+	default 2 if STEREO_CIS_HEADSET
 	default 1
 
 if TRANSPORT_BIS # Depends on TRANSPORT_BIS

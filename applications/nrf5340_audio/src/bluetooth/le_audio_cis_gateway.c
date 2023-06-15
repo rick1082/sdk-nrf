@@ -30,8 +30,8 @@ ZBUS_CHAN_DEFINE(le_audio_chan, struct le_audio_msg, NULL, NULL, ZBUS_OBSERVERS_
 		 ZBUS_MSG_INIT(0));
 
 #define HCI_ISO_BUF_ALLOC_PER_CHAN 2
-#define CIS_CONN_RETRY_TIMES 5
-#define CIS_CONN_RETRY_DELAY_MS 500
+#define CIS_CONN_RETRY_TIMES	   5
+#define CIS_CONN_RETRY_DELAY_MS	   500
 #define CONNECTION_PARAMETERS                                                                      \
 	BT_LE_CONN_PARAM(CONFIG_BLE_ACL_CONN_INTERVAL, CONFIG_BLE_ACL_CONN_INTERVAL,               \
 			 CONFIG_BLE_ACL_SLAVE_LATENCY, CONFIG_BLE_ACL_SUP_TIMEOUT)
@@ -102,6 +102,11 @@ static struct bt_bap_unicast_group *unicast_group;
 
 static struct bt_bap_lc3_preset lc3_preset_sink = BT_BAP_LC3_UNICAST_PRESET_NRF5340_AUDIO_SINK;
 static struct bt_bap_lc3_preset lc3_preset_source = BT_BAP_LC3_UNICAST_PRESET_NRF5340_AUDIO_SOURCE;
+
+static struct bt_codec_qos lc3_preset_sink_stereo_qos = BT_CODEC_LC3_QOS_10_UNFRAMED(
+	LE_AUDIO_SDU_SIZE_OCTETS(CONFIG_BT_AUDIO_BITRATE_UNICAST_SINK) * 2,
+	CONFIG_BT_AUDIO_RETRANSMITS, CONFIG_BT_AUDIO_MAX_TRANSPORT_LATENCY_MS,
+	CONFIG_BT_AUDIO_PRESENTATION_DELAY_US);
 
 static uint8_t bonded_num;
 static bool playing_state = true;
@@ -1461,7 +1466,11 @@ static int initialize(le_audio_receive_cb recv_cb, le_audio_timestamp_cb timestm
 	for (int i = 0; i < ARRAY_SIZE(stream_params); i++) {
 		/* Every other stream should be sink or source */
 		if ((i % 2) == 0) {
-			stream_params[i].qos = &lc3_preset_sink.qos;
+			if (IS_ENABLED(CONFIG_STEREO_CIS_HEADSET)) {
+				stream_params[i].qos = &lc3_preset_sink_stereo_qos;
+			} else {
+				stream_params[i].qos = &lc3_preset_sink.qos;
+			}
 			stream_params[i].stream = &headsets[headset_iterator].sink_stream;
 		} else {
 			stream_params[i].qos = &lc3_preset_source.qos;
@@ -1590,20 +1599,24 @@ int le_audio_send(struct encoded_audio enc_audio)
 {
 	int ret;
 	size_t data_size_pr_stream;
-	struct bt_iso_tx_info tx_info = { 0 };
+	struct bt_iso_tx_info tx_info = {0};
 
-	if ((enc_audio.num_ch == 1) || (enc_audio.num_ch == ARRAY_SIZE(headsets))) {
-		data_size_pr_stream = enc_audio.size / enc_audio.num_ch;
+	if (IS_ENABLED(CONFIG_STEREO_CIS_HEADSET)) {
+		data_size_pr_stream = enc_audio.size;
 	} else {
-		LOG_ERR("Num encoded channels must be 1 or equal to num headsets");
-		return -EINVAL;
-	}
+		if ((enc_audio.num_ch == 1) || (enc_audio.num_ch == ARRAY_SIZE(headsets))) {
+			data_size_pr_stream = enc_audio.size / enc_audio.num_ch;
+		} else {
+			LOG_ERR("Num encoded channels must be 1 or equal to num headsets");
+			return -EINVAL;
+		}
 
-	if (data_size_pr_stream != LE_AUDIO_SDU_SIZE_OCTETS(CONFIG_BT_AUDIO_BITRATE_UNICAST_SINK)) {
-		LOG_ERR("The encoded data size does not match the SDU size");
-		return -ECANCELED;
+		if (data_size_pr_stream !=
+		    LE_AUDIO_SDU_SIZE_OCTETS(CONFIG_BT_AUDIO_BITRATE_UNICAST_SINK)) {
+			LOG_ERR("The encoded data size does not match the SDU size");
+			return -ECANCELED;
+		}
 	}
-
 	if (ep_state_check(headsets[AUDIO_CH_L].sink_stream.ep, BT_BAP_EP_STATE_STREAMING)) {
 		ret = bt_iso_chan_get_tx_sync(&headsets[AUDIO_CH_L].sink_stream.ep->iso->chan,
 					      &tx_info);

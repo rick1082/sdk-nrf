@@ -90,7 +90,11 @@ static void audio_headset_configure(void)
 	}
 #endif /* (CONFIG_STREAM_BIDIRECTIONAL) */
 
-	sw_codec_cfg.decoder.num_ch = SW_CODEC_MONO;
+	if (IS_ENABLED(CONFIG_STEREO_CIS_HEADSET)) {
+		sw_codec_cfg.decoder.num_ch = SW_CODEC_STEREO;
+	} else {
+		sw_codec_cfg.decoder.num_ch = SW_CODEC_MONO;
+	}
 	sw_codec_cfg.decoder.enabled = true;
 }
 

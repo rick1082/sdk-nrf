@@ -31,6 +31,8 @@ ZBUS_CHAN_DEFINE(le_audio_chan, struct le_audio_msg, NULL, NULL, ZBUS_OBSERVERS_
 		 ZBUS_MSG_INIT(0));
 
 #define CHANNEL_COUNT_1 BIT(0)
+#define CHANNEL_COUNT_2 BIT(1)
+
 #define BLE_ISO_LATENCY_MS 10
 #define BLE_ISO_RETRANSMITS 2
 #define BT_LE_ADV_FAST_CONN                                                                        \
@@ -115,7 +117,11 @@ struct bt_csip_set_member_register_param csip_param = {
 
 static struct bt_codec lc3_codec = BT_CODEC_LC3(
 	BT_AUDIO_CODEC_CAPABILIY_FREQ, (BT_CODEC_LC3_DURATION_10 | BT_CODEC_LC3_DURATION_PREFER_10),
+#if CONFIG_STEREO_CIS_HEADSET
+	CHANNEL_COUNT_2, LE_AUDIO_SDU_SIZE_OCTETS(CONFIG_LC3_BITRATE_MIN),
+#else
 	CHANNEL_COUNT_1, LE_AUDIO_SDU_SIZE_OCTETS(CONFIG_LC3_BITRATE_MIN),
+#endif
 	LE_AUDIO_SDU_SIZE_OCTETS(CONFIG_LC3_BITRATE_MAX), 1u, BT_AUDIO_CONTEXT_TYPE_MEDIA);
 
 static enum bt_audio_dir caps_dirs[] = {
@@ -447,7 +453,11 @@ static void stream_recv_cb(struct bt_bap_stream *stream, const struct bt_iso_rec
 	}
 
 	receive_cb(buf->data, buf->len, bad_frame, info->ts, channel,
+#if CONFIG_STEREO_CIS_HEADSET
+		   bt_codec_cfg_get_octets_per_frame(stream->codec) * 2);
+#else
 		   bt_codec_cfg_get_octets_per_frame(stream->codec));
+#endif
 }
 
 static void stream_start_cb(struct bt_bap_stream *stream)
