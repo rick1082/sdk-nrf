@@ -57,6 +57,7 @@ configure_file("${CMAKE_CURRENT_SOURCE_DIR}/src/utils/fw_info_app.c.in"
 # Target sources below are specific to the nRF5340 Audio DK HW
 target_sources(app PRIVATE
     src/main.c
+    src/wm8960.c
     ${CMAKE_BINARY_DIR}/fw_info_app.c
     )
 
@@ -69,6 +70,7 @@ zephyr_library_include_directories(
     src/modules
     src/utils
     src/utils/macros
+    src
 )
 
 zephyr_library_include_directories(app PRIVATE

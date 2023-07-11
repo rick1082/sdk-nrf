@@ -156,7 +156,13 @@ void on_ble_core_ready(void)
 		ERR_CHK(ret);
 	}
 }
-
+#include <zephyr/drivers/i2c.h>
+#include <zephyr/drivers/gpio.h>
+#include "wm8960.h"
+#define I2C1_NODE DT_NODELABEL(mysensor)
+#define EXT_CODEC DT_NODELABEL(hw_codec_sel_out)
+static const struct i2c_dt_spec dev_i2c = I2C_DT_SPEC_GET(I2C1_NODE);
+static const struct gpio_dt_spec ext_codec_ctrl_pin = GPIO_DT_SPEC_GET(EXT_CODEC, gpios);
 void main(void)
 {
 	int ret;
@@ -215,6 +221,35 @@ void main(void)
 	ret = streamctrl_start();
 	ERR_CHK(ret);
 
+	if (!device_is_ready(dev_i2c.bus)) {
+		LOG_WRN("I2C bus %s is not ready!", dev_i2c.bus->name);
+		return;
+	}
+
+	if (!device_is_ready(ext_codec_ctrl_pin.port)) {
+		LOG_WRN("ext codec ctrl pin is not ready");
+		return;
+	}
+
+	ret = gpio_pin_configure_dt(&ext_codec_ctrl_pin, GPIO_OUTPUT_ACTIVE);
+	gpio_pin_set_dt(&ext_codec_ctrl_pin, 0);
+	//wm8960_enableVREF(&dev_i2c);
+	//wm8960_reset(&dev_i2c);
+
+	//uint8_t sensor_regs[3] = { 0xF, 0x1E, 0x80 };
+	uint8_t sensor_regs[3] = {0x0f, 0x01, 01};
+	ret = i2c_write_dt(&dev_i2c, sensor_regs, sizeof(sensor_regs));
+	if (ret != 0) {
+		LOG_WRN("Failed to write/read I2C device address %X", dev_i2c.addr);
+	} else {
+		LOG_WRN("I2S write properly");
+	}
+
+
+/*
+	ret = i2c_write_read_dt(&dev_i2c,&sensor_regs[0],1,&temp_reading[0],1);
+	LOG_WRN("%X", temp_reading[0]);
+	*/
 	while (1) {
 		streamctrl_event_handler();
 		STACK_USAGE_PRINT("main", &z_main_thread);
