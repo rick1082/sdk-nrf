@@ -215,135 +215,11 @@ void streamctrl_encoded_data_send(void const *const data, size_t size, uint8_t n
 	}
 }
 
-#if (CONFIG_AUDIO_TEST_TONE)
-#define TEST_TONE_BASE_FREQ_HZ 1000
-
-static int test_tone_button_press(void)
-{
-	int ret;
-	static uint32_t test_tone_hz;
-
-	if (CONFIG_AUDIO_BIT_DEPTH_BITS != 16) {
-		LOG_WRN("Tone gen only supports 16 bits");
-		return -ECANCELED;
-	}
-
-	if (strm_state == STATE_STREAMING) {
-		if (test_tone_hz == 0) {
-			test_tone_hz = TEST_TONE_BASE_FREQ_HZ;
-		} else if (test_tone_hz >= TEST_TONE_BASE_FREQ_HZ * 4) {
-			test_tone_hz = 0;
-		} else {
-			test_tone_hz = test_tone_hz * 2;
-		}
-
-		if (test_tone_hz != 0) {
-			LOG_INF("Test tone set at %d Hz", test_tone_hz);
-		} else {
-			LOG_INF("Test tone off");
-		}
-
-		ret = audio_encode_test_tone_set(test_tone_hz);
-		ERR_CHK_MSG(ret, "Failed to generate test tone");
-	}
-
-	return 0;
-}
-#endif /* (CONFIG_AUDIO_TEST_TONE) */
-
 /* Handle button activity */
 static void button_msg_sub_thread(void)
 {
-	int ret;
-	const struct zbus_channel *chan;
-
-	while (1) {
-		ret = zbus_sub_wait(&button_sub, &chan, K_FOREVER);
-		ERR_CHK(ret);
-
-		struct button_msg msg;
-
-		ret = zbus_chan_read(chan, &msg, K_MSEC(100));
-		ERR_CHK(ret);
-
-		LOG_DBG("Got btn evt from queue - id = %d, action = %d", msg.button_pin,
-			msg.button_action);
-
-		if (msg.button_action != BUTTON_PRESS) {
-			LOG_WRN("Unhandled button action");
-			return;
-		}
-
-		switch (msg.button_pin) {
-		case BUTTON_PLAY_PAUSE:
-			if (IS_ENABLED(CONFIG_WALKIE_TALKIE_DEMO)) {
-				LOG_DBG("Play/pause not supported in walkie-talkie mode");
-				return;
-			}
-			/* Starts/pauses the audio stream */
-			ret = le_audio_play_pause();
-			if (ret) {
-				LOG_WRN("Could not play/pause");
-			}
-
-			break;
-
-		case BUTTON_VOLUME_UP:
-			ret = le_audio_volume_up();
-			if (ret) {
-				LOG_WRN("Failed to increase volume");
-			}
-
-			break;
-
-		case BUTTON_VOLUME_DOWN:
-			ret = le_audio_volume_down();
-			if (ret) {
-				LOG_WRN("Failed to decrease volume");
-			}
-
-			break;
-
-		case BUTTON_4:
-#if (CONFIG_AUDIO_TEST_TONE)
-			if (IS_ENABLED(CONFIG_WALKIE_TALKIE_DEMO)) {
-				LOG_DBG("Test tone is disabled in walkie-talkie mode");
-				break;
-			}
-
-			ret = test_tone_button_press();
-#else
-			ret = le_audio_user_defined_button_press(LE_AUDIO_USER_DEFINED_ACTION_1);
-#endif /*CONFIG_AUDIO_TEST_TONE*/
-
-			if (ret) {
-				LOG_WRN("Failed button 4 press, ret: %d", ret);
-			}
-
-			break;
-
-		case BUTTON_5:
-#if (CONFIG_AUDIO_MUTE)
-			ret = le_audio_volume_mute();
-			if (ret) {
-				LOG_WRN("Failed to mute volume");
-			}
-#else
-			ret = le_audio_user_defined_button_press(LE_AUDIO_USER_DEFINED_ACTION_2);
-			if (ret) {
-				LOG_WRN("User defined button 5 action failed, ret: %d", ret);
-			}
-#endif
-			break;
-
-		default:
-			LOG_WRN("Unexpected/unhandled button id: %d", msg.button_pin);
-		}
-
-		STACK_USAGE_PRINT("button_msg_thread", &button_msg_sub_thread_data);
-	}
+	
 }
-
 /* Handle Bluetooth LE audio events */
 static void le_audio_msg_sub_thread(void)
 {
@@ -376,8 +252,6 @@ static void le_audio_msg_sub_thread(void)
 
 			audio_system_start();
 			stream_state_set(STATE_STREAMING);
-			ret = led_blink(LED_APP_1_BLUE);
-			ERR_CHK(ret);
 
 			break;
 
@@ -391,8 +265,6 @@ static void le_audio_msg_sub_thread(void)
 
 			stream_state_set(STATE_PAUSED);
 			audio_system_stop();
-			ret = led_on(LED_APP_1_BLUE);
-			ERR_CHK(ret);
 
 			break;
 

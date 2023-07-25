@@ -164,27 +164,6 @@ static void on_bt_ready(int err)
 	m_ready_callback();
 }
 
-static int controller_leds_mapping(void)
-{
-	int ret;
-
-	ret = ble_hci_vsc_led_pin_map(PAL_LED_ID_CPU_ACTIVE,
-				      DT_GPIO_FLAGS_BY_IDX(DT_NODELABEL(rgb2_green), gpios, 0),
-				      DT_GPIO_PIN_BY_IDX(DT_NODELABEL(rgb2_green), gpios, 0));
-	if (ret) {
-		return ret;
-	}
-
-	ret = ble_hci_vsc_led_pin_map(PAL_LED_ID_ERROR,
-				      DT_GPIO_FLAGS_BY_IDX(DT_NODELABEL(rgb2_red), gpios, 0),
-				      DT_GPIO_PIN_BY_IDX(DT_NODELABEL(rgb2_red), gpios, 0));
-	if (ret) {
-		return ret;
-	}
-
-	return 0;
-}
-
 static void net_core_watchdog_handler(struct k_timer *timer_id)
 {
 	k_work_submit(&net_core_ctrl_version_get_work);
@@ -253,12 +232,6 @@ int ble_core_init(ble_core_ready_t ready_callback)
 
 	if (ret) {
 		LOG_ERR("Bluetooth init failed (ret %d)", ret);
-		return ret;
-	}
-
-	ret = controller_leds_mapping();
-	if (ret) {
-		LOG_ERR("Error mapping LED pins to the Bluetooth controller (ret %d)", ret);
 		return ret;
 	}
 

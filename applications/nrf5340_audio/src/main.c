@@ -39,9 +39,8 @@ extern struct k_thread z_main_thread;
 #endif /* defined(CONFIG_INIT_STACKS) */
 
 static atomic_t ble_core_is_ready = (atomic_t) false;
-static struct board_version board_rev;
 
-ZBUS_CHAN_DECLARE(button_chan);
+//ZBUS_CHAN_DECLARE(button_chan);
 ZBUS_CHAN_DECLARE(le_audio_chan);
 
 ZBUS_OBS_DECLARE(button_sub);
@@ -66,101 +65,13 @@ static int hfclock_config_and_start(void)
 	return 0;
 }
 
-static int leds_set(void)
-{
-	int ret;
-
-	/* Blink LED 3 to indicate that APP core is running */
-	ret = led_blink(LED_APP_3_GREEN);
-	if (ret) {
-		return ret;
-	}
-
-#if (CONFIG_AUDIO_DEV == HEADSET)
-	enum audio_channel channel;
-
-	channel_assignment_get(&channel);
-
-	if (channel == AUDIO_CH_L) {
-		ret = led_on(LED_APP_RGB, LED_COLOR_BLUE);
-	} else {
-		ret = led_on(LED_APP_RGB, LED_COLOR_MAGENTA);
-	}
-
-	if (ret) {
-		return ret;
-	}
-#elif (CONFIG_AUDIO_DEV == GATEWAY)
-	ret = led_on(LED_APP_RGB, LED_COLOR_GREEN);
-	if (ret) {
-		return ret;
-	}
-#endif /* (CONFIG_AUDIO_DEV == HEADSET) */
-
-	return 0;
-}
-
-static int bonding_clear_check(void)
-{
-	int ret;
-	bool pressed;
-
-	ret = button_pressed(BUTTON_5, &pressed);
-	if (ret) {
-		return ret;
-	}
-
-	if (pressed) {
-		if (IS_ENABLED(CONFIG_SETTINGS)) {
-			LOG_INF("Clearing all bonds");
-			bt_unpair(BT_ID_DEFAULT, NULL);
-		}
-	}
-	return 0;
-}
-
-static int channel_assign_check(void)
-{
-#if (CONFIG_AUDIO_DEV == HEADSET) && CONFIG_AUDIO_HEADSET_CHANNEL_RUNTIME
-	int ret;
-	bool pressed;
-
-	ret = button_pressed(BUTTON_VOLUME_DOWN, &pressed);
-	if (ret) {
-		return ret;
-	}
-
-	if (pressed) {
-		channel_assignment_set(AUDIO_CH_L);
-		return 0;
-	}
-
-	ret = button_pressed(BUTTON_VOLUME_UP, &pressed);
-	if (ret) {
-		return ret;
-	}
-
-	if (pressed) {
-		channel_assignment_set(AUDIO_CH_R);
-		return 0;
-	}
-#endif
-
-	return 0;
-}
-
 /* Callback from ble_core when the ble subsystem is ready */
 void on_ble_core_ready(void)
 {
-	int ret;
-
 	(void)atomic_set(&ble_core_is_ready, (atomic_t) true);
 
 	if (IS_ENABLED(CONFIG_SETTINGS)) {
 		settings_load();
-
-		ret = bonding_clear_check();
-		ERR_CHK(ret);
 	}
 }
 
@@ -173,17 +84,14 @@ int main(void)
 	ret = hfclock_config_and_start();
 	ERR_CHK(ret);
 
-	ret = led_init();
-	ERR_CHK(ret);
-
 	if (IS_ENABLED(CONFIG_ZBUS) && (CONFIG_ZBUS_RUNTIME_OBSERVERS_POOL_SIZE > 0)) {
-		ret = zbus_chan_add_obs(&button_chan, &button_sub, K_MSEC(200));
-		ERR_CHK(ret);
+		//ret = zbus_chan_add_obs(&button_chan, &button_sub, K_MSEC(200));
+		//ERR_CHK(ret);
 
 		ret = zbus_chan_add_obs(&le_audio_chan, &le_audio_evt_sub, K_MSEC(200));
 		ERR_CHK(ret);
 	}
-
+/*
 	ret = button_handler_init();
 	ERR_CHK(ret);
 
@@ -207,7 +115,7 @@ int main(void)
 			ERR_CHK(ret);
 		}
 	}
-
+*/
 #if defined(CONFIG_AUDIO_DFU_ENABLE)
 	/* Check DFU BTN before initialize BLE */
 	dfu_entry_check((void *)ble_core_init);
@@ -221,9 +129,6 @@ int main(void)
 	while (!(bool)atomic_get(&ble_core_is_ready)) {
 		(void)k_sleep(K_MSEC(100));
 	}
-
-	ret = leds_set();
-	ERR_CHK(ret);
 
 	ret = streamctrl_start();
 	ERR_CHK(ret);
