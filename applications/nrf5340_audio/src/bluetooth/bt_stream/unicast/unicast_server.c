@@ -1,10 +1,10 @@
 /*
- * Copyright (c) 2022 Nordic Semiconductor ASA
+ * Copyright (c) 2023 Nordic Semiconductor ASA
  *
  * SPDX-License-Identifier: LicenseRef-Nordic-5-Clause
  */
 
-#include "le_audio.h"
+#include "unicast_server.h"
 
 #include <zephyr/zbus/zbus.h>
 #include <zephyr/bluetooth/bluetooth.h>
@@ -13,6 +13,7 @@
 #include <zephyr/bluetooth/audio/pacs.h>
 #include <zephyr/bluetooth/audio/csip.h>
 #include <zephyr/bluetooth/audio/cap.h>
+#include <zephyr/bluetooth/audio/tmap.h>
 
 /* TODO: Remove when a get_info function is implemented in host */
 #include <../subsys/bluetooth/audio/bap_endpoint.h>
@@ -22,7 +23,7 @@
 #include "channel_assignment.h"
 
 #include <zephyr/logging/log.h>
-LOG_MODULE_REGISTER(cis_headset, CONFIG_BLE_LOG_LEVEL);
+LOG_MODULE_REGISTER(unicast_server, CONFIG_BLE_LOG_LEVEL);
 
 ZBUS_CHAN_DEFINE(le_audio_chan, struct le_audio_msg, NULL, NULL, ZBUS_OBSERVERS_EMPTY,
 		 ZBUS_MSG_INIT(0));
@@ -53,20 +54,51 @@ enum csip_set_rank {
 	CSIP_HR_RANK = 2
 };
 
-static struct bt_csip_set_member_svc_inst *csip;
-/* Advertising data for peer connection */
-static uint8_t csip_rsi[BT_CSIP_RSI_SIZE];
-
 static le_audio_receive_cb receive_cb;
-static le_audio_timestamp_cb timestamp_cb;
+static struct bt_csip_set_member_svc_inst *csip;
+/* Left or right channel headset */
+static enum audio_channel channel;
 
-static const struct bt_data ad_peer[] = {
-	BT_DATA_BYTES(BT_DATA_FLAGS, (BT_LE_AD_GENERAL | BT_LE_AD_NO_BREDR)),
-	BT_DATA_BYTES(BT_DATA_UUID16_ALL, BT_UUID_16_ENCODE(BT_UUID_ASCS_VAL)),
-	BT_DATA_BYTES(BT_DATA_UUID16_ALL, BT_UUID_16_ENCODE(BT_UUID_PACS_VAL)),
-#if CONFIG_BT_CSIP_SET_MEMBER
-	BT_CSIP_DATA_RSI(csip_rsi),
-#endif /* CONFIG_BT_CSIP_SET_MEMBER */
+/* Advertising data for peer connection */
+static uint8_t csip_rsi_adv_data[BT_CSIP_RSI_SIZE];
+
+static uint8_t flags_adv_data[] = {BT_LE_AD_GENERAL | BT_LE_AD_NO_BREDR};
+
+static uint8_t gap_appear_adv_data[] = {
+	BT_BYTES_LIST_LE16(BT_APPEARANCE_WEARABLE_AUDIO_DEVICE_EARBUD)};
+
+static const uint8_t cap_adv_data[] = {
+	BT_UUID_16_ENCODE(BT_UUID_CAS_VAL),
+	BT_AUDIO_UNICAST_ANNOUNCEMENT_TARGETED,
+};
+
+static uint8_t tmap_adv_data[] = {
+	BT_UUID_16_ENCODE(BT_UUID_TMAS_VAL),
+	BT_BYTES_LIST_LE16(BT_TMAP_ROLE_UMR | BT_TMAP_ROLE_CT),
+};
+
+static uint8_t csis_rsi_adv_data[BT_CSIP_RSI_SIZE];
+
+#if defined(CONFIG_BT_AUDIO_TX)
+#define AVAILABLE_SOURCE_CONTEXT                                                                   \
+	(BT_AUDIO_CONTEXT_TYPE_UNSPECIFIED | BT_AUDIO_CONTEXT_TYPE_CONVERSATIONAL |                \
+	 BT_AUDIO_CONTEXT_TYPE_MEDIA)
+#else
+#define AVAILABLE_SOURCE_CONTEXT 0x0000
+#endif
+
+#if defined(CONFIG_BT_AUDIO_RX)
+#define AVAILABLE_SINK_CONTEXT (BT_AUDIO_CONTEXT_TYPE_UNSPECIFIED | BT_AUDIO_CONTEXT_TYPE_MEDIA)
+#else
+#define AVAILABLE_SINK_CONTEXT 0x0000
+#endif
+
+static uint8_t unicast_server_adv_data[] = {
+	BT_UUID_16_ENCODE(BT_UUID_ASCS_VAL),
+	BT_AUDIO_UNICAST_ANNOUNCEMENT_TARGETED,
+	BT_BYTES_LIST_LE16(AVAILABLE_SINK_CONTEXT),
+	BT_BYTES_LIST_LE16(AVAILABLE_SOURCE_CONTEXT),
+	0x00, /* Metadata length */
 };
 
 static void le_audio_event_publish(enum le_audio_evt_type event, struct bt_conn *conn)
@@ -131,9 +163,11 @@ static const struct bt_codec_qos_pref qos_pref = BT_CODEC_QOS_PREF(
 
 /* clang-format off */
 static struct bt_pacs_cap caps[] = {
+#if (CONFIG_BT_AUDIO_RX)
 				{
 					 .codec = &lc3_codec,
 				},
+#endif
 #if (CONFIG_BT_AUDIO_TX)
 				{
 					 .codec = &lc3_codec,
@@ -153,9 +187,6 @@ static struct bt_audio_source {
 	uint32_t seq_num;
 } sources[CONFIG_BT_ASCS_ASE_SRC_COUNT];
 #endif /* (CONFIG_BT_AUDIO_TX) */
-
-/* Left or right channel headset */
-static enum audio_channel channel;
 
 static void print_codec(const struct bt_codec *codec, enum bt_audio_dir dir)
 {
@@ -398,7 +429,182 @@ static struct bt_bap_stream_ops stream_ops = {
 #endif /* (CONFIG_BT_AUDIO_TX) */
 };
 
-static int initialize(le_audio_receive_cb recv_cb, le_audio_timestamp_cb timestmp_cb)
+int unicast_server_config_get(uint32_t *bitrate, uint32_t *sampling_rate_hz,
+			      uint32_t *pres_delay_us)
+{
+	if (bitrate == NULL && sampling_rate_hz == NULL && pres_delay_us == NULL) {
+		LOG_ERR("No valid pointers received");
+		return -ENXIO;
+	}
+
+	if (audio_streams[0].codec == NULL) {
+		LOG_ERR("No codec found for the stream");
+		return -ENXIO;
+	}
+
+	if (sampling_rate_hz != NULL) {
+		*sampling_rate_hz = bt_codec_cfg_get_freq(audio_streams[0].codec);
+	}
+
+	if (bitrate != NULL) {
+		/* Get the configuration for the sink stream */
+		int frames_per_sec =
+			1000000 / bt_codec_cfg_get_frame_duration_us(audio_streams[0].codec);
+		int bits_per_frame = bt_codec_cfg_get_octets_per_frame(audio_streams[0].codec) * 8;
+		*bitrate = frames_per_sec * bits_per_frame;
+	}
+
+	if (pres_delay_us != NULL) {
+		if (audio_streams[0].qos == NULL) {
+			LOG_ERR("No QoS found for the stream");
+			return -ENXIO;
+		}
+
+		*pres_delay_us = audio_streams[0].qos->pd;
+	}
+
+	return 0;
+}
+
+int unicast_server_adv_get(struct net_buf_simple *uuid_buf, struct bt_data *adv_buf,
+			   uint8_t adv_buf_vacant)
+{
+	int adv_buf_cnt = 0;
+
+	if ((adv_buf_vacant - adv_buf_cnt) == 0) {
+		return -ENOMEM;
+	}
+
+	adv_buf[adv_buf_cnt].type = BT_DATA_SVC_DATA16;
+	adv_buf[adv_buf_cnt].data_len = ARRAY_SIZE(unicast_server_adv_data);
+	adv_buf[adv_buf_cnt].data = &unicast_server_adv_data[0];
+	adv_buf_cnt++;
+
+	if ((adv_buf_vacant - adv_buf_cnt) == 0) {
+		return -ENOMEM;
+	}
+
+	adv_buf[adv_buf_cnt].type = BT_DATA_SVC_DATA16;
+	adv_buf[adv_buf_cnt].data_len = ARRAY_SIZE(tmap_adv_data);
+	adv_buf[adv_buf_cnt].data = &tmap_adv_data[0];
+	adv_buf_cnt++;
+
+#if defined(CONFIG_BT_CSIP_SET_MEMBER)
+	if ((adv_buf_vacant - adv_buf_cnt) == 0) {
+		return -ENOMEM;
+	}
+
+	adv_buf[adv_buf_cnt].type = BT_DATA_CSIS_RSI;
+	adv_buf[adv_buf_cnt].data_len = ARRAY_SIZE(csis_rsi_adv_data);
+	adv_buf[adv_buf_cnt].data = &csis_rsi_adv_data[0];
+	adv_buf_cnt++;
+#endif /* CONFIG_BT_CSIP_SET_MEMBER */
+
+	if ((adv_buf_vacant - adv_buf_cnt) == 0) {
+		return -ENOMEM;
+	}
+
+	adv_buf[adv_buf_cnt].type = BT_DATA_GAP_APPEARANCE;
+	adv_buf[adv_buf_cnt].data_len = ARRAY_SIZE(gap_appear_adv_data);
+	adv_buf[adv_buf_cnt].data = &gap_appear_adv_data[0];
+	adv_buf_cnt++;
+
+	if ((adv_buf_vacant - adv_buf_cnt) == 0) {
+		return -ENOMEM;
+	}
+
+	adv_buf[adv_buf_cnt].type = BT_DATA_FLAGS;
+	adv_buf[adv_buf_cnt].data_len = ARRAY_SIZE(flags_adv_data);
+	adv_buf[adv_buf_cnt].data = &flags_adv_data[0];
+	adv_buf_cnt++;
+
+	if ((adv_buf_vacant - adv_buf_cnt) == 0) {
+		return -ENOMEM;
+	}
+
+	adv_buf[adv_buf_cnt].type = BT_DATA_SVC_DATA16;
+	adv_buf[adv_buf_cnt].data_len = ARRAY_SIZE(cap_adv_data);
+	adv_buf[adv_buf_cnt].data = &cap_adv_data[0];
+	adv_buf_cnt++;
+
+	if (net_buf_simple_tailroom(uuid_buf) >= (BT_UUID_SIZE_16 * 2)) {
+		net_buf_simple_add_le16(uuid_buf, BT_UUID_ASCS_VAL);
+		net_buf_simple_add_le16(uuid_buf, BT_UUID_PACS_VAL);
+
+	} else {
+		LOG_ERR("Not enough space for UUIDS");
+		return -ENOMEM;
+	}
+
+	return adv_buf_cnt;
+}
+
+int unicast_server_send(struct encoded_audio enc_audio)
+{
+#if (CONFIG_BT_AUDIO_TX)
+	int ret;
+	struct net_buf *buf;
+	static bool hci_wrn_printed;
+
+	if (enc_audio.num_ch != 1) {
+		LOG_ERR("Num encoded channels must be 1");
+		return -EINVAL;
+	}
+
+	/* CIS headset only supports one source stream for now */
+	if (sources[0].stream->ep->status.state != BT_BAP_EP_STATE_STREAMING) {
+		LOG_DBG("Return channel not connected");
+		return 0;
+	}
+
+	/* net_buf_alloc allocates buffers for APP->NET transfer over HCI RPMsg,
+	 * but when these buffers are released it is not guaranteed that the
+	 * data has actually been sent. The data might be queued on the NET core,
+	 * and this can cause delays in the audio.
+	 * When stream_sent_cb() is called the data has been sent.
+	 * Data will be discarded if allocation becomes too high, to avoid audio delays.
+	 * If the NET and APP core operates in clock sync, discarding should not occur.
+	 */
+	if (atomic_get(&iso_tx_pool_alloc) >= HCI_ISO_BUF_ALLOC_PER_CHAN) {
+		if (!hci_wrn_printed) {
+			LOG_WRN("HCI ISO TX overrun");
+			hci_wrn_printed = true;
+		}
+
+		return -ENOMEM;
+	}
+
+	hci_wrn_printed = false;
+
+	buf = net_buf_alloc(iso_tx_pools[0], K_NO_WAIT);
+	if (buf == NULL) {
+		/* This should never occur because of the iso_tx_pool_alloc
+		 * check above
+		 */
+		LOG_WRN("Out of TX buffers");
+		return -ENOMEM;
+	}
+
+	net_buf_reserve(buf, BT_ISO_CHAN_SEND_RESERVE);
+	net_buf_add_mem(buf, enc_audio.data, enc_audio.size);
+
+	atomic_inc(&iso_tx_pool_alloc);
+	ret = bt_bap_stream_send(sources[0].stream, buf, sources[0].seq_num++,
+				 BT_ISO_TIMESTAMP_NONE);
+	if (ret < 0) {
+		LOG_WRN("Failed to send audio data: %d", ret);
+		net_buf_unref(buf);
+		atomic_dec(&iso_tx_pool_alloc);
+		return ret;
+	}
+
+	return 0;
+#else
+	return -ENOTSUP;
+#endif /* (CONFIG_BT_AUDIO_TX) */
+}
+
+int unicast_server_enable(le_audio_receive_cb recv_cb, timestamp_cb timestmp_cb)
 {
 	int ret;
 	static bool initialized;
@@ -413,13 +619,9 @@ static int initialize(le_audio_receive_cb recv_cb, le_audio_timestamp_cb timestm
 		return -EINVAL;
 	}
 
-	if (timestmp_cb == NULL) {
-		LOG_ERR("Timestamp callback is NULL");
-		return -EINVAL;
-	}
-
 	receive_cb = recv_cb;
-	timestamp_cb = timestmp_cb;
+	/* Will be required if the unicast server only sends data */
+	ARG_UNUSED(timestmp_cb);
 
 	bt_bap_unicast_server_register_cb(&unicast_server_cb);
 
@@ -441,6 +643,7 @@ static int initialize(le_audio_receive_cb recv_cb, le_audio_timestamp_cb timestm
 			LOG_ERR("Location set failed");
 			return ret;
 		}
+
 	} else if (channel == AUDIO_CH_R) {
 		csip_param.rank = CSIP_HR_RANK;
 
@@ -449,6 +652,7 @@ static int initialize(le_audio_receive_cb recv_cb, le_audio_timestamp_cb timestm
 			LOG_ERR("Location set failed");
 			return ret;
 		}
+
 	} else {
 		LOG_ERR("Channel not supported");
 		return -ECANCELED;
@@ -538,7 +742,7 @@ static int initialize(le_audio_receive_cb recv_cb, le_audio_timestamp_cb timestm
 			return ret;
 		}
 
-		ret = bt_csip_set_member_generate_rsi(csip, csip_rsi);
+		ret = bt_csip_set_member_generate_rsi(csip, csip_rsi_adv_data);
 		if (ret) {
 			LOG_ERR("Failed to generate RSI (ret %d)", ret);
 			return ret;
@@ -548,183 +752,4 @@ static int initialize(le_audio_receive_cb recv_cb, le_audio_timestamp_cb timestm
 	initialized = true;
 
 	return 0;
-}
-
-int le_audio_user_defined_button_press(enum le_audio_user_defined_action action)
-{
-	ARG_UNUSED(action);
-
-	LOG_WRN("%s not supported", __func__);
-	return -ENOTSUP;
-}
-
-int le_audio_config_get(uint32_t *bitrate, uint32_t *sampling_rate, uint32_t *pres_delay)
-{
-	if (bitrate == NULL && sampling_rate == NULL && pres_delay == NULL) {
-		LOG_ERR("No valid pointers received");
-		return -ENXIO;
-	}
-
-	if (audio_streams[0].codec == NULL) {
-		LOG_ERR("No codec found for the stream");
-		return -ENXIO;
-	}
-
-	/* Get the configuration for the sink stream */
-	int frames_per_sec = 1000000 / bt_codec_cfg_get_frame_duration_us(audio_streams[0].codec);
-	int bits_per_frame = bt_codec_cfg_get_octets_per_frame(audio_streams[0].codec) * 8;
-
-	if (sampling_rate != NULL) {
-		*sampling_rate = bt_codec_cfg_get_freq(audio_streams[0].codec);
-	}
-
-	if (bitrate != NULL) {
-		*bitrate = frames_per_sec * bits_per_frame;
-	}
-
-	if (pres_delay != NULL) {
-		if (audio_streams[0].qos == NULL) {
-			LOG_ERR("No QoS found for the stream");
-			return -ENXIO;
-		}
-
-		*pres_delay = audio_streams[0].qos->pd;
-	}
-
-	return 0;
-}
-
-void le_audio_conn_set(struct bt_conn *conn)
-{
-	ARG_UNUSED(conn);
-
-	LOG_WRN("%s not supported", __func__);
-}
-
-int le_audio_pa_sync_set(struct bt_le_per_adv_sync *pa_sync, uint32_t broadcast_id)
-{
-	ARG_UNUSED(pa_sync);
-	ARG_UNUSED(broadcast_id);
-
-	LOG_WRN("%s not supported", __func__);
-	return -ENOTSUP;
-}
-
-void le_audio_conn_disconnected(struct bt_conn *conn)
-{
-	ARG_UNUSED(conn);
-
-	LOG_WRN("%s not supported", __func__);
-}
-
-int le_audio_ext_adv_set(struct bt_le_ext_adv *ext_adv)
-{
-	ARG_UNUSED(ext_adv);
-
-	LOG_WRN("%s not supported", __func__);
-	return -ENOTSUP;
-}
-
-void le_audio_adv_get(const struct bt_data **adv, size_t *adv_size, bool periodic)
-{
-	if (periodic) {
-		LOG_WRN("No periodic advertisement for CIS headset");
-		return;
-	}
-
-	*adv = ad_peer;
-	*adv_size = ARRAY_SIZE(ad_peer);
-}
-
-int le_audio_play(void)
-{
-	LOG_WRN("%s not supported", __func__);
-	return -ENOTSUP;
-}
-
-int le_audio_pause(void)
-{
-	LOG_WRN("%s not supported", __func__);
-	return -ENOTSUP;
-}
-
-int le_audio_send(struct encoded_audio enc_audio)
-{
-#if (CONFIG_BT_AUDIO_TX)
-	int ret;
-	struct net_buf *buf;
-	static bool hci_wrn_printed;
-
-	if (enc_audio.num_ch != 1) {
-		LOG_ERR("Num encoded channels must be 1");
-		return -EINVAL;
-	}
-
-	/* CIS headset only supports one source stream for now */
-	if (sources[0].stream->ep->status.state != BT_BAP_EP_STATE_STREAMING) {
-		LOG_DBG("Return channel not connected");
-		return 0;
-	}
-
-	/* net_buf_alloc allocates buffers for APP->NET transfer over HCI RPMsg,
-	 * but when these buffers are released it is not guaranteed that the
-	 * data has actually been sent. The data might be queued on the NET core,
-	 * and this can cause delays in the audio.
-	 * When stream_sent_cb() is called the data has been sent.
-	 * Data will be discarded if allocation becomes too high, to avoid audio delays.
-	 * If the NET and APP core operates in clock sync, discarding should not occur.
-	 */
-	if (atomic_get(&iso_tx_pool_alloc) >= HCI_ISO_BUF_ALLOC_PER_CHAN) {
-		if (!hci_wrn_printed) {
-			LOG_WRN("HCI ISO TX overrun");
-			hci_wrn_printed = true;
-		}
-
-		return -ENOMEM;
-	}
-
-	hci_wrn_printed = false;
-
-	buf = net_buf_alloc(iso_tx_pools[0], K_NO_WAIT);
-	if (buf == NULL) {
-		/* This should never occur because of the iso_tx_pool_alloc check above */
-		LOG_WRN("Out of TX buffers");
-		return -ENOMEM;
-	}
-
-	net_buf_reserve(buf, BT_ISO_CHAN_SEND_RESERVE);
-	net_buf_add_mem(buf, enc_audio.data, enc_audio.size);
-
-	atomic_inc(&iso_tx_pool_alloc);
-	ret = bt_bap_stream_send(sources[0].stream, buf, sources[0].seq_num++,
-				 BT_ISO_TIMESTAMP_NONE);
-	if (ret < 0) {
-		LOG_WRN("Failed to send audio data: %d", ret);
-		net_buf_unref(buf);
-		atomic_dec(&iso_tx_pool_alloc);
-		return ret;
-	}
-
-	return 0;
-#else
-	return -ENOTSUP;
-#endif /* (CONFIG_BT_AUDIO_TX) */
-}
-
-int le_audio_enable(le_audio_receive_cb recv_cb, le_audio_timestamp_cb timestmp_cb)
-{
-	int ret;
-
-	ret = initialize(recv_cb, timestmp_cb);
-	if (ret) {
-		LOG_ERR("Initialize failed");
-		return ret;
-	}
-
-	return 0;
-}
-
-int le_audio_disable(void)
-{
-	return -ENOTSUP;
 }

@@ -7,6 +7,7 @@
 #include "bt_content_ctrl.h"
 
 #include <zephyr/zbus/zbus.h>
+#include <zephyr/bluetooth/uuid.h>
 
 #include "bt_content_ctrl_media_internal.h"
 #include "nrf5340_audio_common.h"
@@ -102,6 +103,20 @@ int bt_content_ctrl_discover(struct bt_conn *conn)
 		if (ret) {
 			LOG_ERR("Failed to discover the media control client");
 			return ret;
+		}
+	}
+
+	return 0;
+}
+
+int bt_content_ctrl_adv_get(struct net_buf_simple *uuid_buf, struct bt_data *adv_buf,
+			    uint8_t adv_buf_vacant)
+{
+	if (IS_ENABLED(CONFIG_BT_MCC)) {
+		if (net_buf_simple_tailroom(uuid_buf) >= BT_UUID_SIZE_16) {
+			net_buf_simple_add_le16(uuid_buf, BT_UUID_MCS_VAL);
+		} else {
+			return -ENOMEM;
 		}
 	}
 

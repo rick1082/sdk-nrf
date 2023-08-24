@@ -22,7 +22,7 @@ void broadcast_source_adv_get(const struct bt_data **ext_adv, size_t *ext_adv_si
 			      const struct bt_data **per_adv, size_t *per_adv_size);
 
 /**
- * @brief	Start the Bluetooth LE Audio broadcast source.
+ * @brief	Start the Bluetooth LE Audio broadcast (BIS) source.
  *
  * @param[in]	ext_adv		Pointer to the extended advertising set, can be NULL if a stream
  *				is restarted.
@@ -32,7 +32,7 @@ void broadcast_source_adv_get(const struct bt_data **ext_adv, size_t *ext_adv_si
 int broadcast_source_start(struct bt_le_ext_adv *ext_adv);
 
 /**
- * @brief	Stop the Bluetooth LE Audio broadcast source.
+ * @brief	Stop the Bluetooth LE Audio broadcast (BIS) source.
  *
  * @return	0 for success, error otherwise.
  */
@@ -48,7 +48,14 @@ int broadcast_source_stop(void);
 int broadcast_source_send(struct encoded_audio enc_audio);
 
 /**
- * @brief	Disable the LE Audio broadcast source.
+ * @brief	Enable the LE Audio broadcast (BIS) source.
+ *
+ * @return	0 for success, error otherwise.
+ */
+int broadcast_source_enable(void);
+
+/**
+ * @brief	Disable the LE Audio broadcast (BIS) source.
  *
  * @return	0 for success, error otherwise.
  */

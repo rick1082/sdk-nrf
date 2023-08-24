@@ -19,7 +19,7 @@
 #include "bt_mgmt.h"
 
 #include <zephyr/logging/log.h>
-LOG_MODULE_REGISTER(streamctrl, CONFIG_STREAMCTRL_LOG_LEVEL);
+LOG_MODULE_REGISTER(streamctrl_brcast_src, CONFIG_STREAMCTRL_LOG_LEVEL);
 
 ZBUS_SUBSCRIBER_DEFINE(button_evt_sub, CONFIG_BUTTON_MSG_SUB_QUEUE_SIZE);
 ZBUS_SUBSCRIBER_DEFINE(le_audio_evt_sub, CONFIG_LE_AUDIO_MSG_SUB_QUEUE_SIZE);

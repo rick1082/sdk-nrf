@@ -46,6 +46,20 @@ int bt_content_ctrl_conn_disconnected(struct bt_conn *conn);
 int bt_content_ctrl_discover(struct bt_conn *conn);
 
 /**
+ * @brief	Get advertising data from this module.
+ *
+ * @note	This partial data is used to build a complete extended advertising packet.
+ *
+ * @param [in/out] uuid_buf Buffer being populated with UUIDs.
+ * @param [in/out] adv_buf Buffer being populated with ext adv elements.
+ * @param [in] adv_buf_vacant Number of vacant elements in @p adv_buf.
+ *
+ * @return	Negative values for errors or num elements added to @p adv_buf.
+ */
+int bt_content_ctrl_adv_get(struct net_buf_simple *uuid_buf, struct bt_data *adv_buf,
+			    uint8_t adv_buf_vacant);
+
+/**
  * @brief	Initialize the content control module.
  *
  * @return	0 for success, error otherwise.

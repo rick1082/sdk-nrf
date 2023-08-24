@@ -23,6 +23,14 @@ config CODEC_CAP_COUNT_MAX
 	help
 	  Max number of codec capabilities to store per stream.
 
+config EXT_ADV_BUF_MAX
+	int "Max number of extended advertising data parameters"
+	default 10
+
+config EXT_ADV_UUID_BUF_MAX
+	int "Max number of UUIDs to add to the ext adv"
+	default 10
+
 choice BT_BAP_UNICAST_BAP_CONFIGURATION
 	prompt "Unicast codec configuration"
 	depends on TRANSPORT_CIS

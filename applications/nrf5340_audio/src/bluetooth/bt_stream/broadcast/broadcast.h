@@ -38,7 +38,7 @@
 					   BT_AUDIO_CONTEXT_TYPE_MEDIA)
 
 #else
-#error Unsupported LC3 codec preset for broadcast
+/* #error Unsupported LC3 codec preset for broadcast */
 #endif /* CONFIG_BT_AUDIO_BROADCAST_CONFIGURABLE */
 
 #define STANDARD_QUALITY_16KHZ 16000
