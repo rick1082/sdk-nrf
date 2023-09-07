@@ -12,7 +12,9 @@
 #include <zephyr/task_wdt/task_wdt.h>
 
 #include "macros_common.h"
+#if (CONFIG_BT_LL_ACS_NRF53)
 #include "ble_hci_vsc.h"
+#endif
 
 #include <zephyr/logging/log.h>
 LOG_MODULE_REGISTER(bt_mgmt_ctlr_cfg, CONFIG_BT_MGMT_CTLR_CFG_LOG_LEVEL);
@@ -182,9 +184,6 @@ int bt_mgmt_ctlr_cfg_init(bool watchdog_enable)
 		if (ret) {
 			return ret;
 		}
-	} else {
-		LOG_ERR("Unsupported controller");
-		return -EPERM;
 	}
 
 	if (watchdog_enable) {
