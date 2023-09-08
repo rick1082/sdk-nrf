@@ -438,6 +438,34 @@ int broadcast_source_send(struct encoded_audio enc_audio)
 	return 0;
 }
 
+int broadcast_source_disable(void)
+{
+	int ret;
+
+	if (cap_streams[0].bap_stream.ep->status.state == BT_BAP_EP_STATE_STREAMING) {
+		/* Deleting broadcast source in stream_stopped_cb() */
+		delete_broadcast_src = true;
+
+		ret = bt_cap_initiator_broadcast_audio_stop(broadcast_source);
+		if (ret) {
+			return ret;
+		}
+	} else if (broadcast_source != NULL) {
+		ret = bt_cap_initiator_broadcast_audio_delete(broadcast_source);
+		if (ret) {
+			return ret;
+		}
+
+		broadcast_source = NULL;
+	}
+
+	initialized = false;
+
+	LOG_DBG("Broadcast source disabled");
+
+	return 0;
+}
+
 int broadcast_source_enable(void)
 {
 	int ret;
@@ -522,35 +550,7 @@ int broadcast_source_enable(void)
 
 	initialized = true;
 
-	LOG_DBG("LE Audio enabled");
-
-	return 0;
-}
-
-int broadcast_source_disable(void)
-{
-	int ret;
-
-	if (cap_streams[0].bap_stream.ep->status.state == BT_BAP_EP_STATE_STREAMING) {
-		/* Deleting broadcast source in stream_stopped_cb() */
-		delete_broadcast_src = true;
-
-		ret = bt_cap_initiator_broadcast_audio_stop(broadcast_source);
-		if (ret) {
-			return ret;
-		}
-	} else if (broadcast_source != NULL) {
-		ret = bt_cap_initiator_broadcast_audio_delete(broadcast_source);
-		if (ret) {
-			return ret;
-		}
-
-		broadcast_source = NULL;
-	}
-
-	initialized = false;
-
-	LOG_DBG("LE Audio disabled");
+	LOG_DBG("Broadcast source enabled");
 
 	return 0;
 }

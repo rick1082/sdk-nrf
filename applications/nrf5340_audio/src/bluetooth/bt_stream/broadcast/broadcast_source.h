@@ -48,17 +48,17 @@ int broadcast_source_stop(void);
 int broadcast_source_send(struct encoded_audio enc_audio);
 
 /**
- * @brief	Enable the LE Audio broadcast source.
- *
- * @return	0 for success, error otherwise.
- */
-int broadcast_source_enable(void);
-
-/**
  * @brief	Disable the LE Audio broadcast source.
  *
  * @return	0 for success, error otherwise.
  */
 int broadcast_source_disable(void);
+
+/**
+ * @brief	Enable the LE Audio broadcast source.
+ *
+ * @return	0 for success, error otherwise.
+ */
+int broadcast_source_enable(void);
 
 #endif /* _BROADCAST_SOURCE_H_ */
