@@ -83,6 +83,9 @@ LOG_MODULE_REGISTER(audio_datapath, CONFIG_AUDIO_DATAPATH_LOG_LEVEL);
 /* How often to print underrun warning */
 #define UNDERRUN_LOG_INTERVAL_BLKS 5000
 
+static void audio_datapath_sdu_ref_update(const struct zbus_channel *chan);
+ZBUS_LISTENER_DEFINE(sdu_ref_msg_listen, audio_datapath_sdu_ref_update);
+
 enum drift_comp_state {
 	DRIFT_STATE_INIT,   /* Waiting for data to be received */
 	DRIFT_STATE_CALIB,  /* Calibrate and zero out local delay */
@@ -784,8 +787,6 @@ static void audio_datapath_sdu_ref_update(const struct zbus_channel *chan)
 		}
 	}
 }
-
-ZBUS_LISTENER_DEFINE(sdu_ref_msg_listen, audio_datapath_sdu_ref_update);
 
 int audio_datapath_pres_delay_us_set(uint32_t delay_us)
 {
