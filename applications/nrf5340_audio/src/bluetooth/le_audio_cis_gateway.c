@@ -838,7 +838,7 @@ static bool valid_codec_cap_check(struct bt_codec cap_array[], size_t size)
 	return false;
 }
 
-static void discover_sink_cb(struct bt_conn *conn, int err, enum bt_audio_dir dir)
+static void discover_cb(struct bt_conn *conn, int err, enum bt_audio_dir dir)
 {
 	int ret;
 	uint8_t channel_index = 0;
@@ -866,33 +866,62 @@ static void discover_sink_cb(struct bt_conn *conn, int err, enum bt_audio_dir di
 
 	/* At this point the location/channel index of the headset is always known */
 	for (int i = 0; i < CONFIG_CODEC_CAP_COUNT_MAX; i++) {
-		memcpy(&headsets[channel_index].sink_codec_cap[i],
-		       &temp_cap[temp_cap_index].codec[i], sizeof(struct bt_codec));
+		if (dir == BT_AUDIO_DIR_SINK) {
+			memcpy(&headsets[channel_index].sink_codec_cap[i],
+			       &temp_cap[temp_cap_index].codec[i], sizeof(struct bt_codec));
+		} else {
+			memcpy(&headsets[channel_index].source_codec_cap[i],
+			       &temp_cap[temp_cap_index].codec[i], sizeof(struct bt_codec));
+		}
 	}
 
-	LOG_DBG("Sink discover complete");
+	if (dir == BT_AUDIO_DIR_SINK) {
+		if (valid_codec_cap_check(headsets[channel_index].sink_codec_cap,
+					  temp_cap[temp_cap_index].num_caps)) {
+			if (conn == headsets[AUDIO_CH_L].headset_conn) {
+				bt_codec_allocation_set(&lc3_preset_sink.codec,
+							BT_AUDIO_LOCATION_FRONT_LEFT);
+			} else if (conn == headsets[AUDIO_CH_R].headset_conn) {
+				bt_codec_allocation_set(&lc3_preset_sink.codec,
+							BT_AUDIO_LOCATION_FRONT_RIGHT);
+			} else {
+				LOG_ERR("Unknown connection, cannot set allocation");
+			}
 
-	if (valid_codec_cap_check(headsets[channel_index].sink_codec_cap,
-				  temp_cap[temp_cap_index].num_caps)) {
-		if (conn == headsets[AUDIO_CH_L].headset_conn) {
-			bt_codec_allocation_set(&lc3_preset_sink.codec,
-						BT_AUDIO_LOCATION_FRONT_LEFT);
-		} else if (conn == headsets[AUDIO_CH_R].headset_conn) {
-			bt_codec_allocation_set(&lc3_preset_sink.codec,
-						BT_AUDIO_LOCATION_FRONT_RIGHT);
+			ret = bt_bap_stream_config(conn, &headsets[channel_index].sink_stream,
+						   headsets[channel_index].sink_ep,
+						   &lc3_preset_sink.codec);
+			if (ret) {
+				LOG_ERR("Could not configure sink stream, ret = %d", ret);
+			}
 		} else {
-			LOG_ERR("Unknown connection, cannot set allocation");
-		}
-
-		ret = bt_bap_stream_config(conn, &headsets[channel_index].sink_stream,
-					   headsets[channel_index].sink_ep, &lc3_preset_sink.codec);
-		if (ret) {
-			LOG_ERR("Could not configure sink stream");
+			/* NOTE: The string below is used by the Nordic CI system */
+			LOG_WRN("No valid codec capability found for %s headset sink",
+				headsets[channel_index].ch_name);
 		}
 	} else {
-		/* NOTE: The string below is used by the Nordic CI system */
-		LOG_WRN("No valid codec capability found for %s headset sink",
-			headsets[channel_index].ch_name);
+		if (valid_codec_cap_check(headsets[channel_index].source_codec_cap,
+					  temp_cap[temp_cap_index].num_caps)) {
+			if (conn == headsets[AUDIO_CH_L].headset_conn) {
+				bt_codec_allocation_set(&lc3_preset_source.codec,
+							BT_AUDIO_LOCATION_FRONT_LEFT);
+			} else if (conn == headsets[AUDIO_CH_R].headset_conn) {
+				bt_codec_allocation_set(&lc3_preset_source.codec,
+							BT_AUDIO_LOCATION_FRONT_RIGHT);
+			} else {
+				LOG_ERR("Unknown connection, cannot set allocation");
+			}
+
+			ret = bt_bap_stream_config(conn, &headsets[channel_index].source_stream,
+						   headsets[channel_index].source_ep,
+						   &lc3_preset_source.codec);
+			if (ret) {
+				LOG_WRN("Could not configure stream");
+			}
+		} else {
+			LOG_WRN("No valid codec capability found for %s headset source",
+				headsets[channel_index].ch_name);
+		}
 	}
 
 	/* Free up the slot in temp_cap */
@@ -900,75 +929,12 @@ static void discover_sink_cb(struct bt_conn *conn, int err, enum bt_audio_dir di
 	temp_cap[temp_cap_index].conn = NULL;
 	temp_cap[temp_cap_index].num_caps = 0;
 
-	if (IS_ENABLED(CONFIG_BT_AUDIO_RX)) {
+	if (IS_ENABLED(CONFIG_BT_AUDIO_RX) && dir == BT_AUDIO_DIR_SINK) {
 		ret = discover_source(conn);
 		if (ret) {
 			LOG_WRN("Failed to discover source: %d", ret);
 		}
 	}
-}
-
-static void discover_source_cb(struct bt_conn *conn, int err, enum bt_audio_dir dir)
-{
-	int ret;
-	uint8_t channel_index = 0;
-	uint8_t temp_cap_index;
-
-	if (err == BT_ATT_ERR_ATTRIBUTE_NOT_FOUND) {
-		LOG_WRN("No sources found");
-		return;
-	} else if (err) {
-		LOG_ERR("Discovery failed: %d", err);
-		return;
-	}
-
-	ret = channel_index_get(conn, &channel_index);
-	if (ret) {
-		LOG_ERR("Unknown connection, should not reach here");
-		return;
-	}
-
-	ret = temp_cap_index_get(conn, &temp_cap_index);
-	if (ret) {
-		LOG_ERR("Could not get temporary CAP storage index");
-		return;
-	}
-
-	/* At this point the location/channel index of the headset is always known */
-	for (int i = 0; i < temp_cap[temp_cap_index].num_caps; i++) {
-		memcpy(&headsets[channel_index].source_codec_cap[i],
-		       &temp_cap[temp_cap_index].codec[i], sizeof(struct bt_codec));
-	}
-
-	LOG_DBG("Source discover complete");
-
-	if (valid_codec_cap_check(headsets[channel_index].source_codec_cap,
-				  temp_cap[temp_cap_index].num_caps)) {
-		if (conn == headsets[AUDIO_CH_L].headset_conn) {
-			bt_codec_allocation_set(&lc3_preset_source.codec,
-						BT_AUDIO_LOCATION_FRONT_LEFT);
-		} else if (conn == headsets[AUDIO_CH_R].headset_conn) {
-			bt_codec_allocation_set(&lc3_preset_source.codec,
-						BT_AUDIO_LOCATION_FRONT_RIGHT);
-		} else {
-			LOG_ERR("Unknown connection, cannot set allocation");
-		}
-
-		ret = bt_bap_stream_config(conn, &headsets[channel_index].source_stream,
-					   headsets[channel_index].source_ep,
-					   &lc3_preset_source.codec);
-		if (ret) {
-			LOG_WRN("Could not configure stream");
-		}
-	} else {
-		LOG_WRN("No valid codec capability found for %s headset source",
-			headsets[channel_index].ch_name);
-	}
-
-	/* Free up the slot in temp_cap */
-	memset(temp_cap[temp_cap_index].codec, 0, sizeof(temp_cap[temp_cap_index].codec));
-	temp_cap[temp_cap_index].conn = NULL;
-	temp_cap[temp_cap_index].num_caps = 0;
 }
 
 static void disconnected_headset_cleanup(uint8_t chan_idx)
@@ -987,17 +953,10 @@ static void disconnected_headset_cleanup(uint8_t chan_idx)
 static int discover_sink(struct bt_conn *conn)
 {
 	int ret;
-	static uint8_t discover_index;
 
-	unicast_client_cbs.discover = discover_sink_cb;
+	unicast_client_cbs.discover = discover_cb;
 
 	ret = bt_bap_unicast_client_discover(conn, BT_AUDIO_DIR_SINK);
-	discover_index++;
-
-	/* Avoid multiple discover procedure sharing the same params */
-	if (discover_index >= CONFIG_BT_MAX_CONN) {
-		discover_index = 0;
-	}
 
 	return ret;
 }
@@ -1005,17 +964,8 @@ static int discover_sink(struct bt_conn *conn)
 static int discover_source(struct bt_conn *conn)
 {
 	int ret;
-	static uint8_t discover_index;
-
-	unicast_client_cbs.discover = discover_source_cb;
 
 	ret = bt_bap_unicast_client_discover(conn, BT_AUDIO_DIR_SOURCE);
-	discover_index++;
-
-	/* Avoid multiple discover procedure sharing the same params */
-	if (discover_index >= CONFIG_BT_MAX_CONN) {
-		discover_index = 0;
-	}
 
 	return ret;
 }
