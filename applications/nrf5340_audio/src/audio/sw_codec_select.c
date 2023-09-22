@@ -100,7 +100,7 @@ int sw_codec_encode(void *pcm_data, size_t pcm_size, uint8_t **encoded_data, siz
 	return 0;
 }
 
-int sw_codec_decode(uint8_t const *const encoded_data, size_t encoded_size, bool bad_frame,
+int sw_codec_decode(uint8_t const *const encoded_data, size_t encoded_size, uint8_t bad_frame,
 		    void **decoded_data, size_t *decoded_size)
 {
 	if (!m_config.decoder.enabled) {
@@ -157,7 +157,7 @@ int sw_codec_decode(uint8_t const *const encoded_data, size_t encoded_size, bool
 				ret = sw_codec_lc3_dec_run(
 					encoded_data, encoded_size / 2, LC3_PCM_NUM_BYTES_MONO,
 					AUDIO_CH_L, pcm_data_mono, (uint16_t *)&pcm_size_session,
-					bad_frame);
+					bad_frame&0x01);
 				if (ret) {
 					return ret;
 				}
@@ -165,7 +165,7 @@ int sw_codec_decode(uint8_t const *const encoded_data, size_t encoded_size, bool
 				ret = sw_codec_lc3_dec_run(
 					(encoded_data + (encoded_size / 2)), encoded_size / 2,
 					LC3_PCM_NUM_BYTES_MONO, AUDIO_CH_R, pcm_data_mono_right,
-					(uint16_t *)&pcm_size_session, bad_frame);
+					(uint16_t *)&pcm_size_session, bad_frame&0x02);
 				if (ret) {
 					return ret;
 				}

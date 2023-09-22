@@ -312,7 +312,7 @@ int hw_codec_default_conf_enable(void)
 	}
 
 #if ((CONFIG_AUDIO_DEV == GATEWAY) && (CONFIG_AUDIO_SOURCE_I2S))
-	if (IS_ENABLED(CONFIG_WALKIE_TALKIE_DEMO)) {
+	if (IS_ENABLED(CONFIG_WALKIE_TALKIE_DEMO) || IS_ENABLED(CONFIG_TRANSPORT_BIS)) {
 		ret = cs47l63_comm_reg_conf_write(pdm_mic_enable_configure,
 						  ARRAY_SIZE(pdm_mic_enable_configure));
 		if (ret) {

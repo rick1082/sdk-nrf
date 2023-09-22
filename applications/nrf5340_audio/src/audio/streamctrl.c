@@ -30,7 +30,7 @@
 #include "bt_content_ctrl.h"
 
 #include <zephyr/logging/log.h>
-LOG_MODULE_REGISTER(streamctrl, CONFIG_STREAMCTRL_LOG_LEVEL);
+LOG_MODULE_REGISTER(streamctrl, 4);
 
 struct ble_iso_data {
 	uint8_t data[CONFIG_BT_ISO_RX_MTU];
@@ -38,6 +38,7 @@ struct ble_iso_data {
 	bool bad_frame;
 	uint32_t sdu_ref;
 	uint32_t recv_frame_ts;
+	uint8_t channel;
 } __packed;
 
 DATA_FIFO_DEFINE(ble_fifo_rx, CONFIG_BUF_BLE_RX_PACKET_NUM, WB_UP(sizeof(struct ble_iso_data)));
@@ -98,9 +99,9 @@ static void le_audio_rx_data_handler(uint8_t const *const p_data, size_t data_si
 
 	if ((rx_stats[channel_index].recv_cnt % 100) == 0 && rx_stats[channel_index].recv_cnt) {
 		/* NOTE: The string below is used by the Nordic CI system */
-		LOG_DBG("ISO RX SDUs: Ch: %d Total: %d Bad: %d Size mismatch %d", channel_index,
+		LOG_INF("ISO RX SDUs: Ch: %d Total: %d Bad: %d Size mismatch %d, data size = %d", channel_index,
 			rx_stats[channel_index].recv_cnt, rx_stats[channel_index].bad_frame_cnt,
-			rx_stats[channel_index].data_size_mismatch_cnt);
+			rx_stats[channel_index].data_size_mismatch_cnt, data_size);
 	}
 
 	if (data_size_mismatch) {
@@ -116,13 +117,6 @@ static void le_audio_rx_data_handler(uint8_t const *const p_data, size_t data_si
 
 	int ret;
 	struct ble_iso_data *iso_received = NULL;
-
-#if (CONFIG_AUDIO_DEV == GATEWAY)
-	if (channel_index != AUDIO_CH_L) {
-		/* Only left channel RX data in use on gateway */
-		return;
-	}
-#endif /* (CONFIG_AUDIO_DEV == GATEWAY) */
 
 	uint32_t blocks_alloced_num, blocks_locked_num;
 
@@ -158,6 +152,8 @@ static void le_audio_rx_data_handler(uint8_t const *const p_data, size_t data_si
 	iso_received->data_size = data_size;
 	iso_received->sdu_ref = sdu_ref;
 	iso_received->recv_frame_ts = recv_frame_ts;
+	iso_received->channel = channel_index;
+
 
 	ret = data_fifo_block_lock(&ble_fifo_rx, (void *)&iso_received,
 				   sizeof(struct ble_iso_data));
@@ -183,7 +179,7 @@ static void audio_datapath_thread(void *dummy1, void *dummy2, void *dummy3)
 #else
 		audio_datapath_stream_out(iso_received->data, iso_received->data_size,
 					  iso_received->sdu_ref, iso_received->bad_frame,
-					  iso_received->recv_frame_ts);
+					  iso_received->recv_frame_ts, iso_received->channel);
 #endif /* ((CONFIG_AUDIO_DEV == GATEWAY) && (CONFIG_AUDIO_SOURCE_USB)) */
 		data_fifo_block_free(&ble_fifo_rx, (void *)&iso_received);
 

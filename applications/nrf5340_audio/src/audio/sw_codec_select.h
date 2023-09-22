@@ -89,7 +89,7 @@ int sw_codec_encode(void *pcm_data, size_t pcm_size, uint8_t **encoded_data, siz
  *
  * @return	0 if success, error codes depends on sw_codec selected
  */
-int sw_codec_decode(uint8_t const *const encoded_data, size_t encoded_size, bool bad_frame,
+int sw_codec_decode(uint8_t const *const encoded_data, size_t encoded_size, uint8_t bad_frame,
 		    void **pcm_data, size_t *pcm_size);
 
 /**@brief	Uninitialize sw_codec and free allocated space
