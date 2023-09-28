@@ -13,6 +13,8 @@
 #include <zephyr/bluetooth/audio/pacs.h>
 #include <zephyr/bluetooth/audio/csip.h>
 #include <zephyr/bluetooth/audio/cap.h>
+#include <zephyr/bluetooth/audio/bap.h>
+#include <../subsys/bluetooth/audio/bap_iso.h>
 
 /* TODO: Remove when a get_info function is implemented in host */
 #include <../subsys/bluetooth/audio/bap_endpoint.h>
@@ -349,7 +351,7 @@ static void stream_recv_cb(struct bt_bap_stream *stream, const struct bt_iso_rec
 static void stream_start_cb(struct bt_bap_stream *stream)
 {
 	LOG_INF("Stream %p started", stream);
-
+	k_sleep(K_MSEC(100));
 	le_audio_event_publish(LE_AUDIO_EVT_STREAMING, stream->conn);
 }
 
@@ -654,6 +656,7 @@ int le_audio_send(struct encoded_audio enc_audio)
 	int ret;
 	struct net_buf *buf;
 	static bool hci_wrn_printed;
+	struct bt_iso_tx_info tx_info = {0};
 
 	if (enc_audio.num_ch != 1) {
 		LOG_ERR("Num encoded channels must be 1");
@@ -664,6 +667,8 @@ int le_audio_send(struct encoded_audio enc_audio)
 	if (sources[0].stream->ep->status.state != BT_BAP_EP_STATE_STREAMING) {
 		LOG_DBG("Return channel not connected");
 		return 0;
+	} else {
+
 	}
 
 	/* net_buf_alloc allocates buffers for APP->NET transfer over HCI RPMsg,
@@ -704,6 +709,12 @@ int le_audio_send(struct encoded_audio enc_audio)
 		atomic_dec(&iso_tx_pool_alloc);
 		return ret;
 	}
+
+	ret = bt_iso_chan_get_tx_sync(&sources[0].stream->ep->iso->chan, &tx_info);
+	if (tx_info.ts != 0 && !ret) {
+			timestamp_cb(tx_info.ts, true);
+	}
+
 
 	return 0;
 #else
