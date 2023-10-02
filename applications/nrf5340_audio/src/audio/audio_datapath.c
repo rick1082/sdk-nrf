@@ -81,7 +81,7 @@ LOG_MODULE_REGISTER(audio_datapath, CONFIG_AUDIO_DATAPATH_LOG_LEVEL);
 #define JUST_IN_TIME_THRESHOLD_US 1500
 
 /* How often to print underrun warning */
-#define UNDERRUN_LOG_INTERVAL_BLKS 5000
+#define UNDERRUN_LOG_INTERVAL_BLKS 10000
 
 enum drift_comp_state {
 	DRIFT_STATE_INIT, /* Waiting for data to be received */
@@ -593,8 +593,8 @@ static void audio_datapath_i2s_blk_complete(uint32_t frame_start_ts, uint32_t *r
 
 					if ((ctrl_blk.out.total_blk_underruns %
 					     UNDERRUN_LOG_INTERVAL_BLKS) == 0) {
-						LOG_WRN("In I2S TX underrun condition, total: %d",
-							ctrl_blk.out.total_blk_underruns);
+						//LOG_WRN("In I2S TX underrun condition, total: %d",
+						//	ctrl_blk.out.total_blk_underruns);
 					}
 				}
 
@@ -787,27 +787,69 @@ void audio_datapath_sdu_ref_update(uint32_t sdu_ref_us, bool adjust)
 }
 
 void audio_datapath_stream_out(const uint8_t *buf, size_t size, uint32_t sdu_ref_us, bool bad_frame,
-			       uint32_t recv_frame_ts_us)
+			       uint32_t recv_frame_ts_us, uint8_t channel)
 {
+	static uint8_t prev_channel = 0;
+	static uint8_t stereo_encoded_data[240] = {0};
+	//memcpy(stereo_encoded_data, buf, 120);
+
 	if (!ctrl_blk.stream_started) {
 		LOG_WRN("Stream not started");
 		return;
 	}
-
+	size = 120;
 	/*** Check incoming data ***/
 
 	if (!buf) {
 		LOG_ERR("buf is NULL");
 	}
-
-	if (sdu_ref_us == ctrl_blk.previous_sdu_ref_us) {
-		LOG_WRN("Duplicate sdu_ref_us (%d) - Dropping audio frame", sdu_ref_us);
-		return;
-	}
-
 	if (bad_frame) {
 		/* Error in the frame or frame lost - sdu_ref_us is stil valid */
 		LOG_DBG("Bad audio frame");
+		if (channel == 0) {
+			bad_frame |= 0x01;
+		} else {
+			bad_frame |= 0x02;
+		}
+	} else {
+		bad_frame = 0;
+	}
+	if (abs(sdu_ref_us - ctrl_blk.previous_sdu_ref_us) < 500) {
+		//LOG_WRN("Duplicate sdu_ref_us (%d) - Dropping audio frame from %d", sdu_ref_us, channel);
+		//return;
+		if (channel == prev_channel) {
+			return;
+		} else {
+			if (channel == 0) {
+				memcpy(stereo_encoded_data, buf, 120);
+			} else {
+				memcpy(stereo_encoded_data+120, buf, 120);
+			}
+			prev_channel = channel;
+		}
+	} else {
+		if (channel == prev_channel) {
+			if (channel == 0) {
+				memcpy(stereo_encoded_data, buf, 120);
+				//memset(stereo_encoded_data+120, 0, 120);
+			} else {
+				memcpy(stereo_encoded_data+120, buf, 120);
+				//memset(stereo_encoded_data, 0, 120);
+			}
+		} else {
+			//a new packet
+			if (channel == 0) {
+				memcpy(stereo_encoded_data, buf, 120);
+			} else {
+				memcpy(stereo_encoded_data+120, buf, 120);
+			}
+			prev_channel = channel;
+			if (prev_channel == 0) {
+				ctrl_blk.previous_sdu_ref_us = sdu_ref_us;
+			}
+
+			return;
+		}		
 	}
 
 	bool sdu_ref_not_consecutive = false;
@@ -850,18 +892,20 @@ void audio_datapath_stream_out(const uint8_t *buf, size_t size, uint32_t sdu_ref
 	int ret;
 	size_t pcm_size;
 
-	ret = sw_codec_decode(buf, size, bad_frame, &ctrl_blk.decoded_data, &pcm_size);
+
+	ret = sw_codec_decode(stereo_encoded_data, size*2, bad_frame, &ctrl_blk.decoded_data, &pcm_size);
 
 	if (ret) {
 		LOG_WRN("SW codec decode error: %d", ret);
+		LOG_WRN("bad_frame = %d, size = %d, pcm_size = %d", bad_frame, size, pcm_size);
 	}
 
 	if (pcm_size != (BLK_STEREO_SIZE_OCTETS * NUM_BLKS_IN_FRAME)) {
-		LOG_WRN("Decoded audio has wrong size");
+		LOG_WRN("Decoded audio has wrong size, pcm_size = %d", pcm_size);
 		/* Discard frame */
 		return;
 	}
-
+	memset(stereo_encoded_data, 0, 240);
 	/*** Add audio data to FIFO buffer ***/
 
 	int32_t num_blks_in_fifo = ctrl_blk.out.prod_blk_idx - ctrl_blk.out.cons_blk_idx;

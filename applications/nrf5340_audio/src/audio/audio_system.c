@@ -23,7 +23,7 @@
 #include "streamctrl.h"
 
 #include <zephyr/logging/log.h>
-LOG_MODULE_REGISTER(audio_system, CONFIG_AUDIO_SYSTEM_LOG_LEVEL);
+LOG_MODULE_REGISTER(audio_system, 4);
 
 #define FIFO_TX_BLOCK_COUNT (CONFIG_FIFO_FRAME_SPLIT_NUM * CONFIG_FIFO_TX_FRAME_COUNT)
 #define FIFO_RX_BLOCK_COUNT (CONFIG_FIFO_FRAME_SPLIT_NUM * CONFIG_FIFO_RX_FRAME_COUNT)
@@ -53,7 +53,7 @@ static void audio_gateway_configure(void)
 
 #if (CONFIG_STREAM_BIDIRECTIONAL)
 	sw_codec_cfg.decoder.enabled = true;
-	sw_codec_cfg.decoder.num_ch = SW_CODEC_MONO;
+	sw_codec_cfg.decoder.num_ch = SW_CODEC_STEREO;
 #endif /* (CONFIG_STREAM_BIDIRECTIONAL) */
 
 	if (IS_ENABLED(CONFIG_SW_CODEC_LC3)) {
@@ -89,8 +89,11 @@ static void audio_headset_configure(void)
 		ERR_CHK_MSG(-EINVAL, "No codec selected");
 	}
 #endif /* (CONFIG_STREAM_BIDIRECTIONAL) */
-
+#if (CONFIG_TRANSPORT_BIS)
+	sw_codec_cfg.decoder.num_ch = SW_CODEC_STEREO;
+#else
 	sw_codec_cfg.decoder.num_ch = SW_CODEC_MONO;
+#endif
 	sw_codec_cfg.decoder.enabled = true;
 }
 
