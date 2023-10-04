@@ -100,6 +100,31 @@ int sw_codec_encode(void *pcm_data, size_t pcm_size, uint8_t **encoded_data, siz
 	return 0;
 }
 
+static void hard_limiter(int32_t *const pcm)
+{
+	if (*pcm < INT16_MIN) {
+		LOG_DBG("Clip");
+		*pcm = INT16_MIN;
+	} else if (*pcm > INT16_MAX) {
+		LOG_DBG("Clip");
+		*pcm = INT16_MAX;
+	}
+}
+
+static void pcm_mix_identical(void *const pcm_a, size_t size_a, void const *const pcm_b,
+			      size_t size_b)
+{
+	int32_t res;
+
+	for (uint32_t i = 0; i < size_b / 2; i++) {
+		res = ((int16_t *)pcm_a)[i] + ((int16_t *)pcm_b)[i];
+
+		hard_limiter(&res);
+
+		((int16_t *)pcm_a)[i] = (int16_t)res;
+	}
+}
+
 int sw_codec_decode(uint8_t const *const encoded_data, size_t encoded_size, uint8_t bad_frame,
 		    void **decoded_data, size_t *decoded_size)
 {
@@ -171,9 +196,16 @@ int sw_codec_decode(uint8_t const *const encoded_data, size_t encoded_size, uint
 					return ret;
 				}
 			}
+
+			pcm_mix_identical(pcm_data_mono, LC3_PCM_NUM_BYTES_MONO, pcm_data_mono_right, LC3_PCM_NUM_BYTES_MONO);
+			ret = pscm_copy_pad(pcm_data_mono, PCM_NUM_BYTES_MONO,
+						CONFIG_AUDIO_BIT_DEPTH_BITS, pcm_data_stereo,
+						&pcm_size_stereo);
+/*
 			ret = pscm_combine(pcm_data_mono, pcm_data_mono_right, pcm_size_session,
 					   CONFIG_AUDIO_BIT_DEPTH_BITS, pcm_data_stereo,
 					   &pcm_size_stereo);
+*/
 			if (ret) {
 				return ret;
 			}
