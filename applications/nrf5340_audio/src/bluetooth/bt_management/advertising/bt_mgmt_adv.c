@@ -209,26 +209,12 @@ static void advertising_process(struct k_work *work)
 	int ret;
 	struct bt_mgmt_msg msg;
 
-	k_msgq_purge(&bonds_queue);
-
-	if (IS_ENABLED(CONFIG_BT_BONDABLE)) {
-		bt_foreach_bond(BT_ID_DEFAULT, bond_find, NULL);
-	}
-
 	bt_addr_le_t addr;
 
-	if (!k_msgq_get(&bonds_queue, &addr, K_NO_WAIT)) {
-		ret = direct_adv_create(addr);
-		if (ret) {
-			LOG_WRN("Failed to create direct advertisement: %d", ret);
-			return;
-		}
-	} else {
-		ret = extended_adv_create();
-		if (ret) {
-			LOG_WRN("Failed to create extended advertisement: %d", ret);
-			return;
-		}
+	ret = extended_adv_create();
+	if (ret) {
+		LOG_WRN("Failed to create extended advertisement: %d", ret);
+		return;
 	}
 
 	ret = bt_le_ext_adv_start(ext_adv, BT_LE_EXT_ADV_START_DEFAULT);
