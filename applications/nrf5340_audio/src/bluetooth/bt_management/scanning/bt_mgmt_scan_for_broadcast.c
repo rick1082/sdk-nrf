@@ -100,7 +100,7 @@ static bool scan_check_broadcast_source(struct bt_data *data, void *user_data)
 	struct broadcast_source *source = (struct broadcast_source *)user_data;
 	struct bt_uuid_16 adv_uuid;
 
-	if (data->type == BT_DATA_BROADCAST_NAME && data->data_len) {
+	if (data->type == BT_DATA_NAME_COMPLETE && data->data_len) {
 		/* Ensure that broadcast name is at least one character shorter than the value of
 		 * BLE_SEARCH_NAME_MAX_LEN
 		 */
