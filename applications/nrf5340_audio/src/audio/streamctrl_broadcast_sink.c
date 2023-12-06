@@ -53,9 +53,103 @@ K_THREAD_STACK_DEFINE(le_audio_msg_sub_thread_stack, CONFIG_LE_AUDIO_MSG_SUB_STA
 
 static enum stream_state strm_state = STATE_PAUSED;
 
+static uint32_t current_broadcast_id = 0xffffff;
+
+#include <zephyr/bluetooth/bluetooth.h>
+#include <zephyr/bluetooth/gap.h>
+#include <zephyr/bluetooth/uuid.h>
+#include <zephyr/bluetooth/audio/audio.h>
+#include <zephyr/sys/byteorder.h>
+static struct bt_le_scan_cb scan_callback;
+#define INVALID_BROADCAST_ID 0xFFFFFFFF
+struct broadcast_source {
+	char name[BLE_SEARCH_NAME_MAX_LEN];
+	uint32_t broadcast_id;
+	bool high_pri_stream;
+};
+
+static bool scan_check_high_pri_audio(struct bt_data *data, void *user_data)
+{
+	struct broadcast_source *source = (struct broadcast_source *)user_data;
+	int i;
+
+	switch (data->type) {
+	case BT_DATA_SVC_DATA16:
+		for (i = 0; i < data->data_len; i += sizeof(uint16_t)) {
+			struct bt_uuid *uuid;
+			uint16_t u16;
+
+			memcpy(&u16, &data->data[i], sizeof(u16));
+			uuid = BT_UUID_DECLARE_16(sys_le16_to_cpu(u16));
+			if (bt_uuid_cmp(uuid, BT_UUID_PBA) == 0) {
+				LOG_HEXDUMP_INF(data->data, data->data_len, "");
+				if (data->data[3] > 0) {
+					if (data->data[10] == 4){
+						LOG_WRN("Found high pri stream");
+						source->high_pri_stream = true;
+					}
+				}
+			} else if (bt_uuid_cmp(uuid, BT_UUID_BROADCAST_AUDIO) == 0){
+				//LOG_HEXDUMP_INF(data->data, data->data_len, "audio broadcast");
+				source->broadcast_id = sys_get_le24(data->data + BT_UUID_SIZE_16);
+				//LOG_WRN("found broadcast id %x", source->broadcast_id);
+			} 
+		}
+	}
+	return true;
+}
+static struct bt_le_scan_recv_info store_info;
+static uint32_t store_broadcast_id;
+#include "bt_mgmt_scan_for_broadcast_internal.h"
+static void scan_recv_cb(const struct bt_le_scan_recv_info *info, struct net_buf_simple *ad)
+{
+	struct broadcast_source source = {.broadcast_id = INVALID_BROADCAST_ID};
+	int ret;
+	/* We are only interested in non-connectable periodic advertisers */
+	if ((info->adv_props & BT_GAP_ADV_PROP_CONNECTABLE) || info->interval == 0) {
+		return;
+	}
+
+	bt_data_parse(ad, scan_check_high_pri_audio, (void *)&source);
+	if(source.high_pri_stream) {
+		if (source.broadcast_id != current_broadcast_id) {
+			LOG_ERR("should switch stream");
+			bt_le_scan_cb_unregister(&scan_callback);
+			bt_le_scan_stop();
+			struct bt_mgmt_msg msg;
+			msg.event = BT_MGMT_SWITCH;
+			store_broadcast_id = source.broadcast_id;
+			//current_broadcast_id = source.broadcast_id;
+			memcpy(&store_info, info, sizeof(store_info));
+
+			ret = zbus_chan_pub(&bt_mgmt_chan, &msg, K_NO_WAIT);
+			ERR_CHK(ret);
+		} else {
+			//LOG_ERR("same stream, no need to switch");
+		}
+	}
+}
+
+
+
+void scan_for_high_pri_stream()
+{
+	static int scan_interval = CONFIG_BT_BACKGROUND_SCAN_INTERVAL;
+	static int scan_window = CONFIG_BT_BACKGROUND_SCAN_WINDOW;
+	struct bt_le_scan_param *scan_param =
+		BT_LE_SCAN_PARAM(NRF5340_AUDIO_GATEWAY_SCAN_TYPE, BT_LE_SCAN_OPT_FILTER_DUPLICATE,
+				 scan_interval, scan_window);
+
+	scan_callback.recv = scan_recv_cb;
+	bt_le_scan_cb_register(&scan_callback);
+	bt_le_scan_start(scan_param, NULL);
+}
+
+
 /* Function for handling all stream state changes */
 static void stream_state_set(enum stream_state stream_state_new)
 {
+	LOG_WRN("set stream = %d", stream_state_new);
 	strm_state = stream_state_new;
 }
 
@@ -181,7 +275,7 @@ static void le_audio_msg_sub_thread(void)
 
 	while (1) {
 		struct le_audio_msg msg;
-
+		LOG_WRN("waiting for message");
 		ret = zbus_sub_wait_msg(&le_audio_evt_sub, &chan, &msg, K_FOREVER);
 		ERR_CHK(ret);
 
@@ -201,6 +295,7 @@ static void le_audio_msg_sub_thread(void)
 			ret = led_blink(LED_APP_1_BLUE);
 			ERR_CHK(ret);
 
+			scan_for_high_pri_stream();
 			break;
 
 		case LE_AUDIO_EVT_NOT_STREAMING:
@@ -260,7 +355,7 @@ static void le_audio_msg_sub_thread(void)
 				ret = bt_mgmt_scan_start(0, 0, BT_MGMT_SCAN_TYPE_BROADCAST, NULL);
 				if (ret) {
 					if (ret == -EALREADY) {
-						return;
+						LOG_WRN("EALREADY for bt_mgmt_scan_start");
 					}
 
 					LOG_ERR("Failed to restart scanning: %d", ret);
@@ -292,6 +387,7 @@ static void le_audio_msg_sub_thread(void)
 
 		STACK_USAGE_PRINT("le_audio_msg_thread", &le_audio_msg_sub_thread_data);
 	}
+	LOG_ERR("break break the loop");
 }
 
 /**
@@ -326,6 +422,16 @@ static int zbus_subscribers_create(void)
 	return 0;
 }
 
+
+static void pa_sync_worker(struct k_work *work)
+{
+	LOG_WRN("target broadcast id = %x, pass to periodic_adv_sync", store_broadcast_id);
+	led_on(LED_APP_RGB, LED_COLOR_RED);
+	periodic_adv_sync(&store_info, store_broadcast_id);
+}
+
+K_WORK_DEFINE(pa_sync_work, pa_sync_worker);
+
 /**
  * @brief	Zbus listener to receive events from bt_mgmt.
  *
@@ -343,20 +449,34 @@ static void bt_mgmt_evt_handler(const struct zbus_channel *chan)
 
 	switch (msg->event) {
 	case BT_MGMT_PA_SYNCED:
-		LOG_INF("PA synced");
+		LOG_INF("PA synced, id = %X", msg->broadcast_id);
 
 		ret = broadcast_sink_pa_sync_set(msg->pa_sync, msg->broadcast_id);
 		if (ret) {
 			LOG_WRN("Failed to set PA sync");
+			ret = bt_mgmt_scan_start(0, 0, BT_MGMT_SCAN_TYPE_BROADCAST, NULL);
+			if (ret) {
+				if (ret == -EALREADY) {
+					return;
+				}
+
+				LOG_ERR("Failed to restart scanning: %d", ret);
+			}
+		}else {
+			current_broadcast_id = msg->broadcast_id;
+			LOG_WRN("BT_MGMT_PA_SYNCED, current id = %x", msg->broadcast_id);
 		}
 
 		break;
 
 	case BT_MGMT_PA_SYNC_LOST:
 		LOG_INF("PA sync lost, reason: %d", msg->pa_sync_term_reason);
-
+		bt_le_scan_cb_unregister(&scan_callback);
+		bt_le_scan_stop();
+		current_broadcast_id = 0xffffff;
 		if (IS_ENABLED(CONFIG_BT_OBSERVER) &&
 			msg->pa_sync_term_reason != BT_HCI_ERR_LOCALHOST_TERM_CONN) {
+			LOG_WRN("BT_MGMT_PA_SYNC_LOST trigger scan");
 			ret = bt_mgmt_scan_start(0, 0, BT_MGMT_SCAN_TYPE_BROADCAST, NULL);
 			if (ret) {
 				if (ret == -EALREADY) {
@@ -372,6 +492,16 @@ static void bt_mgmt_evt_handler(const struct zbus_channel *chan)
 		}
 
 		break;
+
+		case BT_MGMT_SWITCH:
+			LOG_WRN("BT_MGMT_SWITCH");
+			ret = broadcast_sink_disable();
+			if (ret) {
+				LOG_ERR("Failed to disable the broadcast sink: %d", ret);
+				break;
+			}
+			k_work_submit(&pa_sync_work);
+			break;
 
 	default:
 		LOG_WRN("Unexpected/unhandled bt_mgmt event: %d", msg->event);

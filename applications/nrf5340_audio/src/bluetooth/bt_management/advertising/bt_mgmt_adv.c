@@ -207,7 +207,6 @@ static int extended_adv_create(void)
 static void advertising_process(struct k_work *work)
 {
 	int ret;
-	struct bt_mgmt_msg msg;
 
 	k_msgq_purge(&bonds_queue);
 
@@ -230,7 +229,8 @@ static void advertising_process(struct k_work *work)
 			return;
 		}
 	}
-
+#if !CONFIG_BT_AUDIO_USE_BROADCAST_NAME_ALT
+	struct bt_mgmt_msg msg;
 	ret = bt_le_ext_adv_start(ext_adv, BT_LE_EXT_ADV_START_DEFAULT);
 	if (ret) {
 		LOG_ERR("Failed to start advertising set. Err: %d", ret);
@@ -254,6 +254,48 @@ static void advertising_process(struct k_work *work)
 
 	/* NOTE: The string below is used by the Nordic CI system */
 	LOG_INF("Advertising successfully started");
+#endif
+}
+
+void bt_mgmt_adv_work_start()
+{
+	int ret;
+	struct bt_mgmt_msg msg;
+
+	ret = bt_le_ext_adv_start(ext_adv, BT_LE_EXT_ADV_START_DEFAULT);
+	if (ret) {
+		LOG_ERR("Failed to start advertising set. Err: %d", ret);
+		return;
+	}
+
+	if (per_adv_local != NULL && IS_ENABLED(CONFIG_BT_PER_ADV)) {
+		/* Enable Periodic Advertising */
+		ret = bt_le_per_adv_start(ext_adv);
+		if (ret) {
+			LOG_ERR("Failed to enable periodic advertising: %d", ret);
+			return;
+		}
+
+		msg.event = BT_MGMT_EXT_ADV_WITH_PA_READY;
+		msg.ext_adv = ext_adv;
+
+		ret = zbus_chan_pub(&bt_mgmt_chan, &msg, K_NO_WAIT);
+		ERR_CHK(ret);
+	}
+}
+
+void bt_mgmt_adv_stop(void)
+{
+	int ret;
+
+	ret = bt_le_per_adv_stop(ext_adv);
+	if (ret) {
+		LOG_WRN("bt_le_per_adv_stop failed: %d", ret);
+	}
+	ret = bt_le_ext_adv_stop(ext_adv);
+	if (ret) {
+		LOG_WRN("bt_le_ext_adv_stop failed: %d", ret);
+	}
 }
 
 int bt_mgmt_adv_start(const struct bt_data *adv, size_t adv_size, const struct bt_data *per_adv,

@@ -30,7 +30,7 @@ static void ctlr_poll_timer_handler(struct k_timer *timer_id);
 static int wdt_ch_id;
 
 K_TIMER_DEFINE(ctlr_poll_timer, ctlr_poll_timer_handler, NULL);
-
+#include <hal/nrf_gpio.h>
 static int bt_ll_acs_nrf53_cfg(void)
 {
 #if (CONFIG_BT_LL_ACS_NRF53)
@@ -55,7 +55,7 @@ static int bt_ll_acs_nrf53_cfg(void)
 		DT_PATH(nrf_gpio_forwarder, nrf21540_gpio_if), gpios, 4);
 
 	struct ble_hci_vs_cp_nrf21540_pins nrf21540_pins = {
-		.mode = mode_pin,
+		.mode = 0xffff,
 		.txen = tx_pin,
 		.rxen = rx_pin,
 		.antsel = ant_pin,
@@ -81,13 +81,12 @@ static int bt_ll_acs_nrf53_cfg(void)
 
 	LOG_DBG("TX power set to %d", CONFIG_NRF_21540_MAIN_DBM);
 
-	ret = ble_hci_vsc_pri_adv_chan_max_tx_pwr_set(CONFIG_NRF_21540_PRI_ADV_DBM);
-	if (ret) {
-		return ret;
-	}
+	NRF_P0->PIN_CNF[31] = GPIO_PIN_CNF_MCUSEL_AppMCU << GPIO_PIN_CNF_MCUSEL_Pos;
+    nrf_gpio_cfg_output(NRF_GPIO_PIN_MAP(0,31));
 
-	LOG_DBG("Primary advertising TX power set to %d", CONFIG_NRF_21540_PRI_ADV_DBM);
+    nrf_gpio_pin_clear(NRF_GPIO_PIN_MAP(0,31));
 #else
+
 	ret = ble_hci_vsc_adv_tx_pwr_set(CONFIG_BLE_ADV_TX_POWER_DBM);
 	if (ret) {
 		return ret;
@@ -204,7 +203,19 @@ int bt_mgmt_ctlr_cfg_init(bool watchdog_enable)
 			return ret;
 		}
 	}
+/*
+    nrf_gpio_cfg_output(NRF_GPIO_PIN_MAP(0,31));
 
+    nrf_gpio_pin_clear(NRF_GPIO_PIN_MAP(0,31));
+
+    nrf_gpio_cfg_output(NRF_GPIO_PIN_MAP(1,14));
+
+    nrf_gpio_pin_set(NRF_GPIO_PIN_MAP(1,14));
+
+    nrf_gpio_cfg_output(NRF_GPIO_PIN_MAP(1,13));
+
+    nrf_gpio_pin_set(NRF_GPIO_PIN_MAP(1,13));
+*/
 	if (watchdog_enable) {
 		ret = task_wdt_init(NULL);
 		if (ret != 0) {

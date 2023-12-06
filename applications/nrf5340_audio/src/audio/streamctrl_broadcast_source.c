@@ -51,6 +51,7 @@ static void stream_state_set(enum stream_state stream_state_new)
 /**
  * @brief	Handle button activity.
  */
+
 static void button_msg_sub_thread(void)
 {
 	int ret;
@@ -75,6 +76,29 @@ static void button_msg_sub_thread(void)
 
 		switch (msg.button_pin) {
 		case BUTTON_PLAY_PAUSE:
+#if CONFIG_BT_AUDIO_USE_BROADCAST_NAME_ALT
+			if (msg.button_state == 1) {
+
+				LOG_INF("RELEASE");
+				ret = broadcast_source_stop();
+				LOG_INF("broadcast_source_disable %d", ret);
+				bt_mgmt_adv_stop();
+				ret = led_on(LED_APP_RGB, LED_COLOR_MAGENTA);
+				if (ret) {
+					LOG_ERR("LED set failed");
+				}
+			} else {
+				LOG_INF("PUSH");
+
+				bt_mgmt_adv_work_start();
+				ret = broadcast_source_start(NULL);
+				LOG_INF("broadcast_source_enable %d", ret);
+				ret = led_on(LED_APP_RGB, LED_COLOR_RED);
+				if (ret) {
+					LOG_ERR("LED set failed");
+				}
+			}
+#else
 			if (strm_state == STATE_STREAMING) {
 				ret = broadcast_source_stop();
 				if (ret) {
@@ -88,7 +112,7 @@ static void button_msg_sub_thread(void)
 			} else {
 				LOG_WRN("In invalid state: %d", strm_state);
 			}
-
+#endif
 			break;
 
 		case BUTTON_4:
@@ -143,9 +167,6 @@ static void le_audio_msg_sub_thread(void)
 
 			audio_system_start();
 			stream_state_set(STATE_STREAMING);
-			ret = led_blink(LED_APP_1_BLUE);
-			ERR_CHK(ret);
-
 			break;
 
 		case LE_AUDIO_EVT_NOT_STREAMING:
@@ -158,9 +179,6 @@ static void le_audio_msg_sub_thread(void)
 
 			stream_state_set(STATE_PAUSED);
 			audio_system_stop();
-			ret = led_on(LED_APP_1_BLUE);
-			ERR_CHK(ret);
-
 			break;
 
 		default:

@@ -154,6 +154,7 @@ static void button_isr(const struct device *port, struct gpio_callback *cb, uint
 
 	uint32_t btn_pin = 0;
 	uint32_t btn_idx = 0;
+	uint32_t btn_pin_state = 0;
 
 	ret = pin_msk_to_pin(pin_msk, &btn_pin);
 	ERR_CHK(ret);
@@ -164,8 +165,11 @@ static void button_isr(const struct device *port, struct gpio_callback *cb, uint
 	LOG_DBG("Pushed button idx: %d pin: %d name: %s", btn_idx, btn_pin,
 		btn_cfg[btn_idx].btn_name);
 
+	btn_pin_state = gpio_pin_get_raw(port, btn_pin);
+
 	msg.button_pin = btn_pin;
 	msg.button_action = BUTTON_PRESS;
+	msg.button_state = btn_pin_state;
 
 	ret = k_msgq_put(&button_queue, (void *)&msg, K_NO_WAIT);
 	if (ret == -EAGAIN) {
@@ -232,9 +236,13 @@ int button_handler_init(void)
 		if (ret) {
 			return ret;
 		}
-
+#if CONFIG_BT_AUDIO_USE_BROADCAST_NAME_ALT
+		ret = gpio_pin_interrupt_configure(gpio_53_dev, btn_cfg[i].btn_pin,
+						   GPIO_INT_EDGE_BOTH);
+#else
 		ret = gpio_pin_interrupt_configure(gpio_53_dev, btn_cfg[i].btn_pin,
 						   GPIO_INT_EDGE_TO_INACTIVE);
+#endif
 		if (ret) {
 			return ret;
 		}

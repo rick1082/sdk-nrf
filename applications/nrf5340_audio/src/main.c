@@ -51,11 +51,12 @@ static int leds_set(void)
 {
 	int ret;
 
-	/* Blink LED 3 to indicate that APP core is running */
+	/* Blink LED 3 to indicate that APP core is running 
 	ret = led_blink(LED_APP_3_GREEN);
 	if (ret) {
 		return ret;
 	}
+	*/
 
 #if (CONFIG_AUDIO_DEV == HEADSET)
 	enum audio_channel channel;
@@ -72,10 +73,17 @@ static int leds_set(void)
 		return ret;
 	}
 #elif (CONFIG_AUDIO_DEV == GATEWAY)
+#if !CONFIG_BT_AUDIO_USE_BROADCAST_NAME_ALT
 	ret = led_on(LED_APP_RGB, LED_COLOR_GREEN);
 	if (ret) {
 		return ret;
 	}
+#else
+	ret = led_on(LED_APP_RGB, LED_COLOR_MAGENTA);
+	if (ret) {
+		return ret;
+	}
+#endif
 #endif /* (CONFIG_AUDIO_DEV == HEADSET) */
 
 	return 0;
