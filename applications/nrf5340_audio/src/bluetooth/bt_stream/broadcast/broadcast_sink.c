@@ -563,6 +563,7 @@ int broadcast_sink_disable(void)
 	}
 
 	if (pa_sync_stored != NULL) {
+		LOG_WRN("PA sync delete");
 		ret = bt_le_per_adv_sync_delete(pa_sync_stored);
 		if (ret) {
 			LOG_ERR("Failed to delete pa_sync");

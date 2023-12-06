@@ -100,7 +100,13 @@ static bool initialized;
 static bool delete_broadcast_src;
 
 #if (CONFIG_AURACAST)
+
+#if (!CONFIG_BT_AUDIO_USE_BROADCAST_NAME_ALT)
 NET_BUF_SIMPLE_DEFINE(pba_buf, BT_UUID_SIZE_16 + 2);
+#else
+NET_BUF_SIMPLE_DEFINE(pba_buf, BT_UUID_SIZE_16 + 2 + 3 + 4);
+#endif /* (CONFIG_BT_AUDIO_USE_BROADCAST_NAME_ALT) */
+
 static struct bt_data ext_ad[4];
 #else
 static struct bt_data ext_ad[3];
@@ -284,8 +290,25 @@ static int adv_create(void)
 
 	net_buf_simple_add_le16(&pba_buf, 0x1856);
 	net_buf_simple_add_u8(&pba_buf, pba_features);
+
+#if (CONFIG_BT_AUDIO_USE_BROADCAST_NAME_ALT)
+	/* Metadata, set length to 3 */
+	net_buf_simple_add_u8(&pba_buf, 3+4);
+
+	/* Active */
+	net_buf_simple_add_u8(&pba_buf, 0x02);
+	net_buf_simple_add_u8(&pba_buf, 0x08);
+	net_buf_simple_add_u8(&pba_buf, 0x01);
+
+	/* Emergency context */
+	net_buf_simple_add_u8(&pba_buf, 0x03);
+	net_buf_simple_add_u8(&pba_buf, 0x02);
+	net_buf_simple_add_u8(&pba_buf, 0x00);
+	net_buf_simple_add_u8(&pba_buf, 0x04);
+#else
 	/* No metadata, set length to 0 */
 	net_buf_simple_add_u8(&pba_buf, 0x00);
+#endif /* (CONFIG_BT_AUDIO_USE_BROADCAST_NAME_ALT) */
 
 	ext_ad[3].data_len = pba_buf.len;
 	ext_ad[3].type = BT_DATA_SVC_DATA16;
