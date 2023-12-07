@@ -98,7 +98,7 @@ static bool scan_check_high_pri_audio(struct bt_data *data, void *user_data)
 			} else if (bt_uuid_cmp(uuid, BT_UUID_BROADCAST_AUDIO) == 0){
 				//LOG_HEXDUMP_INF(data->data, data->data_len, "audio broadcast");
 				source->broadcast_id = sys_get_le24(data->data + BT_UUID_SIZE_16);
-				LOG_WRN("%x", source->broadcast_id);
+				LOG_WRN("found broadcast id %x", source->broadcast_id);
 			} 
 		}
 	}
@@ -120,7 +120,8 @@ static void scan_recv_cb(const struct bt_le_scan_recv_info *info, struct net_buf
 	if(source.high_pri_stream) {
 		if (source.broadcast_id != current_broadcast_id) {
 			LOG_ERR("should switch stream");
-
+			bt_le_scan_cb_unregister(&scan_callback);
+			bt_le_scan_stop();
 			struct bt_mgmt_msg msg;
 			msg.event = BT_MGMT_SWITCH;
 			store_broadcast_id = source.broadcast_id;
@@ -129,8 +130,8 @@ static void scan_recv_cb(const struct bt_le_scan_recv_info *info, struct net_buf
 
 			ret = zbus_chan_pub(&bt_mgmt_chan, &msg, K_NO_WAIT);
 			ERR_CHK(ret);
-			bt_le_scan_stop();
-			bt_le_scan_cb_unregister(&scan_callback);
+		} else {
+			LOG_ERR("same stream, no need to switch");
 		}
 	}
 }
@@ -428,7 +429,7 @@ static int zbus_subscribers_create(void)
 static void pa_sync_worker(struct k_work *work)
 {
 	int ret;
-	LOG_WRN("broadcast id = %x", store_broadcast_id);
+	LOG_WRN("target broadcast id = %x, pass to periodic_adv_sync", store_broadcast_id);
 	periodic_adv_sync(&store_info, store_broadcast_id);
 }
 
@@ -451,19 +452,31 @@ static void bt_mgmt_evt_handler(const struct zbus_channel *chan)
 
 	switch (msg->event) {
 	case BT_MGMT_PA_SYNCED:
-		LOG_INF("PA synced");
+		LOG_INF("PA synced, id = %X", msg->broadcast_id);
 
 		ret = broadcast_sink_pa_sync_set(msg->pa_sync, msg->broadcast_id);
 		if (ret) {
 			LOG_WRN("Failed to set PA sync");
+			ret = bt_mgmt_scan_start(0, 0, BT_MGMT_SCAN_TYPE_BROADCAST, NULL);
+			if (ret) {
+				if (ret == -EALREADY) {
+					return;
+				}
+
+				LOG_ERR("Failed to restart scanning: %d", ret);
+			}
+		}else {
+			current_broadcast_id = msg->broadcast_id;
+			LOG_WRN("BT_MGMT_PA_SYNCED, current id = %x", msg->broadcast_id);
 		}
-		current_broadcast_id = msg->broadcast_id;
+
 		break;
 
 	case BT_MGMT_PA_SYNC_LOST:
 		LOG_INF("PA sync lost, reason: %d", msg->pa_sync_term_reason);
+		bt_le_scan_cb_unregister(&scan_callback);
 		bt_le_scan_stop();
-		bt_le_scan_cb_unregister(&scan_callback);	
+		current_broadcast_id = 0xffffff;
 		if (IS_ENABLED(CONFIG_BT_OBSERVER) &&
 			msg->pa_sync_term_reason != BT_HCI_ERR_LOCALHOST_TERM_CONN) {
 			LOG_WRN("BT_MGMT_PA_SYNC_LOST trigger scan");

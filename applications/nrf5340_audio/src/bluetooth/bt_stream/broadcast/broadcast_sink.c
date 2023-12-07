@@ -356,7 +356,7 @@ static void syncable_cb(struct bt_bap_broadcast_sink *sink, bool encrypted)
 	static uint8_t bis_encryption_key[BT_ISO_BROADCAST_CODE_SIZE] = {0};
 	struct bt_bap_stream *audio_streams_p[] = {&audio_streams[active_stream_index]};
 
-	LOG_DBG("Broadcast sink is syncable");
+	LOG_DBG("Broadcast sink is syncable, id = %X", sink->broadcast_id);
 
 	if (IS_ENABLED(CONFIG_BT_AUDIO_BROADCAST_ENCRYPTED)) {
 		memcpy(bis_encryption_key, CONFIG_BT_AUDIO_BROADCAST_ENCRYPTION_KEY,
