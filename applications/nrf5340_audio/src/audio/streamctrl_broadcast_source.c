@@ -94,7 +94,7 @@ static void button_msg_sub_thread(void)
 				LOG_INF("broadcast_source_enable %d", ret);
 
 				button_push = false;
-				ret = led_on(LED_APP_RGB, LED_COLOR_RED);
+				ret = led_blink(LED_APP_RGB, LED_COLOR_RED);
 				if (ret) {
 					LOG_ERR("LED set failed");
 				}
@@ -168,8 +168,8 @@ static void le_audio_msg_sub_thread(void)
 
 			audio_system_start();
 			stream_state_set(STATE_STREAMING);
-			ret = led_blink(LED_APP_1_BLUE);
-			ERR_CHK(ret);
+			//ret = led_blink(LED_APP_1_BLUE);
+			//ERR_CHK(ret);
 
 			break;
 
@@ -183,8 +183,8 @@ static void le_audio_msg_sub_thread(void)
 
 			stream_state_set(STATE_PAUSED);
 			audio_system_stop();
-			ret = led_on(LED_APP_1_BLUE);
-			ERR_CHK(ret);
+			//ret = led_on(LED_APP_1_BLUE);
+			//ERR_CHK(ret);
 
 			break;
 
