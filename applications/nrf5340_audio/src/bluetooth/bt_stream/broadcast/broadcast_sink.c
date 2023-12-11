@@ -89,7 +89,7 @@ static int broadcast_sink_cleanup(void)
 
 	if (broadcast_sink != NULL) {
 		ret = bt_bap_broadcast_sink_delete(broadcast_sink);
-		if (ret && ret != -EALREADY) {
+		if (ret && ret != -EALREADY && ret != -EBADMSG) {
 			return ret;
 		}
 
@@ -367,7 +367,7 @@ static void syncable_cb(struct bt_bap_broadcast_sink *sink, bool encrypted)
 	if (active_stream.stream != NULL && active_stream.stream->ep != NULL) {
 		if (active_stream.stream->ep->status.state == BT_BAP_EP_STATE_STREAMING) {
 			LOG_WRN("Syncable received, but already in a stream");
-			//return;
+			return;
 		}
 	}
 

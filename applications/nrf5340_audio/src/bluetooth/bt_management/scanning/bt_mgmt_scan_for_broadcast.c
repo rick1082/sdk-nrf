@@ -115,6 +115,10 @@ void periodic_adv_sync(const struct bt_le_scan_recv_info *info, uint32_t broadca
 	ret = bt_le_per_adv_sync_create(&param, &pa_sync);
 	if (ret) {
 		LOG_ERR("Could not sync to PA: %d", ret);
+		ret = bt_le_per_adv_sync_delete(pa_sync);
+		if(ret) {
+			LOG_ERR("Could not delete PA sync: %d", ret);
+		}
 		return;
 	}
 }
