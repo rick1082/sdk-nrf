@@ -155,6 +155,7 @@ void scan_for_high_pri_stream()
 /* Function for handling all stream state changes */
 static void stream_state_set(enum stream_state stream_state_new)
 {
+	LOG_WRN("set stream = %d", stream_state_new);
 	strm_state = stream_state_new;
 }
 
