@@ -431,6 +431,7 @@ static void pa_sync_worker(struct k_work *work)
 {
 	int ret;
 	LOG_WRN("target broadcast id = %x, pass to periodic_adv_sync", store_broadcast_id);
+	led_on(LED_APP_RGB, LED_COLOR_RED);
 	periodic_adv_sync(&store_info, store_broadcast_id);
 }
 

@@ -16,7 +16,7 @@
 #include "bt_mgmt.h"
 #include "macros_common.h"
 #include "nrf5340_audio_common.h"
-
+#include "led.h"
 #include <zephyr/logging/log.h>
 LOG_MODULE_DECLARE(bt_mgmt_scan);
 
@@ -198,6 +198,11 @@ static void scan_recv_cb(const struct bt_le_scan_recv_info *info, struct net_buf
 			LOG_WRN("Broadcast source %s found, id: 0x%06x", source.name,
 				source.broadcast_id);
 			periodic_adv_sync(info, source.broadcast_id);
+			if (source.high_pri_stream) {
+				led_on(LED_APP_RGB, LED_COLOR_RED);
+			} else {
+				led_on(LED_APP_RGB, LED_COLOR_GREEN);
+			}
 		}
 	}
 }
