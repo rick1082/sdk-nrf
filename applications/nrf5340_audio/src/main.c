@@ -78,7 +78,7 @@ static int leds_set(void)
 		return ret;
 	}
 #else
-	ret = led_on(LED_APP_RGB, LED_COLOR_CYAN);
+	ret = led_on(LED_APP_RGB, LED_COLOR_MAGENTA);
 	if (ret) {
 		return ret;
 	}

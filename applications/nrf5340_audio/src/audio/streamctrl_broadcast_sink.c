@@ -71,19 +71,15 @@ struct broadcast_source {
 static bool scan_check_high_pri_audio(struct bt_data *data, void *user_data)
 {
 	struct broadcast_source *source = (struct broadcast_source *)user_data;
-	//bool *found_high_pri_stream = (bool *)user_data;
-	struct bt_uuid_16 adv_uuid;
 	int i;
-	bool stream_context_found;
+
 	switch (data->type) {
 	case BT_DATA_SVC_DATA16:
 	case BT_DATA_UUID16_SOME:
 	case BT_DATA_UUID16_ALL:
 		for (i = 0; i < data->data_len; i += sizeof(uint16_t)) {
 			struct bt_uuid *uuid;
-			struct bt_le_conn_param *param;
 			uint16_t u16;
-			int err;
 
 			memcpy(&u16, &data->data[i], sizeof(u16));
 			uuid = BT_UUID_DECLARE_16(sys_le16_to_cpu(u16));
@@ -429,7 +425,6 @@ static int zbus_subscribers_create(void)
 
 static void pa_sync_worker(struct k_work *work)
 {
-	int ret;
 	LOG_WRN("target broadcast id = %x, pass to periodic_adv_sync", store_broadcast_id);
 	led_on(LED_APP_RGB, LED_COLOR_RED);
 	periodic_adv_sync(&store_info, store_broadcast_id);

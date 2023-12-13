@@ -51,6 +51,8 @@ static void scan_restart_worker(struct k_work *work)
 	ret = bt_mgmt_pa_sync_delete(pa_sync);
 	if (ret) {
 		LOG_WRN("Failed to delete pending PA sync: %d", ret);
+	} else {
+		LOG_WRN("PA deleted");
 	}
 
 	ret = bt_mgmt_scan_start(0, 0, BT_MGMT_SCAN_TYPE_BROADCAST, NULL);
@@ -110,7 +112,7 @@ void periodic_adv_sync(const struct bt_le_scan_recv_info *info, uint32_t broadca
 	broadcaster_broadcast_id = broadcast_id;
 
 	/* Set timeout to same value as PA sync timeout in ms */
-	k_timer_start(&pa_sync_timer, K_MSEC(param.timeout * 10), K_NO_WAIT);
+	k_timer_start(&pa_sync_timer, K_MSEC(param.timeout * 20), K_NO_WAIT);
 
 	ret = bt_le_per_adv_sync_create(&param, &pa_sync);
 	if (ret) {
@@ -135,7 +137,7 @@ void periodic_adv_sync(const struct bt_le_scan_recv_info *info, uint32_t broadca
 static bool scan_check_broadcast_source(struct bt_data *data, void *user_data)
 {
 	struct broadcast_source *source = (struct broadcast_source *)user_data;
-	struct bt_uuid_16 adv_uuid;
+
 	int i;
 	switch (data->type) {
 	case BT_DATA_BROADCAST_NAME:
@@ -150,7 +152,6 @@ static bool scan_check_broadcast_source(struct bt_data *data, void *user_data)
 		for (i = 0; i < data->data_len; i += sizeof(uint16_t)) {
 			struct bt_uuid *uuid;
 			uint16_t u16;
-			int err;
 
 			memcpy(&u16, &data->data[i], sizeof(u16));
 			uuid = BT_UUID_DECLARE_16(sys_le16_to_cpu(u16));

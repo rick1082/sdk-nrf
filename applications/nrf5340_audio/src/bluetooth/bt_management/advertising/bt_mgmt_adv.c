@@ -207,7 +207,6 @@ static int extended_adv_create(void)
 static void advertising_process(struct k_work *work)
 {
 	int ret;
-	struct bt_mgmt_msg msg;
 
 	k_msgq_purge(&bonds_queue);
 
@@ -231,6 +230,7 @@ static void advertising_process(struct k_work *work)
 		}
 	}
 #if !CONFIG_BT_AUDIO_USE_BROADCAST_NAME_ALT
+	struct bt_mgmt_msg msg;
 	ret = bt_le_ext_adv_start(ext_adv, BT_LE_EXT_ADV_START_DEFAULT);
 	if (ret) {
 		LOG_ERR("Failed to start advertising set. Err: %d", ret);

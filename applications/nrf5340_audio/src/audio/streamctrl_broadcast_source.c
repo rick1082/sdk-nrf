@@ -83,7 +83,7 @@ static void button_msg_sub_thread(void)
 				LOG_INF("broadcast_source_disable %d", ret);
 				bt_mgmt_adv_stop();
 				button_push = true;
-				ret = led_on(LED_APP_RGB, LED_COLOR_CYAN);
+				ret = led_on(LED_APP_RGB, LED_COLOR_MAGENTA);
 				if (ret) {
 					LOG_ERR("LED set failed");
 				}
@@ -94,7 +94,7 @@ static void button_msg_sub_thread(void)
 				LOG_INF("broadcast_source_enable %d", ret);
 
 				button_push = false;
-				ret = led_blink(LED_APP_RGB, LED_COLOR_RED);
+				ret = led_on(LED_APP_RGB, LED_COLOR_RED);
 				if (ret) {
 					LOG_ERR("LED set failed");
 				}
