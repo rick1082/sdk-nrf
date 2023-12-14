@@ -21,6 +21,7 @@ enum button_action {
 struct button_msg {
 	uint32_t button_pin;
 	enum button_action button_action;
+	uint32_t button_state;
 };
 
 enum le_audio_evt_type {

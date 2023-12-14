@@ -84,7 +84,7 @@ static bool scan_check_high_pri_audio(struct bt_data *data, void *user_data)
 			memcpy(&u16, &data->data[i], sizeof(u16));
 			uuid = BT_UUID_DECLARE_16(sys_le16_to_cpu(u16));
 			if (bt_uuid_cmp(uuid, BT_UUID_PBA) == 0) {
-				LOG_HEXDUMP_INF(data->data, data->data_len, "");
+				//LOG_HEXDUMP_INF(data->data, data->data_len, "");
 				if (data->data[3] > 0) {
 					if (data->data[10] == 4){
 						//LOG_WRN("Found high pri stream");
@@ -94,7 +94,7 @@ static bool scan_check_high_pri_audio(struct bt_data *data, void *user_data)
 			} else if (bt_uuid_cmp(uuid, BT_UUID_BROADCAST_AUDIO) == 0){
 				//LOG_HEXDUMP_INF(data->data, data->data_len, "audio broadcast");
 				source->broadcast_id = sys_get_le24(data->data + BT_UUID_SIZE_16);
-				LOG_WRN("found broadcast id %x", source->broadcast_id);
+				//LOG_WRN("found broadcast id %x", source->broadcast_id);
 			} 
 		}
 	}
@@ -127,7 +127,7 @@ static void scan_recv_cb(const struct bt_le_scan_recv_info *info, struct net_buf
 			ret = zbus_chan_pub(&bt_mgmt_chan, &msg, K_NO_WAIT);
 			ERR_CHK(ret);
 		} else {
-			LOG_ERR("same stream, no need to switch");
+			//LOG_ERR("same stream, no need to switch");
 		}
 	}
 }
@@ -277,7 +277,7 @@ static void le_audio_msg_sub_thread(void)
 
 	while (1) {
 		struct le_audio_msg msg;
-
+		LOG_WRN("waiting for message");
 		ret = zbus_sub_wait_msg(&le_audio_evt_sub, &chan, &msg, K_FOREVER);
 		ERR_CHK(ret);
 
@@ -296,6 +296,7 @@ static void le_audio_msg_sub_thread(void)
 			stream_state_set(STATE_STREAMING);
 			ret = led_blink(LED_APP_1_BLUE);
 			ERR_CHK(ret);
+
 			scan_for_high_pri_stream();
 			break;
 
@@ -356,7 +357,7 @@ static void le_audio_msg_sub_thread(void)
 				ret = bt_mgmt_scan_start(0, 0, BT_MGMT_SCAN_TYPE_BROADCAST, NULL);
 				if (ret) {
 					if (ret == -EALREADY) {
-						return;
+						LOG_WRN("EALREADY for bt_mgmt_scan_start");
 					}
 
 					LOG_ERR("Failed to restart scanning: %d", ret);
@@ -388,6 +389,7 @@ static void le_audio_msg_sub_thread(void)
 
 		STACK_USAGE_PRINT("le_audio_msg_thread", &le_audio_msg_sub_thread_data);
 	}
+	LOG_ERR("break break the loop");
 }
 
 /**
