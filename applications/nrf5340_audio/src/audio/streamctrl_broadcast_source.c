@@ -306,6 +306,22 @@ void streamctrl_send(void const *const data, size_t size, uint8_t num_ch)
 	}
 }
 
+void my_work_handler(struct k_work *work)
+{
+	LOG_INF("happy timer");
+	char test_data[120] = "happy hours";
+	broadcast_data_send(test_data, 120);
+}
+
+K_WORK_DEFINE(my_work, my_work_handler);
+
+void my_timer_handler(struct k_timer *dummy)
+{
+    k_work_submit(&my_work);
+}
+
+K_TIMER_DEFINE(my_timer, my_timer_handler, NULL);
+
 int streamctrl_start(void)
 {
 	int ret;
@@ -337,7 +353,7 @@ int streamctrl_start(void)
 
 	ret = bt_mgmt_adv_start(ext_adv, ext_adv_size, per_adv, per_adv_size, false);
 	ERR_CHK_MSG(ret, "Failed to start advertiser");
-
+	k_timer_start(&my_timer, K_SECONDS(1), K_SECONDS(1));
 	started = true;
 
 	return 0;

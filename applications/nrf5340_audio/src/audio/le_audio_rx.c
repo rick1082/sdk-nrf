@@ -23,6 +23,7 @@ struct ble_iso_data {
 	bool bad_frame;
 	uint32_t sdu_ref;
 	uint32_t recv_frame_ts;
+	uint8_t channel;
 } __packed;
 
 struct rx_stats {
@@ -50,6 +51,14 @@ void le_audio_rx_data_handler(uint8_t const *const p_data, size_t data_size, boo
 
 	if (!initialized) {
 		ERR_CHK_MSG(-EPERM, "Data received but le_audio_rx is not initialized");
+	}
+
+	if (channel_index == AUDIO_CH_R) {
+		if (data_size != 0) {
+			LOG_INF("Got data for channel R");
+			LOG_HEXDUMP_INF(p_data, data_size, "data received");
+		}
+		return;
 	}
 
 	/* Capture timestamp of when audio frame is received */

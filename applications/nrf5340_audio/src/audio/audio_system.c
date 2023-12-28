@@ -63,11 +63,7 @@ static void audio_gateway_configure(void)
 		ERR_CHK_MSG(-EINVAL, "No codec selected");
 	}
 
-	if (IS_ENABLED(CONFIG_MONO_TO_ALL_RECEIVERS)) {
-		sw_codec_cfg.encoder.num_ch = 1;
-	} else {
-		sw_codec_cfg.encoder.num_ch = 2;
-	}
+	sw_codec_cfg.encoder.num_ch = 1;
 
 	sw_codec_cfg.encoder.channel_mode =
 		(sw_codec_cfg.encoder.num_ch == 1) ? SW_CODEC_MONO : SW_CODEC_STEREO;

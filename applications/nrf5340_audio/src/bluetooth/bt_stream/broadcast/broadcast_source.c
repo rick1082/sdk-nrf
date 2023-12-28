@@ -393,12 +393,52 @@ int broadcast_source_stop(void)
 	return 0;
 }
 
+int broadcast_data_send(uint8_t * data, size_t data_size) 
+{
+	int ret;
+	struct net_buf *buf;
+	static bool wrn_printed;
+
+	if (is_iso_buffer_full(1)) {
+		if (!wrn_printed) {
+			LOG_WRN("HCI ISO TX overrun on data ch Single print");
+			wrn_printed = true;
+		}
+
+		return -ENOMEM;
+	}
+
+	wrn_printed = false;
+
+	buf = net_buf_alloc(iso_tx_pools[1], K_NO_WAIT);
+	if (buf == NULL) {
+		/* This should never occur because of the is_iso_buffer_full() check */
+		LOG_WRN("Out of TX buffers");
+		return -ENOMEM;
+	}
+
+	net_buf_reserve(buf, BT_ISO_CHAN_SEND_RESERVE);
+	net_buf_add_mem(buf, data, data_size);
+	atomic_inc(&iso_tx_pool_alloc[1]);
+
+	ret = bt_bap_stream_send(&cap_streams[1].bap_stream, buf, seq_num[1]++,
+					BT_ISO_TIMESTAMP_NONE);
+	if (ret < 0) {
+		LOG_WRN("Failed to send audio data: %d", ret);
+		net_buf_unref(buf);
+		atomic_dec(&iso_tx_pool_alloc[1]);
+		return ret;
+	}
+
+	return 0;
+}
+
 int broadcast_source_send(struct le_audio_encoded_audio enc_audio)
 {
 	int ret;
 	static bool wrn_printed[CONFIG_BT_BAP_BROADCAST_SRC_STREAM_COUNT];
 	struct net_buf *buf;
-	size_t num_streams = ARRAY_SIZE(cap_streams);
+	size_t num_streams = 1;
 	size_t data_size_pr_stream;
 	struct bt_iso_tx_info tx_info = {0};
 	struct sdu_ref_msg msg;
@@ -409,12 +449,12 @@ int broadcast_source_send(struct le_audio_encoded_audio enc_audio)
 		LOG_ERR("Num enc channels is %d Must be 1 or num streams", enc_audio.num_ch);
 		return -EINVAL;
 	}
-
+/*
 	if (data_size_pr_stream != LE_AUDIO_SDU_SIZE_OCTETS(CONFIG_LC3_BITRATE)) {
 		LOG_ERR("The encoded data size does not match the SDU size");
 		return -ECANCELED;
 	}
-
+*/
 	for (int i = 0; i < num_streams; i++) {
 		if (cap_streams[i].bap_stream.ep->status.state != BT_BAP_EP_STATE_STREAMING) {
 			LOG_DBG("Stream %d not in streaming state", i);

@@ -20,6 +20,8 @@
 void broadcast_source_adv_get(const struct bt_data **ext_adv, size_t *ext_adv_size,
 			      const struct bt_data **per_adv, size_t *per_adv_size);
 
+
+int broadcast_data_send(uint8_t * data, size_t data_size);
 /**
  * @brief	Start the Bluetooth LE Audio broadcast (BIS) source.
  *
