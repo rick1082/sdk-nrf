@@ -39,6 +39,7 @@ int bt_mgmt_scan_start(uint16_t scan_intvl, uint16_t scan_win, enum bt_mgmt_scan
 	static int scan_interval = CONFIG_BT_BACKGROUND_SCAN_INTERVAL;
 	static int scan_window = CONFIG_BT_BACKGROUND_SCAN_WINDOW;
 
+	led_on(LED_APP_RGB, LED_COLOR_BLUE);
 	/* Only change search name if a new name has been supplied */
 	if (name != NULL) {
 		size_t name_size = MIN(strlen(name), BLE_SEARCH_NAME_MAX_LEN - 1);

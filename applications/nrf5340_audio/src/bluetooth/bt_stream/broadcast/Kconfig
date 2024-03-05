@@ -73,6 +73,10 @@ config BT_AUDIO_USE_BROADCAST_NAME_ALT
 	help
 	  Use the alternative broadcast name.
 
+config BT_AUDIO_HIGH_PRI_BROADCASTER
+	bool
+	default n
+
 config BT_AUDIO_BROADCAST_ENCRYPTED
 	bool "Encrypted broadcast"
 	depends on TRANSPORT_BIS

@@ -8,6 +8,7 @@
 #define _NRF5340_AUDIO_COMMON_H_
 
 #include <zephyr/bluetooth/audio/audio.h>
+#include <zephyr/bluetooth/bluetooth.h>
 
 #define ZBUS_READ_TIMEOUT_MS	K_MSEC(100)
 #define ZBUS_ADD_OBS_TIMEOUT_MS K_MSEC(200)
@@ -21,6 +22,7 @@ enum button_action {
 struct button_msg {
 	uint32_t button_pin;
 	enum button_action button_action;
+	uint32_t button_state;
 };
 
 enum le_audio_evt_type {
@@ -56,6 +58,7 @@ enum bt_mgmt_evt_type {
 	BT_MGMT_PA_SYNCED,
 	BT_MGMT_PA_SYNC_LOST,
 	BT_MGMT_DISCONNECTED,
+	BT_MGMT_SWITCH,
 };
 
 struct bt_mgmt_msg {
@@ -65,6 +68,7 @@ struct bt_mgmt_msg {
 	struct bt_le_per_adv_sync *pa_sync;
 	uint32_t broadcast_id;
 	uint8_t pa_sync_term_reason;
+	struct bt_le_scan_recv_info info;
 };
 
 enum volume_evt_type {

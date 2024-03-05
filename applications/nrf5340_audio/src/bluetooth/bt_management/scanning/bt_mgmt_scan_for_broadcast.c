@@ -41,6 +41,7 @@ static uint32_t broadcaster_broadcast_id;
 struct broadcast_source {
 	char name[BLE_SEARCH_NAME_MAX_LEN];
 	uint32_t broadcast_id;
+bool high_pri_stream;
 };
 
 static void scan_restart_worker(struct k_work *work)
@@ -91,7 +92,7 @@ static uint16_t interval_to_sync_timeout(uint16_t interval)
 	return timeout;
 }
 
-static void periodic_adv_sync(const struct bt_le_scan_recv_info *info, uint32_t broadcast_id)
+void periodic_adv_sync(const struct bt_le_scan_recv_info *info, uint32_t broadcast_id)
 {
 	int ret;
 	struct bt_le_per_adv_sync_param param;
@@ -133,37 +134,41 @@ static void periodic_adv_sync(const struct bt_le_scan_recv_info *info, uint32_t 
 static bool scan_check_broadcast_source(struct bt_data *data, void *user_data)
 {
 	struct broadcast_source *source = (struct broadcast_source *)user_data;
-	struct bt_uuid_16 adv_uuid;
 
-	if (data->type == BT_DATA_BROADCAST_NAME && data->data_len) {
-		/* Ensure that broadcast name is at least one character shorter than the value of
-		 * BLE_SEARCH_NAME_MAX_LEN
-		 */
+	int i;
+	switch (data->type) {
+	case BT_DATA_BROADCAST_NAME:
 		if (data->data_len < BLE_SEARCH_NAME_MAX_LEN) {
 			memcpy(source->name, data->data, data->data_len);
 			source->name[data->data_len] = '\0';
 		}
+		break;
+	case BT_DATA_SVC_DATA16:
+		for (i = 0; i < data->data_len; i += sizeof(uint16_t)) {
+			struct bt_uuid *uuid;
+			uint16_t u16;
 
-		return true;
+			memcpy(&u16, &data->data[i], sizeof(u16));
+			uuid = BT_UUID_DECLARE_16(sys_le16_to_cpu(u16));
+			if (bt_uuid_cmp(uuid, BT_UUID_PBA) == 0) {
+				LOG_HEXDUMP_INF(data->data, data->data_len, "");
+				if (data->data[3] > 0) {
+					if (data->data[10] == 4) {
+						LOG_WRN("Found high pri stream");
+						source->high_pri_stream = true;
+					}
+				}
+			} else if (bt_uuid_cmp(uuid, BT_UUID_BROADCAST_AUDIO) == 0) {
+				// LOG_HEXDUMP_INF(data->data, data->data_len, "audio broadcast");
+				source->broadcast_id = sys_get_le24(data->data + BT_UUID_SIZE_16);
+				LOG_WRN("%x", source->broadcast_id);
+			}
+		}
+		break;
+
+	default:
+		break;
 	}
-
-	if (data->type != BT_DATA_SVC_DATA16) {
-		return true;
-	}
-
-	if (data->data_len < BT_UUID_SIZE_16 + BT_AUDIO_BROADCAST_ID_SIZE) {
-		return true;
-	}
-
-	if (!bt_uuid_create(&adv_uuid.uuid, data->data, BT_UUID_SIZE_16)) {
-		return false;
-	}
-
-	if (bt_uuid_cmp(&adv_uuid.uuid, BT_UUID_BROADCAST_AUDIO)) {
-		return true;
-	}
-
-	source->broadcast_id = sys_get_le24(data->data + BT_UUID_SIZE_16);
 
 	return true;
 }
@@ -184,8 +189,9 @@ static void scan_recv_cb(const struct bt_le_scan_recv_info *info, struct net_buf
 	}
 
 	bt_data_parse(ad, scan_check_broadcast_source, (void *)&source);
-
+	
 	if (source.broadcast_id != INVALID_BROADCAST_ID) {
+		LOG_INF("found boardcast ID %d", source.broadcast_id);
 		if (srch_brdcast_id < BRDCAST_ID_NOT_USED) {
 			/* Valid srch_brdcast_id supplied */
 			if (source.broadcast_id != srch_brdcast_id) {
@@ -193,13 +199,18 @@ static void scan_recv_cb(const struct bt_le_scan_recv_info *info, struct net_buf
 				return;
 			}
 
-		} else if (strncmp(source.name, srch_name, BLE_SEARCH_NAME_MAX_LEN) != 0) {
+		} else if (strncmp(source.name, srch_name, BLE_SEARCH_NAME_MAX_LEN) != 0 && !source.high_pri_stream) {
 			/* Broadcaster does not match src_name */
 			return;
 		}
 
 		LOG_INF("Broadcast source %s found, id: 0x%06x", source.name, source.broadcast_id);
 		periodic_adv_sync(info, source.broadcast_id);
+		if (source.high_pri_stream) {
+			led_on(LED_APP_RGB, LED_COLOR_RED);
+		} else {
+			led_on(LED_APP_RGB, LED_COLOR_GREEN);
+		}
 	}
 }
 
