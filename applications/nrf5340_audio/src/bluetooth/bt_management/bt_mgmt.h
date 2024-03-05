@@ -131,5 +131,6 @@ int bt_mgmt_conn_disconnect(struct bt_conn *conn, uint8_t reason);
  * @return	0 if success, error otherwise.
  */
 int bt_mgmt_init(void);
-
+void bt_mgmt_adv_stop(void);
+void bt_mgmt_adv_work_start(void);
 #endif /* _BT_MGMT_H_ */

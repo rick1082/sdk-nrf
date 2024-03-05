@@ -77,6 +77,28 @@ static void button_msg_sub_thread(void)
 
 		switch (msg.button_pin) {
 		case BUTTON_PLAY_PAUSE:
+#if CONFIG_BT_AUDIO_HIGH_PRI_BROADCASTER
+			if (msg.button_state == BUTTON_PRESS) {
+				LOG_INF("RELEASE");
+				ret = broadcast_source_stop();
+				LOG_INF("broadcast_source_disable %d", ret);
+				bt_mgmt_adv_stop();
+				ret = led_on(LED_APP_RGB, LED_COLOR_MAGENTA);
+				if (ret) {
+					LOG_ERR("LED set failed");
+				}
+			} else {
+				LOG_INF("PUSH");
+
+				bt_mgmt_adv_work_start();
+				ret = broadcast_source_start(NULL);
+				LOG_INF("broadcast_source_enable %d", ret);
+				ret = led_on(LED_APP_RGB, LED_COLOR_RED);
+				if (ret) {
+					LOG_ERR("LED set failed");
+				}
+			}
+#else
 			if (strm_state == STATE_STREAMING) {
 				ret = broadcast_source_stop();
 				if (ret) {
@@ -90,7 +112,7 @@ static void button_msg_sub_thread(void)
 			} else {
 				LOG_WRN("In invalid state: %d", strm_state);
 			}
-
+#endif
 			break;
 
 		case BUTTON_4:
@@ -326,8 +348,8 @@ int main(void)
 	ret = nrf5340_audio_common_init();
 	ERR_CHK(ret);
 
-	size_t ext_adv_size = 0;
-	size_t per_adv_size = 0;
+	static size_t ext_adv_size = 0;
+	static size_t per_adv_size = 0;
 
 	ret = zbus_subscribers_create();
 	ERR_CHK_MSG(ret, "Failed to create zbus subscriber threads");

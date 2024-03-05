@@ -16,6 +16,7 @@
 #include "bt_mgmt.h"
 #include "macros_common.h"
 #include "nrf5340_audio_common.h"
+#include "led.h"
 
 #include <zephyr/logging/log.h>
 LOG_MODULE_DECLARE(bt_mgmt_scan);
@@ -151,9 +152,10 @@ static bool scan_check_broadcast_source(struct bt_data *data, void *user_data)
 			memcpy(&u16, &data->data[i], sizeof(u16));
 			uuid = BT_UUID_DECLARE_16(sys_le16_to_cpu(u16));
 			if (bt_uuid_cmp(uuid, BT_UUID_PBA) == 0) {
+				LOG_INF("Found PBA");
 				LOG_HEXDUMP_INF(data->data, data->data_len, "");
 				if (data->data[3] > 0) {
-					if (data->data[10] == 4) {
+					if (data->data[7] == 0x04) {
 						LOG_WRN("Found high pri stream");
 						source->high_pri_stream = true;
 					}
@@ -189,9 +191,9 @@ static void scan_recv_cb(const struct bt_le_scan_recv_info *info, struct net_buf
 	}
 
 	bt_data_parse(ad, scan_check_broadcast_source, (void *)&source);
-	
+
 	if (source.broadcast_id != INVALID_BROADCAST_ID) {
-		LOG_INF("found boardcast ID %d", source.broadcast_id);
+		LOG_INF("found broadcast ID %d", source.broadcast_id);
 		if (srch_brdcast_id < BRDCAST_ID_NOT_USED) {
 			/* Valid srch_brdcast_id supplied */
 			if (source.broadcast_id != srch_brdcast_id) {

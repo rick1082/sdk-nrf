@@ -11,6 +11,7 @@
 
 #include "bt_mgmt_scan_for_broadcast_internal.h"
 #include "bt_mgmt_scan_for_conn_internal.h"
+#include "led.h"
 
 #include <zephyr/logging/log.h>
 LOG_MODULE_REGISTER(bt_mgmt_scan, CONFIG_BT_MGMT_SCAN_LOG_LEVEL);

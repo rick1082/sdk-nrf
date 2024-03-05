@@ -84,7 +84,7 @@ static bool scan_check_high_pri_audio(struct bt_data *data, void *user_data)
 			if (bt_uuid_cmp(uuid, BT_UUID_PBA) == 0) {
 				LOG_HEXDUMP_INF(data->data, data->data_len, "");
 				if (data->data[3] > 0) {
-					if (data->data[10] == 4){
+					if (data->data[7] == 4){
 						LOG_WRN("Found high pri stream");
 						source->high_pri_stream = true;
 					}
@@ -93,7 +93,7 @@ static bool scan_check_high_pri_audio(struct bt_data *data, void *user_data)
 				//LOG_HEXDUMP_INF(data->data, data->data_len, "audio broadcast");
 				source->broadcast_id = sys_get_le24(data->data + BT_UUID_SIZE_16);
 				//LOG_WRN("found broadcast id %x", source->broadcast_id);
-			} 
+			}
 		}
 	}
 	return true;

@@ -64,10 +64,17 @@ static int leds_set(void)
 		return ret;
 	}
 #elif (CONFIG_AUDIO_DEV == GATEWAY)
+#if CONFIG_BT_AUDIO_HIGH_PRI_BROADCASTER
+	ret = led_on(LED_APP_RGB, LED_COLOR_MAGENTA);
+	if (ret) {
+		return ret;
+	}
+#else
 	ret = led_on(LED_APP_RGB, LED_COLOR_GREEN);
 	if (ret) {
 		return ret;
 	}
+#endif
 #endif /* (CONFIG_AUDIO_DEV == HEADSET) */
 
 	return 0;

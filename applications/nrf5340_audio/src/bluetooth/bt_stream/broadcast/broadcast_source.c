@@ -78,7 +78,11 @@ static bool delete_broadcast_src;
 /* Make sure pba_buf is large enough for a 16bit UUID and meta data
  * (any addition to pba_buf requires an increase of this value)
  */
+#if CONFIG_BT_AUDIO_HIGH_PRI_BROADCASTER
+NET_BUF_SIMPLE_DEFINE(pba_buf, BT_UUID_SIZE_16 + 8 + 4);
+#else
 NET_BUF_SIMPLE_DEFINE(pba_buf, BT_UUID_SIZE_16 + 8);
+#endif
 static struct bt_data ext_ad[4];
 #else
 static struct bt_data ext_ad[3];
@@ -215,6 +219,12 @@ static int adv_create(void)
 		broadcast_id = CONFIG_BT_AUDIO_BROADCAST_ID_FIXED;
 	}
 
+
+#if CONFIG_BT_AUDIO_HIGH_PRI_BROADCASTER
+	ext_ad[0] = (struct bt_data)BT_DATA(BT_DATA_BROADCAST_NAME,
+						CONFIG_BT_AUDIO_BROADCAST_NAME_HIGH_PRI_BROADCASTER,
+						sizeof(CONFIG_BT_AUDIO_BROADCAST_NAME_HIGH_PRI_BROADCASTER) - 1);
+#else
 	if (IS_ENABLED(CONFIG_BT_AUDIO_USE_BROADCAST_NAME_ALT)) {
 		ext_ad[0] = (struct bt_data)BT_DATA(BT_DATA_BROADCAST_NAME,
 						    CONFIG_BT_AUDIO_BROADCAST_NAME_ALT,
@@ -224,7 +234,7 @@ static int adv_create(void)
 						    CONFIG_BT_AUDIO_BROADCAST_NAME,
 						    sizeof(CONFIG_BT_AUDIO_BROADCAST_NAME) - 1);
 	}
-
+#endif
 	/* Setup extended advertising data */
 	net_buf_simple_add_le16(&brdcst_id_buf, BT_UUID_BROADCAST_AUDIO_VAL);
 	net_buf_simple_add_le24(&brdcst_id_buf, broadcast_id);
@@ -248,8 +258,18 @@ static int adv_create(void)
 
 	/* Metadata */
 	/* 3 bytes for parental_rating and 3 bytes for active_flag LTVs */
-	net_buf_simple_add_u8(&pba_buf, 0x06);
+#if CONFIG_BT_AUDIO_HIGH_PRI_BROADCASTER
 
+	net_buf_simple_add_u8(&pba_buf, 0x06+4);
+
+	/* Emergency context */
+	net_buf_simple_add_u8(&pba_buf, 0x03);
+	net_buf_simple_add_u8(&pba_buf, 0x02);
+	net_buf_simple_add_u8(&pba_buf, 0x00);
+	net_buf_simple_add_u8(&pba_buf, 0x04);
+#else
+	net_buf_simple_add_u8(&pba_buf, 0x06);
+#endif
 	/* Parental rating*/
 	/* Length */
 	net_buf_simple_add_u8(&pba_buf, 0x02);
