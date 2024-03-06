@@ -21,8 +21,14 @@ config BT_PER_ADV_SYNC_MAX
 config BT_SMP
 	default y
 
+config BT_DEVICE_NAME
+	default "BIS_HEADSET"
+
 
 ## ISO related configs ##
+config BT_PER_ADV_SYNC_TRANSFER_RECEIVER
+	default y
+
 config BT_ISO_SYNC_RECEIVER
 	default y
 

@@ -259,7 +259,6 @@ static void pa_req_work_handler()
 {
 	int ret;
 
-	LOG_INF("%s", __func__);
 	ret = bt_bap_scan_delegator_set_pa_state(req_recv_state->src_id, BT_BAP_PA_STATE_INFO_REQ);
 	if (ret) {
 		LOG_ERR("set pa state to INFO_REQ failed, err = %d", ret);
@@ -280,15 +279,12 @@ static void pa_timer_handler(struct k_work *work)
 
 		bt_bap_scan_delegator_set_pa_state(req_recv_state->src_id, pa_state);
 	}
-
-	LOG_WRN("PA timeout");
 }
 
 static K_WORK_DELAYABLE_DEFINE(pa_timer, pa_timer_handler);
 
 static int pa_sync_past(struct bt_conn *conn, uint16_t pa_interval)
 {
-	LOG_WRN("%s", __func__);
 	struct bt_le_per_adv_sync_transfer_param param = {0};
 	int err;
 
@@ -335,8 +331,6 @@ static int pa_sync_req_cb(struct bt_conn *conn,
 		err = 0;
 	}
 
-	LOG_WRN("give sem_pa_request");
-
 	return err;
 }
 
@@ -346,9 +340,10 @@ static int pa_sync_term_req_cb(struct bt_conn *conn,
 {
 	int ret;
 
-	LOG_WRN("PA sync term req received");
 	ret = broadcast_sink_disable();
-	LOG_WRN("ret = %d", ret);
+	if (ret) {
+		LOG_WRN("Failed to disable broadcast sink: %d", ret);
+	}
 
 	return ret;
 }
@@ -357,15 +352,22 @@ static void broadcast_code_cb(struct bt_conn *conn,
 			      const struct bt_bap_scan_delegator_recv_state *recv_state,
 			      const uint8_t broadcast_code[BT_AUDIO_BROADCAST_CODE_SIZE])
 {
-	LOG_WRN("Broadcast code received for %p", (void *)recv_state);
+	LOG_INF("Broadcast code received for %p", (void *)recv_state);
 }
 
 static int bis_sync_req_cb(struct bt_conn *conn,
 			   const struct bt_bap_scan_delegator_recv_state *recv_state,
 			   const uint32_t bis_sync_req[BT_BAP_SCAN_DELEGATOR_MAX_SUBGROUPS])
 {
-	LOG_WRN("bis_sync_req_cb");
-	LOG_WRN("BIS sync request received for %p: 0x%08x\n", (void *)recv_state, bis_sync_req[0]);
+	int ret;
+
+	LOG_INF("BIS sync request received for %p: 0x%08x\n", (void *)recv_state, bis_sync_req[0]);
+	if(bis_sync_req[0] == 0) {
+		ret = broadcast_sink_stop();
+		if (ret) {
+			LOG_WRN("Failed to stop broadcast sink: %d", ret);
+		}
+	}
 	return 0;
 }
 
