@@ -193,8 +193,8 @@ static void disconnected_cb(struct bt_conn *conn, uint8_t reason)
 	ERR_CHK(ret);
 
 	if (IS_ENABLED(CONFIG_BT_PERIPHERAL)) {
-		ret = bt_mgmt_adv_start(NULL, 0, NULL, 0, true);
-		ERR_CHK(ret);
+		//ret = bt_mgmt_adv_start(NULL, 0, NULL, 0, true);
+		//ERR_CHK(ret);
 	}
 
 	if (IS_ENABLED(CONFIG_BT_CENTRAL)) {

@@ -18,6 +18,7 @@
 #include "macros_common.h"
 #include "audio_system.h"
 #include "bt_mgmt.h"
+#include <bluetooth/services/nus.h>
 
 #include <zephyr/logging/log.h>
 LOG_MODULE_REGISTER(main, CONFIG_MAIN_LOG_LEVEL);
@@ -35,7 +36,7 @@ ZBUS_OBS_DECLARE(sdu_ref_msg_listen);
 
 static struct k_thread button_msg_sub_thread_data;
 static struct k_thread le_audio_msg_sub_thread_data;
-
+static struct bt_le_ext_adv *adv_for_conn;
 static k_tid_t button_msg_sub_thread_id;
 static k_tid_t le_audio_msg_sub_thread_id;
 
@@ -43,6 +44,20 @@ K_THREAD_STACK_DEFINE(button_msg_sub_thread_stack, CONFIG_BUTTON_MSG_SUB_STACK_S
 K_THREAD_STACK_DEFINE(le_audio_msg_sub_thread_stack, CONFIG_LE_AUDIO_MSG_SUB_STACK_SIZE);
 
 static enum stream_state strm_state = STATE_PAUSED;
+static const struct bt_data ad[] = {
+	BT_DATA_BYTES(BT_DATA_FLAGS, (BT_LE_AD_GENERAL | BT_LE_AD_NO_BREDR)),
+	BT_DATA_BYTES(BT_DATA_UUID16_ALL, BT_UUID_16_ENCODE(BT_UUID_BASS_VAL),
+				BT_UUID_16_ENCODE(BT_UUID_PACS_VAL)),
+};
+
+static void bt_receive_cb(struct bt_conn *conn, const uint8_t *const data, uint16_t len)
+{
+	LOG_HEXDUMP_INF(data, len, " NUS");
+}
+
+static struct bt_nus_cb nus_cb = {
+	.received = bt_receive_cb,
+};
 
 /* Function for handling all stream state changes */
 static void stream_state_set(enum stream_state stream_state_new)
@@ -216,6 +231,15 @@ static int zbus_subscribers_create(void)
 
 	return 0;
 }
+static struct k_work adv_work;
+static void advertising_process(struct k_work *work)
+{
+	int ret;
+	ret = bt_le_ext_adv_start(adv_for_conn, BT_LE_EXT_ADV_START_DEFAULT);
+	if (ret) {
+		printk("Failed to set advertising data (err %d)\n", ret);
+	}
+}
 
 /**
  * @brief	Zbus listener to receive events from bt_mgmt.
@@ -233,6 +257,19 @@ static void bt_mgmt_evt_handler(const struct zbus_channel *chan)
 	msg = zbus_chan_const_msg(chan);
 
 	switch (msg->event) {
+	case BT_MGMT_CONNECTED:
+		LOG_INF("BT_MGMT_CONNECTED");
+		break;
+
+	case BT_MGMT_DISCONNECTED:
+		LOG_INF("BT_MGMT_DISCONNECTED");
+		
+		k_work_submit(&adv_work);
+		break;
+
+	case BT_MGMT_SECURITY_CHANGED:
+		LOG_INF("BT_MGMT_SECURITY_CHANGED");
+		break;
 	case BT_MGMT_EXT_ADV_WITH_PA_READY:
 		LOG_INF("Ext adv ready");
 
@@ -318,6 +355,7 @@ int main(void)
 	static const struct bt_data *ext_adv;
 	static const struct bt_data *per_adv;
 
+
 	LOG_DBG("nRF5340 APP core started");
 
 	ret = nrf5340_audio_dk_init();
@@ -348,5 +386,23 @@ int main(void)
 	ret = bt_mgmt_adv_start(ext_adv, ext_adv_size, per_adv, per_adv_size, false);
 	ERR_CHK_MSG(ret, "Failed to start advertiser");
 
+	int err;
+
+	err = bt_le_ext_adv_create(BT_LE_EXT_ADV_CONN_NAME, NULL, &adv_for_conn);
+	if (err) {
+		printk("Failed to create advertising set (err %d)\n", err);
+	}
+
+	err = bt_le_ext_adv_set_data(adv_for_conn, ad, ARRAY_SIZE(ad), NULL, 0);
+	if (err) {
+		printk("Failed to set advertising data (err %d)\n", err);
+	}
+
+	err = bt_le_ext_adv_start(adv_for_conn, BT_LE_EXT_ADV_START_DEFAULT);
+	if (err) {
+		printk("Failed to set advertising data (err %d)\n", err);
+	}
+	k_work_init(&adv_work, advertising_process);
+	bt_nus_init(&nus_cb);
 	return 0;
 }
