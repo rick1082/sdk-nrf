@@ -44,10 +44,19 @@ K_THREAD_STACK_DEFINE(button_msg_sub_thread_stack, CONFIG_BUTTON_MSG_SUB_STACK_S
 K_THREAD_STACK_DEFINE(le_audio_msg_sub_thread_stack, CONFIG_LE_AUDIO_MSG_SUB_STACK_SIZE);
 
 static enum stream_state strm_state = STATE_PAUSED;
+
+#define BT_LE_EXT_ADV_CONN BT_LE_ADV_PARAM(BT_LE_ADV_OPT_EXT_ADV | \
+						BT_LE_ADV_OPT_CONNECTABLE, \
+						BT_GAP_ADV_FAST_INT_MIN_2, \
+						BT_GAP_ADV_FAST_INT_MAX_2, \
+						NULL)
+
+#define DEVICE_NAME "BROADCASTER_NUS"
+#define DEVICE_NAME_LEN	(sizeof(DEVICE_NAME) - 1)
 static const struct bt_data ad[] = {
 	BT_DATA_BYTES(BT_DATA_FLAGS, (BT_LE_AD_GENERAL | BT_LE_AD_NO_BREDR)),
-	BT_DATA_BYTES(BT_DATA_UUID16_ALL, BT_UUID_16_ENCODE(BT_UUID_BASS_VAL),
-				BT_UUID_16_ENCODE(BT_UUID_PACS_VAL)),
+	BT_DATA(BT_DATA_NAME_SHORTENED, DEVICE_NAME, DEVICE_NAME_LEN),
+	BT_DATA_BYTES(BT_DATA_UUID128_ALL, BT_UUID_NUS_VAL),
 };
 
 static void bt_receive_cb(struct bt_conn *conn, const uint8_t *const data, uint16_t len)
@@ -388,7 +397,7 @@ int main(void)
 
 	int err;
 
-	err = bt_le_ext_adv_create(BT_LE_EXT_ADV_CONN_NAME, NULL, &adv_for_conn);
+	err = bt_le_ext_adv_create(BT_LE_EXT_ADV_CONN, NULL, &adv_for_conn);
 	if (err) {
 		printk("Failed to create advertising set (err %d)\n", err);
 	}
