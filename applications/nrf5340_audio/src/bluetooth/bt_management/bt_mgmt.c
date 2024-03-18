@@ -161,13 +161,14 @@ static void connected_cb(struct bt_conn *conn, uint8_t err)
 
 	ret = zbus_chan_pub(&bt_mgmt_chan, &msg, K_NO_WAIT);
 	ERR_CHK(ret);
-
+/* disable security for now
 	if (IS_ENABLED(CONFIG_BT_CENTRAL)) {
 		ret = bt_conn_set_security(conn, BT_SECURITY_L2);
 		if (ret) {
 			LOG_ERR("Failed to set security to L2: %d", ret);
 		}
 	}
+*/
 }
 
 K_MUTEX_DEFINE(mtx_duplicate_scan);

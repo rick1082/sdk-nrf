@@ -18,6 +18,15 @@
 #include "macros_common.h"
 #include "audio_system.h"
 #include "bt_mgmt.h"
+#include <zephyr/bluetooth/conn.h>
+#include <zephyr/bluetooth/uuid.h>
+#include <zephyr/bluetooth/gatt.h>
+#include <zephyr/sys/byteorder.h>
+#include <zephyr/bluetooth/bluetooth.h>
+#include <bluetooth/services/nus.h>
+#include <bluetooth/services/nus_client.h>
+#include <bluetooth/gatt_dm.h>
+#include <stdio.h>
 
 #include <zephyr/logging/log.h>
 LOG_MODULE_REGISTER(main, CONFIG_MAIN_LOG_LEVEL);
@@ -44,15 +53,35 @@ K_THREAD_STACK_DEFINE(le_audio_msg_sub_thread_stack, CONFIG_LE_AUDIO_MSG_SUB_STA
 
 static enum stream_state strm_state = STATE_PAUSED;
 
+static struct bt_conn *nus_conn[CONFIG_BT_MAX_CONN];
+static struct bt_nus_client *nus[CONFIG_BT_MAX_CONN];
+static struct bt_nus_client nus_client[CONFIG_BT_MAX_CONN];
+struct k_work_delayable dummy_data_send_work;
+#define REMOTE_DEVICE_NAME_PEER "Nordic_UART_Service"
+#define REMOTE_DEVICE_NAME_PEER_LEN (sizeof(REMOTE_DEVICE_NAME_PEER) - 1)
+
 /* Function for handling all stream state changes */
 static void stream_state_set(enum stream_state stream_state_new)
 {
 	strm_state = stream_state_new;
 }
 
+char dummy_string[] = "Hello from nRF5340\n\r";
+static void work_dummy_data_send(struct k_work *work)
+{
+		int ret;
+		for (int i = 0; i < CONFIG_BT_MAX_CONN; i++){
+			if (nus_conn[i] != NULL){
+				ret = bt_nus_client_send(&nus_client[i], dummy_string, sizeof(dummy_string));
+				LOG_INF("Sending dummy string to server %d, ret = %d", i, ret);
+			}	
+		}
+}
+
 /**
  * @brief	Handle button activity.
  */
+
 static void button_msg_sub_thread(void)
 {
 	int ret;
@@ -91,6 +120,10 @@ static void button_msg_sub_thread(void)
 				LOG_WRN("In invalid state: %d", strm_state);
 			}
 
+			break;
+
+		case BUTTON_5:
+			k_work_reschedule(&dummy_data_send_work, K_MSEC(10));
 			break;
 
 		case BUTTON_4:
@@ -217,6 +250,91 @@ static int zbus_subscribers_create(void)
 	return 0;
 }
 
+static uint8_t ble_data_received(struct bt_nus_client *nus, const uint8_t *data, uint16_t len)
+{
+	LOG_HEXDUMP_INF(data, len, "NUS received:");
+	return BT_GATT_ITER_CONTINUE;
+}
+
+struct bt_nus_client_init_param init = { .cb = {
+							.received = ble_data_received,
+						} };
+
+static int channel_index_get(const struct bt_conn *conn, uint8_t *index)
+{
+	if (conn == NULL) {
+		LOG_ERR("No connection provided");
+		return -EINVAL;
+	}
+
+	for (int i = 0; i < ARRAY_SIZE(nus_conn); i++) {
+		if (nus_conn[i] == conn) {
+			*index = i;
+			return 0;
+		}
+	}
+
+	LOG_WRN("Connection not found");
+
+	return -EINVAL;
+}
+
+static void discovery_complete(struct bt_gatt_dm *dm, void *context)
+{
+	int ret;
+	uint8_t channel_index;
+
+	ret = channel_index_get(bt_gatt_dm_conn_get(dm), &channel_index);
+	if (ret) {
+		LOG_ERR("Channel index not found");
+	}
+
+	LOG_INF("Service discovery completed for nus[%d]", channel_index);
+	nus[channel_index] = context;
+
+	bt_gatt_dm_data_print(dm);
+
+	bt_nus_handles_assign(dm, nus[channel_index]);
+	bt_nus_subscribe_receive(nus[channel_index]);
+
+	bt_gatt_dm_data_release(dm);
+}
+
+static void discovery_service_not_found(struct bt_conn *conn, void *context)
+{
+	LOG_INF("Service not found");
+}
+
+static void discovery_error(struct bt_conn *conn, int err, void *context)
+{
+	LOG_WRN("Error while discovering GATT database: (%d)", err);
+}
+
+struct bt_gatt_dm_cb discovery_cb = {
+	.completed = discovery_complete,
+	.service_not_found = discovery_service_not_found,
+	.error_found = discovery_error,
+};
+
+static void gatt_discover(struct bt_conn *conn)
+{
+	int ret;
+	uint8_t channel_index;
+
+	ret = channel_index_get(conn, &channel_index);
+	if (ret) {
+		LOG_ERR("Channel index not found");
+	}
+
+	LOG_INF("Discovering GATT database for %p, index = %d", (void *) conn, channel_index);
+	ret = bt_gatt_dm_start(conn, BT_UUID_NUS_SERVICE, &discovery_cb,
+			       &nus_client[channel_index]);
+	if (ret) {
+		LOG_ERR("could not start the discovery procedure, error "
+			"code: %d", ret);
+	}
+}
+
 /**
  * @brief	Zbus listener to receive events from bt_mgmt.
  *
@@ -241,6 +359,33 @@ static void bt_mgmt_evt_handler(const struct zbus_channel *chan)
 			LOG_ERR("Failed to start broadcaster: %d", ret);
 		}
 
+		break;
+
+	case BT_MGMT_CONNECTED:
+		LOG_INF("BT_MGMT_CONNECTED");
+		int i;
+
+		for (i = 0; i < CONFIG_BT_MAX_CONN; i++) {
+			if (nus_conn[i] == NULL) {
+				nus_conn[i] = msg->conn;
+				break;
+			}
+		}
+		gatt_discover(msg->conn);
+		break;
+
+	case BT_MGMT_SECURITY_CHANGED:
+		LOG_INF("BT_MGMT_SECURITY_CHANGED");
+		break;
+
+	case BT_MGMT_DISCONNECTED:
+		for (int i = 0; i < CONFIG_BT_MAX_CONN; i++) {
+			if (nus_conn[i] == msg->conn) {
+				nus_conn[i] = NULL;
+				break;
+			}
+		}
+		LOG_INF("BT_MGMT_DISCONNECTED");
 		break;
 
 	default:
@@ -312,6 +457,26 @@ void streamctrl_send(void const *const data, size_t size, uint8_t num_ch)
 	}
 }
 
+
+static int nus_client_init(void)
+{
+	int err;
+	struct bt_nus_client_init_param init = { .cb = {
+							 .received = ble_data_received,
+						 } };
+
+	for (int i = 0; i < CONFIG_BT_MAX_CONN; i++) {
+		err = bt_nus_client_init(&nus_client[i], &init);
+		if (err) {
+			LOG_ERR("NUS Client initialization failed (err %d)", err);
+			return err;
+		}
+	}
+
+	LOG_INF("NUS Client module initialized");
+	return err;
+}
+
 int main(void)
 {
 	int ret;
@@ -319,6 +484,8 @@ int main(void)
 	static const struct bt_data *per_adv;
 
 	LOG_DBG("nRF5340 APP core started");
+
+	k_work_init_delayable(&dummy_data_send_work, work_dummy_data_send);
 
 	ret = nrf5340_audio_dk_init();
 	ERR_CHK(ret);
@@ -345,8 +512,17 @@ int main(void)
 
 	broadcast_source_adv_get(&ext_adv, &ext_adv_size, &per_adv, &per_adv_size);
 
+	ret = nus_client_init();
+	ERR_CHK_MSG(ret, "Failed to initialize NUS client");
+
 	ret = bt_mgmt_adv_start(ext_adv, ext_adv_size, per_adv, per_adv_size, false);
 	ERR_CHK_MSG(ret, "Failed to start advertiser");
+
+	ret = bt_mgmt_scan_start(0, 0, BT_MGMT_SCAN_TYPE_CONN, REMOTE_DEVICE_NAME_PEER,
+				 BRDCAST_ID_NOT_USED);
+	ERR_CHK_MSG(ret, "Failed to start scanning");
+	
+
 
 	return 0;
 }
