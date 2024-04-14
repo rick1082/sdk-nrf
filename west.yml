@@ -88,7 +88,6 @@ manifest:
           - hal_nordic
           - hal_st # required for ST sensors (unrelated to STM32 MCUs)
           - hal_wurthelektronik
-          - liblc3
           - libmetal
           - littlefs
           - loramac-node
@@ -129,6 +128,10 @@ manifest:
           upstream-url: https://github.com/Wi-FiQuickTrack/Wi-FiQuickTrack-ControlAppC
           upstream-sha: 1225729e8d84075f03bf9fc51eee85d84dfb0091
           compare-by-default: true
+    - name: liblc3
+      url: https://github.com/google/liblc3
+      path: modules/lib/liblc3
+      revision: 8523516b89c170ffc09e1a3a5cfb103f762e62a1
     - name: mcuboot
       repo-path: sdk-mcuboot
       revision: 86af2de75205ec5f2c846a2393934360de22fde4
