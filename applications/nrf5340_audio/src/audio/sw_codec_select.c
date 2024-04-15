@@ -13,7 +13,7 @@
 #include "pcm_stream_channel_modifier.h"
 #include "sample_rate_converter.h"
 #if (CONFIG_SW_CODEC_LC3)
-#include "sw_codec_lc3.h"
+#include "sw_codec_google_lc3.h"
 #endif /* (CONFIG_SW_CODEC_LC3) */
 
 #include <zephyr/logging/log.h>

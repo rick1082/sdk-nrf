@@ -194,7 +194,7 @@ choice SW_CODEC_DEFAULT
 
 config SW_CODEC_LC3
 	bool "LC3"
-	select SW_CODEC_LC3_T2_SOFTWARE
+	#select SW_CODEC_LC3_T2_SOFTWARE
 	help
 	  LC3 is the mandatory codec for LE Audio.
 
