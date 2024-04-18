@@ -9,14 +9,14 @@ config UTF8
 
 ## ACL related configs ##
 config BT_MAX_CONN
-	default 2
+	default 3
 
 # Generic Audio Source - 0x0880
 config BT_DEVICE_APPEARANCE
 	default 2176
 
 config BT_MAX_PAIRED
-	default 2
+	default 3
 
 config BT_GATT_DYNAMIC_DB
 	default y
@@ -57,6 +57,12 @@ config MCTL_LOCAL_PLAYER_CONTROL
 	default y
 
 config MCTL_LOCAL_PLAYER_REMOTE_CONTROL
+	default y
+
+config BT_PERIPHERAL
+	default y
+
+config BT_NUS
 	default y
 
 

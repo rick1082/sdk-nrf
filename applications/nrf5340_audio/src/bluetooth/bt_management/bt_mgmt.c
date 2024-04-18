@@ -74,6 +74,13 @@ static void connected_cb(struct bt_conn *conn, uint8_t err)
 	char addr[BT_ADDR_LE_STR_LEN] = {0};
 	uint8_t num_conn = 0;
 	struct bt_mgmt_msg msg;
+	
+	struct bt_conn_info info;
+
+	ret = bt_conn_get_info(conn, &info);
+	if(ret) {
+		LOG_ERR("Failed to get conn info for %p: %d", (void *)conn, ret);
+	}
 
 	if (err == BT_HCI_ERR_ADV_TIMEOUT && IS_ENABLED(CONFIG_BT_PERIPHERAL)) {
 		LOG_INF("Directed adv timed out with no connection, reverting to normal adv");
@@ -134,10 +141,13 @@ static void connected_cb(struct bt_conn *conn, uint8_t err)
 	ret = zbus_chan_pub(&bt_mgmt_chan, &msg, K_NO_WAIT);
 	ERR_CHK(ret);
 
-	if (IS_ENABLED(CONFIG_BT_CENTRAL)) {
-		ret = bt_conn_set_security(conn, BT_SECURITY_L2);
-		if (ret) {
-			LOG_ERR("Failed to set security to L2: %d", ret);
+	
+	if (info.role == BT_CONN_ROLE_CENTRAL) { 
+		if (IS_ENABLED(CONFIG_BT_CENTRAL)) {
+			ret = bt_conn_set_security(conn, BT_SECURITY_L2);
+			if (ret) {
+				LOG_ERR("Failed to set security to L2: %d", ret);
+			}
 		}
 	}
 }
@@ -149,16 +159,23 @@ static void disconnected_cb(struct bt_conn *conn, uint8_t reason)
 	int ret;
 	char addr[BT_ADDR_LE_STR_LEN];
 	struct bt_mgmt_msg msg;
+	struct bt_conn_info info;
+
+	ret = bt_conn_get_info(conn, &info);
+	if (ret) {
+		LOG_ERR("Failed to get conn info for %p: %d", (void *)conn, ret);
+	}
 
 	(void)bt_addr_le_to_str(bt_conn_get_dst(conn), addr, sizeof(addr));
 
 	/* NOTE: The string below is used by the Nordic CI system */
 	LOG_INF("Disconnected: %s (reason 0x%02x)", addr, reason);
 
-	if (IS_ENABLED(CONFIG_BT_CENTRAL)) {
-		bt_conn_unref(conn);
+	if (info.role == BT_CONN_ROLE_CENTRAL) { 
+		if (IS_ENABLED(CONFIG_BT_CENTRAL)) {
+			bt_conn_unref(conn);
+		}
 	}
-
 	/* Publish disconnected */
 	msg.event = BT_MGMT_DISCONNECTED;
 	msg.conn = conn;

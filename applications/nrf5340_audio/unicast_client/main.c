@@ -313,8 +313,14 @@ static void bt_mgmt_evt_handler(const struct zbus_channel *chan)
 {
 	int ret;
 	const struct bt_mgmt_msg *msg;
+	struct bt_conn_info info;
 
 	msg = zbus_chan_const_msg(chan);
+
+	ret = bt_conn_get_info(msg->conn, &info);
+	if (ret) {
+		LOG_WRN("Failed to get bt_conn_get_info");
+	}
 
 	switch (msg->event) {
 	case BT_MGMT_CONNECTED:
@@ -324,27 +330,30 @@ static void bt_mgmt_evt_handler(const struct zbus_channel *chan)
 	case BT_MGMT_SECURITY_CHANGED:
 		LOG_INF("Security changed");
 
-		ret = bt_r_and_c_discover(msg->conn);
-		if (ret) {
-			LOG_WRN("Failed to discover rendering services");
-		}
+		if (info.role == BT_CONN_ROLE_CENTRAL) { 
+			ret = bt_r_and_c_discover(msg->conn);
+			if (ret) {
+				LOG_WRN("Failed to discover rendering services");
+			}
 
-		if (IS_ENABLED(CONFIG_STREAM_BIDIRECTIONAL)) {
-			ret = unicast_client_discover(msg->conn, UNICAST_SERVER_BIDIR);
-		} else {
-			ret = unicast_client_discover(msg->conn, UNICAST_SERVER_SINK);
-		}
+			if (IS_ENABLED(CONFIG_STREAM_BIDIRECTIONAL)) {
+				ret = unicast_client_discover(msg->conn, UNICAST_SERVER_BIDIR);
+			} else {
+				ret = unicast_client_discover(msg->conn, UNICAST_SERVER_SINK);
+			}
 
-		if (ret) {
-			LOG_ERR("Failed to handle unicast client discover: %d", ret);
+			if (ret) {
+				LOG_ERR("Failed to handle unicast client discover: %d", ret);
+			}
 		}
 
 		break;
 
 	case BT_MGMT_DISCONNECTED:
 		LOG_INF("Device disconnected");
-
-		unicast_client_conn_disconnected(msg->conn);
+		if (info.role == BT_CONN_ROLE_CENTRAL) { 
+			unicast_client_conn_disconnected(msg->conn);
+		}
 		break;
 
 	default:
@@ -467,6 +476,28 @@ void streamctrl_send(void const *const data, size_t size, uint8_t num_ch)
 	}
 }
 
+static const struct bt_data ad[] = {
+       BT_DATA_BYTES(BT_DATA_FLAGS, (BT_LE_AD_GENERAL | BT_LE_AD_NO_BREDR)),
+};
+
+#include <bluetooth/services/nus.h>
+
+
+static void bt_receive_cb(struct bt_conn *conn, const uint8_t *const data,
+			  uint16_t len)
+{
+	char addr[BT_ADDR_LE_STR_LEN] = {0};
+
+	bt_addr_le_to_str(bt_conn_get_dst(conn), addr, ARRAY_SIZE(addr));
+
+	LOG_INF("Received data from: %s", addr);
+}
+
+static struct bt_nus_cb nus_cb = {
+	.received = bt_receive_cb,
+};
+
+
 int main(void)
 {
 	int ret;
@@ -485,15 +516,19 @@ int main(void)
 	ret = zbus_link_producers_observers();
 	ERR_CHK_MSG(ret, "Failed to link zbus producers and observers");
 
+	ret = bt_nus_init(&nus_cb);
+	ERR_CHK(ret);
+
 	ret = le_audio_rx_init();
 	ERR_CHK(ret);
 
 	ret = bt_r_and_c_init();
 	ERR_CHK(ret);
 
+/* Disable media control temporarily, investigating why conflicts with other GATT services
 	ret = bt_content_ctrl_init();
 	ERR_CHK(ret);
-
+*/
 	ret = unicast_client_enable(le_audio_rx_data_handler);
 	ERR_CHK(ret);
 
@@ -503,6 +538,9 @@ int main(void)
 		LOG_ERR("Failed to start scanning");
 		return ret;
 	}
+
+	ret = bt_mgmt_adv_start(ad, ARRAY_SIZE(ad), NULL, 0, true);
+	ERR_CHK(ret);
 
 	return 0;
 }

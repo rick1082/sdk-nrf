@@ -75,15 +75,16 @@ struct temp_cap_storage {
 	struct bt_audio_codec_cap codec[CONFIG_CODEC_CAP_COUNT_MAX];
 };
 
-static struct le_audio_headset headsets[CONFIG_BT_MAX_CONN];
-static struct discover_dir discover_list[CONFIG_BT_MAX_CONN];
+#define HEAD_SET_COUNT 2
+static struct le_audio_headset headsets[HEAD_SET_COUNT];
+static struct discover_dir discover_list[HEAD_SET_COUNT];
 
 K_MSGQ_DEFINE(kwork_msgq, sizeof(struct worker_data),
 	      2 * (CONFIG_BT_BAP_UNICAST_CLIENT_ASE_SNK_COUNT +
 		   CONFIG_BT_BAP_UNICAST_CLIENT_ASE_SRC_COUNT),
 	      sizeof(uint32_t));
 
-static struct temp_cap_storage temp_cap[CONFIG_BT_MAX_CONN];
+static struct temp_cap_storage temp_cap[HEAD_SET_COUNT];
 
 /* Make sure that we have at least one headset device per CONFIG_BT_BAP_UNICAST_CLIENT_ASE_SNK */
 BUILD_ASSERT(ARRAY_SIZE(headsets) >= CONFIG_BT_BAP_UNICAST_CLIENT_ASE_SNK_COUNT,
