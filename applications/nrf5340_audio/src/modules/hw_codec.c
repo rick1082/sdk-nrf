@@ -30,8 +30,6 @@ LOG_MODULE_REGISTER(hw_codec, CONFIG_MODULE_HW_CODEC_LOG_LEVEL);
 
 ZBUS_SUBSCRIBER_DEFINE(volume_evt_sub, CONFIG_VOLUME_MSG_SUB_QUEUE_SIZE);
 
-static uint32_t prev_volume_reg_val = OUT_VOLUME_DEFAULT;
-
 static cs47l63_t cs47l63_driver;
 
 static k_tid_t volume_msg_sub_thread_id;
@@ -150,212 +148,41 @@ static int cs47l63_comm_reg_conf_write(const uint32_t config[][2], uint32_t num_
 
 int hw_codec_volume_set(uint8_t set_val)
 {
-	int ret;
-	uint32_t volume_reg_val;
-
-	volume_reg_val = set_val;
-	if (volume_reg_val == 0) {
-		LOG_WRN("Volume at MIN (-64dB)");
-	} else if (volume_reg_val >= MAX_VOLUME_REG_VAL) {
-		LOG_WRN("Volume at MAX (0dB)");
-		volume_reg_val = MAX_VOLUME_REG_VAL;
-	}
-
-	ret = cs47l63_write_reg(&cs47l63_driver, CS47L63_OUT1L_VOLUME_1,
-				volume_reg_val | CS47L63_OUT_VU);
-	if (ret) {
-		return ret;
-	}
-
-	prev_volume_reg_val = volume_reg_val;
-
-	/* This is rounded down to nearest integer */
-	LOG_DBG("Volume: %" PRId32 " dB", (volume_reg_val / 2) - MAX_VOLUME_DB);
-
 	return 0;
 }
 
 int hw_codec_volume_adjust(int8_t adjustment_db)
 {
-	int ret;
-	int32_t new_volume_reg_val;
-
-	LOG_DBG("Adj dB in: %d", adjustment_db);
-
-	if (adjustment_db == 0) {
-		new_volume_reg_val = prev_volume_reg_val;
-	} else {
-		uint32_t volume_reg_val;
-
-		ret = cs47l63_read_reg(&cs47l63_driver, CS47L63_OUT1L_VOLUME_1, &volume_reg_val);
-		if (ret) {
-			LOG_ERR("Failed to get volume from CS47L63");
-			return ret;
-		}
-
-		volume_reg_val &= CS47L63_OUT1L_VOL_MASK;
-
-		/* The adjustment is in dB, 1 bit equals 0.5 dB,
-		 * so multiply by 2 to get increments of 1 dB
-		 */
-		new_volume_reg_val = volume_reg_val + (adjustment_db * 2);
-		if (new_volume_reg_val <= 0) {
-			LOG_WRN("Volume at MIN (-64dB)");
-			new_volume_reg_val = 0;
-		} else if (new_volume_reg_val >= MAX_VOLUME_REG_VAL) {
-			LOG_WRN("Volume at MAX (0dB)");
-			new_volume_reg_val = MAX_VOLUME_REG_VAL;
-		}
-	}
-
-	ret = hw_codec_volume_set(new_volume_reg_val);
-	if (ret) {
-		return ret;
-	}
-
 	return 0;
 }
 
 int hw_codec_volume_decrease(void)
 {
-	int ret;
-
-	ret = hw_codec_volume_adjust(-VOLUME_ADJUST_STEP_DB);
-	if (ret) {
-		return ret;
-	}
-
 	return 0;
 }
 
 int hw_codec_volume_increase(void)
 {
-	int ret;
-
-	ret = hw_codec_volume_adjust(VOLUME_ADJUST_STEP_DB);
-	if (ret) {
-		return ret;
-	}
-
 	return 0;
 }
 
 int hw_codec_volume_mute(void)
 {
-	int ret;
-	uint32_t volume_reg_val;
-
-	ret = cs47l63_read_reg(&cs47l63_driver, CS47L63_OUT1L_VOLUME_1, &volume_reg_val);
-	if (ret) {
-		return ret;
-	}
-
-	BIT_SET(volume_reg_val, CS47L63_OUT1L_MUTE_MASK);
-
-	ret = cs47l63_write_reg(&cs47l63_driver, CS47L63_OUT1L_VOLUME_1,
-				volume_reg_val | CS47L63_OUT_VU);
-	if (ret) {
-		return ret;
-	}
-
 	return 0;
 }
 
 int hw_codec_volume_unmute(void)
 {
-	int ret;
-	uint32_t volume_reg_val;
-
-	ret = cs47l63_read_reg(&cs47l63_driver, CS47L63_OUT1L_VOLUME_1, &volume_reg_val);
-	if (ret) {
-		return ret;
-	}
-
-	BIT_CLEAR(volume_reg_val, CS47L63_OUT1L_MUTE_MASK);
-
-	ret = cs47l63_write_reg(&cs47l63_driver, CS47L63_OUT1L_VOLUME_1,
-				volume_reg_val | CS47L63_OUT_VU);
-	if (ret) {
-		return ret;
-	}
-
 	return 0;
 }
 
 int hw_codec_default_conf_enable(void)
 {
-	int ret;
-
-	ret = cs47l63_comm_reg_conf_write(clock_configuration, ARRAY_SIZE(clock_configuration));
-	if (ret) {
-		return ret;
-	}
-
-	ret = cs47l63_comm_reg_conf_write(GPIO_configuration, ARRAY_SIZE(GPIO_configuration));
-	if (ret) {
-		return ret;
-	}
-
-	ret = cs47l63_comm_reg_conf_write(asp1_enable, ARRAY_SIZE(asp1_enable));
-	if (ret) {
-		return ret;
-	}
-
-	ret = cs47l63_comm_reg_conf_write(output_enable, ARRAY_SIZE(output_enable));
-	if (ret) {
-		return ret;
-	}
-
-	ret = hw_codec_volume_adjust(0);
-	if (ret) {
-		return ret;
-	}
-
-#if ((CONFIG_AUDIO_DEV == GATEWAY) && (CONFIG_AUDIO_SOURCE_I2S))
-	if (IS_ENABLED(CONFIG_WALKIE_TALKIE_DEMO)) {
-		ret = cs47l63_comm_reg_conf_write(pdm_mic_enable_configure,
-						  ARRAY_SIZE(pdm_mic_enable_configure));
-		if (ret) {
-			return ret;
-		}
-	} else {
-		ret = cs47l63_comm_reg_conf_write(line_in_enable, ARRAY_SIZE(line_in_enable));
-		if (ret) {
-			return ret;
-		}
-	}
-#endif /* ((CONFIG_AUDIO_DEV == GATEWAY) && (CONFIG_AUDIO_SOURCE_I2S)) */
-
-#if ((CONFIG_AUDIO_DEV == HEADSET) && CONFIG_STREAM_BIDIRECTIONAL)
-	ret = cs47l63_comm_reg_conf_write(pdm_mic_enable_configure,
-					  ARRAY_SIZE(pdm_mic_enable_configure));
-	if (ret) {
-		return ret;
-	}
-#endif /* ((CONFIG_AUDIO_DEV == HEADSET) && CONFIG_STREAM_BIDIRECTIONAL) */
-
-	/* Toggle FLL to start up CS47L63 */
-	ret = cs47l63_comm_reg_conf_write(FLL_toggle, ARRAY_SIZE(FLL_toggle));
-	if (ret) {
-		return ret;
-	}
-
 	return 0;
 }
 
 int hw_codec_soft_reset(void)
 {
-	int ret;
-
-	ret = cs47l63_comm_reg_conf_write(output_disable, ARRAY_SIZE(output_disable));
-	if (ret) {
-		return ret;
-	}
-
-	ret = cs47l63_comm_reg_conf_write(soft_reset, ARRAY_SIZE(soft_reset));
-	if (ret) {
-		return ret;
-	}
 
 	return 0;
 }
@@ -363,18 +190,6 @@ int hw_codec_soft_reset(void)
 int hw_codec_init(void)
 {
 	int ret;
-
-	ret = cs47l63_comm_init(&cs47l63_driver);
-	if (ret) {
-		return ret;
-	}
-
-	/* Run a soft reset on start to make sure all registers are default values */
-	ret = cs47l63_comm_reg_conf_write(soft_reset, ARRAY_SIZE(soft_reset));
-	if (ret) {
-		return ret;
-	}
-	cs47l63_driver.state = CS47L63_STATE_STANDBY;
 
 	volume_msg_sub_thread_id = k_thread_create(
 		&volume_msg_sub_thread_data, volume_msg_sub_thread_stack,
