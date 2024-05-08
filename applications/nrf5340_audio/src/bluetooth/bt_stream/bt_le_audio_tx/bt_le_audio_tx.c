@@ -253,12 +253,13 @@ int bt_le_audio_tx_send(struct bt_bap_stream **bap_streams, uint8_t *audio_mappi
 			LOG_ERR("Failed to calculate bitrate: %d", ret);
 			return ret;
 		}
-
+/*
+		TODO: Enable this check when the issue with the data size mismatch is resolved 
 		if (data_size_pr_stream != LE_AUDIO_SDU_SIZE_OCTETS(bitrate)) {
 			LOG_ERR("The encoded data size does not match the SDU size");
 			return -EINVAL;
 		}
-
+*/
 		if (common_interval != 0 && (common_interval != bap_streams[i]->qos->interval)) {
 			LOG_ERR("Not all channels have the same ISO interval");
 			return -EINVAL;

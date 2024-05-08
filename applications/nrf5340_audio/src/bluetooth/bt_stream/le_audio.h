@@ -33,10 +33,10 @@
 
 #define BT_BAP_LC3_PRESET_CONFIGURABLE(_loc, _stream_context, _bitrate)                            \
 	BT_BAP_LC3_PRESET(BT_AUDIO_CODEC_LC3_CONFIG(CONFIG_BT_AUDIO_PREF_SAMPLE_RATE_VALUE,        \
-						    BT_AUDIO_CODEC_CFG_DURATION_10, _loc,          \
+						    BT_AUDIO_CODEC_CFG_DURATION_7_5, _loc,          \
 						    LE_AUDIO_SDU_SIZE_OCTETS(_bitrate), 1,         \
 						    _stream_context),                              \
-			  BT_AUDIO_CODEC_QOS_UNFRAMED(10000u, LE_AUDIO_SDU_SIZE_OCTETS(_bitrate),  \
+			  BT_AUDIO_CODEC_QOS_UNFRAMED(7500u, LE_AUDIO_SDU_SIZE_OCTETS(_bitrate),  \
 						      CONFIG_BT_AUDIO_RETRANSMITS,                 \
 						      CONFIG_BT_AUDIO_MAX_TRANSPORT_LATENCY_MS,    \
 						      CONFIG_BT_AUDIO_PRESENTATION_DELAY_US))

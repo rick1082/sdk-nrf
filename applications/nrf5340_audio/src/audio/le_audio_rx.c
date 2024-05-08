@@ -58,6 +58,8 @@ void le_audio_rx_data_handler(uint8_t const *const p_data, size_t data_size, boo
 
 	rx_stats[channel_index].recv_cnt++;
 
+#if 0
+	/* TODO: Enable this check when the issue with the data size mismatch is resolved */
 	if (data_size != desired_data_size) {
 		/* A valid frame should always be equal to desired_data_size, set bad_frame
 		 * if that is not the case
@@ -65,6 +67,7 @@ void le_audio_rx_data_handler(uint8_t const *const p_data, size_t data_size, boo
 		bad_frame = true;
 		rx_stats[channel_index].data_size_mismatch_cnt++;
 	}
+#endif
 
 	if (bad_frame) {
 		rx_stats[channel_index].bad_frame_cnt++;

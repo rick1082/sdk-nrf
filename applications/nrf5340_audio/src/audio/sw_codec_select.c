@@ -387,7 +387,7 @@ int sw_codec_init(struct sw_codec_config sw_codec_cfg)
 				return -EALREADY;
 			}
 			uint16_t pcm_bytes_req_enc;
-
+			sw_codec_cfg.encoder.bitrate = 48000;
 			LOG_DBG("Encode: %dHz %dbits %dus %dbps %d channel(s)",
 				sw_codec_cfg.encoder.sample_rate_hz, CONFIG_AUDIO_BIT_DEPTH_BITS,
 				CONFIG_AUDIO_FRAME_DURATION_US, sw_codec_cfg.encoder.bitrate,

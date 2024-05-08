@@ -43,22 +43,26 @@ static void data_write(const struct device *dev)
 	void *data_out;
 	size_t data_out_size;
 	struct net_buf *buf_out;
+	uint8_t frame_data[192]	= {0};
 
 	buf_out = net_buf_alloc(&pool_out, K_NO_WAIT);
+	for (int i = 0; i < 2;i ++){
+		ret = data_fifo_pointer_last_filled_get(fifo_tx, &data_out, &data_out_size, K_NO_WAIT);
+		if (ret) {
+			tx_num_underruns++;
+			if ((tx_num_underruns % 100) == 1) {
+				LOG_WRN("USB TX underrun. Num: %d", tx_num_underruns);
+			}
+			net_buf_unref(buf_out);
 
-	ret = data_fifo_pointer_last_filled_get(fifo_tx, &data_out, &data_out_size, K_NO_WAIT);
-	if (ret) {
-		tx_num_underruns++;
-		if ((tx_num_underruns % 100) == 1) {
-			LOG_WRN("USB TX underrun. Num: %d", tx_num_underruns);
+			return;
 		}
-		net_buf_unref(buf_out);
-
-		return;
+		memcpy(frame_data+(data_out_size*i), data_out, data_out_size);
+		data_fifo_block_free(fifo_tx, data_out);
 	}
 
-	memcpy(buf_out->data, data_out, data_out_size);
-	data_fifo_block_free(fifo_tx, data_out);
+	data_out_size = data_out_size * 2;
+	memcpy(buf_out->data, frame_data, data_out_size);
 
 	if (data_out_size == usb_audio_get_in_frame_size(dev)) {
 		ret = usb_audio_send(dev, buf_out, data_out_size);
@@ -101,35 +105,36 @@ static void data_received(const struct device *dev, struct net_buf *buffer, size
 		return;
 	}
 
-	ret = data_fifo_pointer_first_vacant_get(fifo_rx, &data_in, K_NO_WAIT);
+	for (int i = 0; i < 2; i++) {
+		ret = data_fifo_pointer_first_vacant_get(fifo_rx, &data_in, K_NO_WAIT);
 
-	/* RX FIFO can fill up due to retransmissions or disconnect */
-	if (ret == -ENOMEM) {
-		void *temp;
-		size_t temp_size;
+		/* RX FIFO can fill up due to retransmissions or disconnect */
+		if (ret == -ENOMEM) {
+			void *temp;
+			size_t temp_size;
 
-		rx_num_overruns++;
-		if ((rx_num_overruns % 100) == 1) {
-			LOG_WRN("USB RX overrun. Num: %d", rx_num_overruns);
+			rx_num_overruns++;
+			if ((rx_num_overruns % 100) == 1) {
+				LOG_WRN("USB RX overrun. Num: %d", rx_num_overruns);
+			}
+
+			ret = data_fifo_pointer_last_filled_get(fifo_rx, &temp, &temp_size, K_NO_WAIT);
+			ERR_CHK(ret);
+
+			data_fifo_block_free(fifo_rx, temp);
+
+			ret = data_fifo_pointer_first_vacant_get(fifo_rx, &data_in, K_NO_WAIT);
 		}
 
-		ret = data_fifo_pointer_last_filled_get(fifo_rx, &temp, &temp_size, K_NO_WAIT);
-		ERR_CHK(ret);
+		ERR_CHK_MSG(ret, "RX failed to get block");
 
-		data_fifo_block_free(fifo_rx, temp);
+		memcpy(data_in, (buffer->data+(size*i/2)), size/2);
 
-		ret = data_fifo_pointer_first_vacant_get(fifo_rx, &data_in, K_NO_WAIT);
+		ret = data_fifo_block_lock(fifo_rx, &data_in, size/2);
+		ERR_CHK_MSG(ret, "Failed to lock block");
+
 	}
-
-	ERR_CHK_MSG(ret, "RX failed to get block");
-
-	memcpy(data_in, buffer->data, size);
-
-	ret = data_fifo_block_lock(fifo_rx, &data_in, size);
-	ERR_CHK_MSG(ret, "Failed to lock block");
-
 	net_buf_unref(buffer);
-
 	if (!rx_first_data) {
 		LOG_INF("USB RX first data received.");
 		rx_first_data = true;

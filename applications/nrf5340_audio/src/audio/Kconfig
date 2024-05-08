@@ -10,7 +10,7 @@ menu "Audio"
 
 choice AUDIO_FRAME_DURATION
 	prompt "Select frame duration - 7.5 ms frame duration is not tested"
-	default AUDIO_FRAME_DURATION_10_MS
+	default AUDIO_FRAME_DURATION_7_5_MS
 	help
 	  LC3 supports frame duration of 7.5 and 10 ms.
 	  If USB is selected as audio source, we should
@@ -32,14 +32,14 @@ config AUDIO_FRAME_DURATION_US
 
 config AUDIO_MIN_PRES_DLY_US
 	int "The minimum presentation delay"
-	default 4000
+	default 3000
 	help
 	  The minimum presentation delay in micro seconds determined by
 	  the audio system processing and the minimum buffering.
 
 config AUDIO_MAX_PRES_DLY_US
 	int "The maximum presentation delay"
-	default 60000
+	default 75000
 	help
 	  The maximum presentation delay in micro seconds.
 
@@ -107,21 +107,6 @@ config AUDIO_BIT_DEPTH_OCTETS
 	default 4 if AUDIO_BIT_DEPTH_32
 	help
 	  Bit depth of one sample in storage given in octets.
-
-config AUDIO_MIN_PRES_DLY_US
-	int "The minimum presentation delay"
-	default 4000
-	help
-	  The minimum allowable presentation delay in microseconds.
-	  This needs to allow time for decoding and internal routing.
-	  For 48kHz sampling rate and 96kbps bitrate this is about 4000 us.
-
-config AUDIO_MAX_PRES_DLY_US
-	int "The maximum presentation delay"
-	default 60000
-	help
-	  The maximum allowable presentation delay in microseconds.
-	  Increasing this will also increase the FIFO buffers to allow buffering.
 
 choice AUDIO_SOURCE_GATEWAY
 	prompt "Audio source for gateway"

@@ -40,7 +40,7 @@ LOG_MODULE_REGISTER(audio_datapath, CONFIG_AUDIO_DATAPATH_LOG_LEVEL);
 
 #define SDU_REF_DELTA_MAX_ERR_US (int)(CONFIG_AUDIO_FRAME_DURATION_US * 0.001)
 
-#define BLK_PERIOD_US 1000
+#define BLK_PERIOD_US 500
 
 /* Total sample FIFO period in microseconds */
 #define FIFO_SMPL_PERIOD_US (CONFIG_AUDIO_MAX_PRES_DLY_US * 2)
@@ -1039,8 +1039,8 @@ int audio_datapath_init(void)
 	audio_i2s_blk_comp_cb_register(audio_datapath_i2s_blk_complete);
 	audio_i2s_init();
 	ctrl_blk.datapath_initialized = true;
-	ctrl_blk.drift_comp.enabled = true;
-	ctrl_blk.pres_comp.enabled = true;
+	ctrl_blk.drift_comp.enabled = false;
+	ctrl_blk.pres_comp.enabled = false;
 
 	ctrl_blk.pres_comp.pres_delay_us = CONFIG_BT_AUDIO_PRESENTATION_DELAY_US;
 

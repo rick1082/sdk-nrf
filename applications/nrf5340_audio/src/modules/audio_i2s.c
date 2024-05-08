@@ -11,7 +11,7 @@
 #include <zephyr/drivers/pinctrl.h>
 #include <nrfx_i2s.h>
 #include <nrfx_clock.h>
-
+#include <hal/nrf_gpio.h>
 #include "audio_sync_timer.h"
 
 #define I2S_NL DT_NODELABEL(i2s0)
@@ -77,6 +77,7 @@ static void i2s_comp_handler(nrfx_i2s_buffers_t const *released_bufs, uint32_t s
 
 void audio_i2s_set_next_buf(const uint8_t *tx_buf, uint32_t *rx_buf)
 {
+	nrf_gpio_pin_set(NRF_GPIO_PIN_MAP(1,12));
 	__ASSERT_NO_MSG(state == AUDIO_I2S_STATE_STARTED);
 	if (IS_ENABLED(CONFIG_STREAM_BIDIRECTIONAL) || (CONFIG_AUDIO_DEV == GATEWAY)) {
 		__ASSERT_NO_MSG(rx_buf != NULL);
@@ -94,10 +95,15 @@ void audio_i2s_set_next_buf(const uint8_t *tx_buf, uint32_t *rx_buf)
 
 	ret = nrfx_i2s_next_buffers_set(&i2s_inst, &i2s_buf);
 	__ASSERT_NO_MSG(ret == NRFX_SUCCESS);
+	nrf_gpio_pin_clear(NRF_GPIO_PIN_MAP(1,12));
 }
 
 void audio_i2s_start(const uint8_t *tx_buf, uint32_t *rx_buf)
 {
+
+	nrf_gpio_cfg_output(NRF_GPIO_PIN_MAP(1,12));
+	nrf_gpio_pin_clear(NRF_GPIO_PIN_MAP(1,12));
+
 	__ASSERT_NO_MSG(state == AUDIO_I2S_STATE_IDLE);
 	if (IS_ENABLED(CONFIG_STREAM_BIDIRECTIONAL) || (CONFIG_AUDIO_DEV == GATEWAY)) {
 		__ASSERT_NO_MSG(rx_buf != NULL);

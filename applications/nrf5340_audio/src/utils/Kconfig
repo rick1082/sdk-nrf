@@ -12,7 +12,7 @@ menu "FIFO"
 
 config FIFO_FRAME_SPLIT_NUM
 	int "Number of blocks to make up one frame of audio data"
-	default 10
+	default 15
 	help
 	  Easy DMA in I2S requires two buffers to be filled before I2S
 	  transmission will begin. In order to reduce latency, an audio
@@ -30,7 +30,7 @@ config FIFO_TX_FRAME_COUNT
 
 config FIFO_RX_FRAME_COUNT
 	int "Max number of audio frames in RX slab"
-	default 1
+	default 3
 	help
 	  FIFO_RX is the buffer that holds uncompressed audio data coming
 	  from either I2S or USB

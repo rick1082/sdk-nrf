@@ -102,16 +102,22 @@ static struct bt_bap_lc3_preset lc3_preset_max = BT_BAP_LC3_PRESET_CONFIGURABLE(
 	BT_AUDIO_LOCATION_FRONT_LEFT, BT_AUDIO_CONTEXT_TYPE_ANY, CONFIG_LC3_BITRATE_MAX);
 
 static struct bt_bap_lc3_preset lc3_preset_sink = BT_BAP_LC3_UNICAST_PRESET_NRF5340_AUDIO_SINK;
+static struct bt_bap_lc3_preset lc3_preset_sink_48_1_1 =
+	BT_BAP_LC3_UNICAST_PRESET_48_1_1(BT_AUDIO_LOCATION_ANY, (BT_AUDIO_CONTEXT_TYPE_ANY));
 static struct bt_bap_lc3_preset lc3_preset_sink_48_4_1 =
 	BT_BAP_LC3_UNICAST_PRESET_48_4_1(BT_AUDIO_LOCATION_ANY, (BT_AUDIO_CONTEXT_TYPE_ANY));
 static struct bt_bap_lc3_preset lc3_preset_sink_24_2_1 =
 	BT_BAP_LC3_UNICAST_PRESET_24_2_1(BT_AUDIO_LOCATION_ANY, (BT_AUDIO_CONTEXT_TYPE_ANY));
+static struct bt_bap_lc3_preset lc3_preset_sink_24_1_1 =
+	BT_BAP_LC3_UNICAST_PRESET_24_1_1(BT_AUDIO_LOCATION_ANY, (BT_AUDIO_CONTEXT_TYPE_ANY));
 static struct bt_bap_lc3_preset lc3_preset_sink_16_2_1 =
 	BT_BAP_LC3_UNICAST_PRESET_16_2_1(BT_AUDIO_LOCATION_ANY, (BT_AUDIO_CONTEXT_TYPE_ANY));
 
 static struct bt_bap_lc3_preset lc3_preset_source = BT_BAP_LC3_UNICAST_PRESET_NRF5340_AUDIO_SOURCE;
 static struct bt_bap_lc3_preset lc3_preset_source_48_4_1 =
 	BT_BAP_LC3_UNICAST_PRESET_48_4_1(BT_AUDIO_LOCATION_ANY, BT_AUDIO_CONTEXT_TYPE_ANY);
+static struct bt_bap_lc3_preset lc3_preset_source_24_1_1 =
+	BT_BAP_LC3_UNICAST_PRESET_24_1_1(BT_AUDIO_LOCATION_ANY, BT_AUDIO_CONTEXT_TYPE_ANY);
 static struct bt_bap_lc3_preset lc3_preset_source_24_2_1 =
 	BT_BAP_LC3_UNICAST_PRESET_24_2_1(BT_AUDIO_LOCATION_ANY, BT_AUDIO_CONTEXT_TYPE_ANY);
 static struct bt_bap_lc3_preset lc3_preset_source_16_2_1 =
@@ -283,7 +289,7 @@ static bool sink_parse_cb(struct bt_data *data, void *user_data)
 		switch (CONFIG_BT_AUDIO_PREF_SAMPLE_RATE_VALUE) {
 		case BT_AUDIO_CODEC_CFG_FREQ_48KHZ:
 			if (lc3_freq_bit & BT_AUDIO_CODEC_CAP_FREQ_48KHZ) {
-				lc3_preset_sink = lc3_preset_sink_48_4_1;
+				lc3_preset_sink = lc3_preset_sink_48_1_1;
 				*(bool *)user_data = true;
 				/* Found what we were looking for, stop parsing LTV */
 				return false;
@@ -293,7 +299,7 @@ static bool sink_parse_cb(struct bt_data *data, void *user_data)
 
 		case BT_AUDIO_CODEC_CFG_FREQ_24KHZ:
 			if (lc3_freq_bit & BT_AUDIO_CODEC_CAP_FREQ_24KHZ) {
-				lc3_preset_sink = lc3_preset_sink_24_2_1;
+				lc3_preset_sink = lc3_preset_sink_24_1_1;
 				*(bool *)user_data = true;
 				/* Found what we were looking for, stop parsing LTV */
 				return false;
@@ -314,10 +320,10 @@ static bool sink_parse_cb(struct bt_data *data, void *user_data)
 
 		/* If no match with the preferred, revert to trying highest first */
 		if (lc3_freq_bit & BT_AUDIO_CODEC_CAP_FREQ_48KHZ) {
-			lc3_preset_sink = lc3_preset_sink_48_4_1;
+			lc3_preset_sink = lc3_preset_sink_48_1_1;
 			*(bool *)user_data = true;
 		} else if (lc3_freq_bit & BT_AUDIO_CODEC_CAP_FREQ_24KHZ) {
-			lc3_preset_sink = lc3_preset_sink_24_2_1;
+			lc3_preset_sink = lc3_preset_sink_24_1_1;
 			*(bool *)user_data = true;
 		} else if (lc3_freq_bit & BT_AUDIO_CODEC_CAP_FREQ_16KHZ) {
 			lc3_preset_sink = lc3_preset_sink_16_2_1;
@@ -451,7 +457,7 @@ static bool source_parse_cb(struct bt_data *data, void *user_data)
 
 		case BT_AUDIO_CODEC_CFG_FREQ_24KHZ:
 			if (lc3_freq_bit & BT_AUDIO_CODEC_CAP_FREQ_24KHZ) {
-				lc3_preset_source = lc3_preset_source_24_2_1;
+				lc3_preset_source = lc3_preset_source_24_1_1;
 				*(bool *)user_data = true;
 				/* Found what we were looking for, stop parsing LTV */
 				return false;

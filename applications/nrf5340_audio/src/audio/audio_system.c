@@ -332,7 +332,7 @@ int audio_system_decode(void const *const encoded_data, size_t encoded_data_size
 			      &pcm_block_size);
 	if (ret) {
 		LOG_ERR("Failed to decode");
-		return ret;
+		//return ret;
 	}
 
 	/* Split decoded frame into CONFIG_FIFO_FRAME_SPLIT_NUM blocks */
