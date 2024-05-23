@@ -14,6 +14,7 @@
 #include <zephyr/bluetooth/audio/bap.h>
 #include <zephyr/sys/byteorder.h>
 
+#include "broadcast_sink.h"
 #include "bt_mgmt.h"
 #include "macros_common.h"
 #include "nrf5340_audio_common.h"
@@ -334,7 +335,6 @@ static int pa_sync_req_cb(struct bt_conn *conn,
 	return err;
 }
 
-#include "broadcast_sink.h"
 static int pa_sync_term_req_cb(struct bt_conn *conn,
 			       const struct bt_bap_scan_delegator_recv_state *recv_state)
 {
@@ -363,15 +363,21 @@ static int bis_sync_req_cb(struct bt_conn *conn,
 
 	LOG_INF("BIS sync request received for %p: 0x%08x\n", (void *)recv_state, bis_sync_req[0]);
 	if(bis_sync_req[0] == 0) {
-		ret = broadcast_sink_stop();
+		ret = broadcast_sink_disable();
 		if (ret) {
-			LOG_WRN("Failed to stop broadcast sink: %d", ret);
+			LOG_WRN("Failed to disable broadcast sink: %d", ret);
 		}
 	}
 	return 0;
 }
 
+static void recv_state_updated_cb(struct bt_conn *conn, const struct bt_bap_scan_delegator_recv_state *recv_state)
+{
+	LOG_INF("recv_state_updated_cb called for %p", (void *)recv_state);
+}
+
 static struct bt_bap_scan_delegator_cb scan_delegator_cbs = {
+	.recv_state_updated = recv_state_updated_cb,
 	.pa_sync_req = pa_sync_req_cb,
 	.pa_sync_term_req = pa_sync_term_req_cb,
 	.broadcast_code = broadcast_code_cb,
