@@ -36,7 +36,7 @@ ZBUS_OBS_DECLARE(sdu_ref_msg_listen);
 
 static struct k_thread button_msg_sub_thread_data;
 static struct k_thread le_audio_msg_sub_thread_data;
-static struct bt_le_ext_adv *adv_for_conn;
+
 static k_tid_t button_msg_sub_thread_id;
 static k_tid_t le_audio_msg_sub_thread_id;
 
@@ -45,10 +45,9 @@ K_THREAD_STACK_DEFINE(le_audio_msg_sub_thread_stack, CONFIG_LE_AUDIO_MSG_SUB_STA
 
 static enum stream_state strm_state = STATE_PAUSED;
 
-#define BT_LE_EXT_ADV_CONN BT_LE_ADV_PARAM(BT_LE_ADV_OPT_EXT_ADV | \
-						BT_LE_ADV_OPT_CONNECTABLE, \
-						BT_GAP_ADV_FAST_INT_MIN_2, \
-						BT_GAP_ADV_FAST_INT_MAX_2, \
+#define BT_LE_ADV_CONN_CUSTOM BT_LE_ADV_PARAM(BT_LE_ADV_OPT_CONNECTABLE, \
+						BT_GAP_ADV_FAST_INT_MIN_1, \
+						BT_GAP_ADV_FAST_INT_MAX_1, \
 						NULL)
 
 #define DEVICE_NAME "BROADCASTER_NUS"
@@ -56,9 +55,10 @@ static enum stream_state strm_state = STATE_PAUSED;
 static const struct bt_data ad[] = {
 	BT_DATA_BYTES(BT_DATA_FLAGS, (BT_LE_AD_GENERAL | BT_LE_AD_NO_BREDR)),
 	BT_DATA(BT_DATA_NAME_SHORTENED, DEVICE_NAME, DEVICE_NAME_LEN),
+};
+static const struct bt_data sd[] = {
 	BT_DATA_BYTES(BT_DATA_UUID128_ALL, BT_UUID_NUS_VAL),
 };
-
 static void bt_receive_cb(struct bt_conn *conn, const uint8_t *const data, uint16_t len)
 {
 	LOG_HEXDUMP_INF(data, len, " NUS");
@@ -244,9 +244,9 @@ static struct k_work adv_work;
 static void advertising_process(struct k_work *work)
 {
 	int ret;
-	ret = bt_le_ext_adv_start(adv_for_conn, BT_LE_EXT_ADV_START_DEFAULT);
-	if (ret) {
-		printk("Failed to set advertising data (err %d)\n", ret);
+	ret = bt_le_adv_start(BT_LE_ADV_CONN_CUSTOM, ad, ARRAY_SIZE(ad), sd, ARRAY_SIZE(sd));
+	if(ret) {
+		LOG_WRN("Failed to start advertiser, ret = %d", ret);
 	}
 }
 
@@ -272,8 +272,7 @@ static void bt_mgmt_evt_handler(const struct zbus_channel *chan)
 
 	case BT_MGMT_DISCONNECTED:
 		LOG_INF("BT_MGMT_DISCONNECTED");
-		
-		k_work_submit(&adv_work);
+
 		break;
 
 	case BT_MGMT_SECURITY_CHANGED:
@@ -395,22 +394,9 @@ int main(void)
 	ret = bt_mgmt_adv_start(ext_adv, ext_adv_size, per_adv, per_adv_size, false);
 	ERR_CHK_MSG(ret, "Failed to start advertiser");
 
-	int err;
+	ret = bt_le_adv_start(BT_LE_ADV_CONN_CUSTOM, ad, ARRAY_SIZE(ad), sd, ARRAY_SIZE(sd));
+	ERR_CHK_MSG(ret, "Failed to start advertiser");
 
-	err = bt_le_ext_adv_create(BT_LE_EXT_ADV_CONN, NULL, &adv_for_conn);
-	if (err) {
-		printk("Failed to create advertising set (err %d)\n", err);
-	}
-
-	err = bt_le_ext_adv_set_data(adv_for_conn, ad, ARRAY_SIZE(ad), NULL, 0);
-	if (err) {
-		printk("Failed to set advertising data (err %d)\n", err);
-	}
-
-	err = bt_le_ext_adv_start(adv_for_conn, BT_LE_EXT_ADV_START_DEFAULT);
-	if (err) {
-		printk("Failed to set advertising data (err %d)\n", err);
-	}
 	k_work_init(&adv_work, advertising_process);
 	bt_nus_init(&nus_cb);
 	return 0;
