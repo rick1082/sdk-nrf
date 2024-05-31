@@ -352,7 +352,16 @@ static void broadcast_code_cb(struct bt_conn *conn,
 			      const struct bt_bap_scan_delegator_recv_state *recv_state,
 			      const uint8_t broadcast_code[BT_AUDIO_BROADCAST_CODE_SIZE])
 {
-	LOG_INF("Broadcast code received for %p", (void *)recv_state);
+	int ret;
+	struct bt_mgmt_msg msg;
+
+	LOG_DBG("Broadcast code received for %p", (void *)recv_state);
+
+	msg.event = BT_MGMT_BROADCAST_CODE_RECEIVED;
+	memcpy(msg.bcode, broadcast_code, BT_AUDIO_BROADCAST_CODE_SIZE);
+
+	ret = zbus_chan_pub(&bt_mgmt_chan, &msg, K_NO_WAIT);
+	ERR_CHK(ret);
 }
 
 static int bis_sync_req_cb(struct bt_conn *conn,

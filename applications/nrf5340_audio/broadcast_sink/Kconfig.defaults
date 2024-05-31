@@ -50,6 +50,9 @@ config BT_PAC_SNK
 config BT_AUDIO_RX
 	default y
 
+config BT_DEVICE_NAME
+	default "BIS_HEADSET"
+
 
 ## Audio related configs ##
 config AUDIO_MUTE
