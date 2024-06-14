@@ -883,8 +883,13 @@ void audio_datapath_pres_delay_us_get(uint32_t *delay_us)
 }
 
 void audio_datapath_stream_out(const uint8_t *buf, size_t size, uint32_t sdu_ref_us, bool bad_frame,
-			       uint32_t recv_frame_ts_us)
+			       uint32_t recv_frame_ts_us, uint8_t channel, uint8_t desired_data_size)
 {
+	static uint8_t stereo_encoded_data[CONFIG_BT_ISO_RX_MTU] = {0};
+	static int i = 0;
+	static int channel_received = 0;
+	uint8_t bad_frame_ch = 0;
+	i++;
 	if (!ctrl_blk.stream_started) {
 		LOG_WRN("Stream not started");
 		return;
@@ -896,10 +901,35 @@ void audio_datapath_stream_out(const uint8_t *buf, size_t size, uint32_t sdu_ref
 		LOG_ERR("Buffer pointer is NULL");
 	}
 
-	if (sdu_ref_us == ctrl_blk.prev_pres_sdu_ref_us && sdu_ref_us != 0) {
-		LOG_WRN("Duplicate sdu_ref_us (%d) - Dropping audio frame", sdu_ref_us);
+	if (bad_frame) {
+		/* Error in the frame or frame lost - sdu_ref_us is stil valid */
+		LOG_DBG("Bad audio frame");
+		if (channel == 0) {
+			bad_frame_ch |= 0x01;
+		} else {
+			bad_frame_ch |= 0x02;
+		}
+	}
+
+	if (channel == AUDIO_CH_L) {
+		channel_received |= 0x01;
+		memcpy(stereo_encoded_data, buf, desired_data_size);
+	} else if (channel == AUDIO_CH_R) {
+		channel_received |= 0x02;
+		memcpy(stereo_encoded_data + desired_data_size, buf, desired_data_size);
+	} else {
+		LOG_WRN("Invalid channel: %d", channel);
 		return;
 	}
+
+	if (channel_received == 0x03) {
+		// Bot L and R are received
+		channel_received = 0;
+	} else {
+		return;
+	}
+
+	ctrl_blk.prev_pres_sdu_ref_us = sdu_ref_us;
 
 	bool sdu_ref_not_consecutive = false;
 
@@ -941,10 +971,14 @@ void audio_datapath_stream_out(const uint8_t *buf, size_t size, uint32_t sdu_ref
 	int ret;
 	size_t pcm_size;
 
-	ret = sw_codec_decode(buf, size, bad_frame, &ctrl_blk.decoded_data, &pcm_size);
+	ret = sw_codec_decode(stereo_encoded_data, desired_data_size * 2, bad_frame_ch, &ctrl_blk.decoded_data, &pcm_size);
 	if (ret) {
 		LOG_WRN("SW codec decode error: %d", ret);
 	}
+
+	bad_frame_ch = 0;
+
+	memset(stereo_encoded_data, 0, desired_data_size * 2);
 
 	if (IS_ENABLED(CONFIG_SD_CARD_PLAYBACK)) {
 		if (sd_card_playback_is_active()) {
