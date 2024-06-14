@@ -97,13 +97,13 @@ int sw_codec_encode(void *pcm_data, size_t pcm_size, uint8_t **encoded_data, siz
  *
  * @param[in]	encoded_data	Pointer to encoded data.
  * @param[in]	encoded_size	Size of encoded data.
- * @param[in]	bad_frame	Flag to indicate a missing/bad frame (only LC3).
+ * @param[in]	bad_frame	Bitmask flag to indicate a missing/bad frame (only LC3) in specific channel.
  * @param[out]	pcm_data	Pointer to buffer to store decoded PCM data.
  * @param[out]	pcm_size	Size of decoded data.
  *
  * @return	0 if success, error codes depends on sw_codec selected.
  */
-int sw_codec_decode(uint8_t const *const encoded_data, size_t encoded_size, bool bad_frame,
+int sw_codec_decode(uint8_t const *const encoded_data, size_t encoded_size, uint8_t bad_frame,
 		    void **pcm_data, size_t *pcm_size);
 
 /**
