@@ -634,10 +634,72 @@ void broadcast_source_default_create(struct broadcast_source_big *broadcast_para
 						(uint32_t)sys_get_le24(src));
 }
 
+#include "sdc_hci_vs.h"
+#include <zephyr/bluetooth/hci.h>
+#include <zephyr/bluetooth/buf.h>
+#include <zephyr/bluetooth/bluetooth.h>
+#include <zephyr/drivers/bluetooth/hci_driver.h>
+
+static bool on_vs_evt(struct net_buf_simple *buf)
+{
+    uint8_t *subevent_code;
+    sdc_hci_subevent_vs_qos_channel_survey_report_t *evt;
+
+	static int i = 0;
+
+    subevent_code = net_buf_simple_pull_mem(buf, sizeof(*subevent_code));
+
+    switch (*subevent_code) {
+    case SDC_HCI_SUBEVENT_VS_QOS_CHANNEL_SURVEY_REPORT:
+		i++;
+		evt = (void *)buf->data;
+		if (i % 100 == 0) {
+			LOG_HEXDUMP_INF(evt, sizeof(*evt), "channel survey report");
+		}
+        return true;
+    default:
+        return false;
+    }
+}
+
+static void enable_qos_channel_survey_reporting(void)
+{
+    int err;
+    struct net_buf *buf;
+ 
+    err = bt_hci_register_vnd_evt_cb(on_vs_evt);
+    if (err) {
+        LOG_ERR("Failed to register HCI VS callback");
+        return;
+    }
+ 
+    sdc_hci_cmd_vs_qos_channel_survey_enable_t *cmd_enable;
+ 
+    buf = bt_hci_cmd_create(SDC_HCI_OPCODE_CMD_VS_QOS_CHANNEL_SURVEY_ENABLE,
+                sizeof(*cmd_enable));
+    if (!buf) {
+        LOG_ERR("Failed to enable HCI VS QoS");
+        return;
+    }
+ 
+    cmd_enable = net_buf_add(buf, sizeof(*cmd_enable));
+    cmd_enable->enable = 1;
+	cmd_enable->interval_us = 10000;	//report every 10ms
+ 
+    err = bt_hci_cmd_send_sync(
+        SDC_HCI_OPCODE_CMD_VS_QOS_CHANNEL_SURVEY_ENABLE, buf, NULL);
+    if (err) {
+        LOG_ERR("Failed to enable HCI VS QoS");
+        return;
+    }
+}
+
 int broadcast_source_enable(struct broadcast_source_big const *const broadcast_param,
 			    uint8_t num_bigs)
 {
 	int ret;
+
+	enable_qos_channel_survey_reporting();
 
 	struct bt_cap_initiator_broadcast_create_param create_param[CONFIG_BT_ISO_MAX_BIG];
 
