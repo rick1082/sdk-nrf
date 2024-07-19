@@ -14,6 +14,8 @@
 #include <zephyr/device.h>
 #include <zephyr/shell/shell.h>
 #include <zephyr/zbus/zbus.h>
+#include <zephyr/drivers/i2c.h>
+#include <zephyr/drivers/gpio.h>
 
 #include "macros_common.h"
 #include "zbus_common.h"
@@ -21,6 +23,9 @@
 #include "cs47l63_spec.h"
 #include "cs47l63_reg_conf.h"
 #include "cs47l63_comm.h"
+
+#define I2C1_NODE DT_NODELABEL(mysensor)
+static const struct i2c_dt_spec dev_i2c = I2C_DT_SPEC_GET(I2C1_NODE);
 
 #include <zephyr/logging/log.h>
 LOG_MODULE_REGISTER(hw_codec, CONFIG_MODULE_HW_CODEC_LOG_LEVEL);
@@ -116,7 +121,6 @@ static void volume_msg_sub_thread(void)
 	}
 }
 
-
 int hw_codec_volume_set(uint8_t set_val)
 {
 	return 0;
@@ -151,6 +155,12 @@ int hw_codec_default_conf_enable(void)
 {
 	return 0;
 }
+uint8_t wm8960_reg[19][2] = {
+	{0x1e, 0x00}, {0x32, 0xc0}, {0x35, 0xe0}, {0x5e, 0x0c}, {0x45, 0x00},
+	{0x4b, 0x00}, {0x05, 0x79}, {0x07, 0x79}, {0x0a, 0x00}, {0x68, 0x28},
+	{0x6a, 0x00}, {0x6c, 0x00}, {0x6e, 0x00}, {0x35, 0xE1}, {0x08, 0x05},
+	{0x0e, 0x02}, {0x32, 0xc0}, {0x35, 0xE1}, {0x5e, 0x0c},
+};
 
 int hw_codec_soft_reset(void)
 {
@@ -161,6 +171,15 @@ int hw_codec_soft_reset(void)
 int hw_codec_init(void)
 {
 	int ret;
+
+	for (int i = 0; i < 19; i++){
+		ret = i2c_write_dt(&dev_i2c, wm8960_reg[i], 2);
+		if (ret != 0) {
+			LOG_WRN("Failed to write/read I2C device address %X", dev_i2c.addr);
+		} else {
+			LOG_WRN("I2S write properly");
+		}
+	}
 
 	volume_msg_sub_thread_id = k_thread_create(
 		&volume_msg_sub_thread_data, volume_msg_sub_thread_stack,
