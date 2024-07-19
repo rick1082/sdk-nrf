@@ -428,7 +428,6 @@ static void base_recv_cb(struct bt_bap_broadcast_sink *sink, const struct bt_bap
 static void syncable_cb(struct bt_bap_broadcast_sink *sink, const struct bt_iso_biginfo *biginfo)
 {
 	int ret;
-	static uint8_t bis_encryption_key[BT_ISO_BROADCAST_CODE_SIZE] = {0};
 	struct bt_bap_stream *audio_streams_p[] = {&audio_streams[0], &audio_streams[1]};
 
 	LOG_DBG("Broadcast sink is syncable");
