@@ -24,6 +24,8 @@
 #include "le_audio.h"
 #include "le_audio_rx.h"
 #include "fw_info_app.h"
+#include <bluetooth/services/nus.h>
+#include <stdio.h>
 
 #include <zephyr/logging/log.h>
 LOG_MODULE_REGISTER(main, CONFIG_MAIN_LOG_LEVEL);
@@ -49,6 +51,17 @@ K_THREAD_STACK_DEFINE(button_msg_sub_thread_stack, CONFIG_BUTTON_MSG_SUB_STACK_S
 K_THREAD_STACK_DEFINE(le_audio_msg_sub_thread_stack, CONFIG_LE_AUDIO_MSG_SUB_STACK_SIZE);
 
 static enum stream_state strm_state = STATE_PAUSED;
+
+static struct k_work_delayable dummy_data_send_work;
+
+static void work_dummy_data_send(struct k_work *work)
+{
+	char dummy_string[30];
+
+	sprintf(dummy_string, "dummy string from headset");
+	bt_nus_send(NULL, dummy_string, sizeof(dummy_string));
+	k_work_reschedule(&dummy_data_send_work, K_MSEC(100));
+}
 
 /* Function for handling all stream state changes */
 static void stream_state_set(enum stream_state stream_state_new)
@@ -351,7 +364,7 @@ static void bt_mgmt_evt_handler(const struct zbus_channel *chan)
 		if (ret) {
 			LOG_ERR("Failed to handle disconnection in content control: %d", ret);
 		}
-
+		k_work_cancel_delayable(&dummy_data_send_work);
 		break;
 
 	case BT_MGMT_SECURITY_CHANGED:
@@ -363,7 +376,7 @@ static void bt_mgmt_evt_handler(const struct zbus_channel *chan)
 		} else if (ret) {
 			LOG_ERR("Failed to start discovery of content control: %d", ret);
 		}
-
+		k_work_schedule(&dummy_data_send_work, K_MSEC(1000));
 		break;
 
 	default:
@@ -507,6 +520,15 @@ void streamctrl_send(void const *const data, size_t size, uint8_t num_ch)
 	}
 }
 
+static void bt_receive_cb(struct bt_conn *conn, const uint8_t *const data, uint16_t len)
+{
+	LOG_HEXDUMP_INF(data, len, "NUS received:");
+}
+
+static struct bt_nus_cb nus_cb = {
+	.received = bt_receive_cb,
+};
+
 int main(void)
 {
 	int ret;
@@ -555,6 +577,10 @@ int main(void)
 
 	ret = bt_content_ctrl_init();
 	ERR_CHK(ret);
+
+	bt_nus_init(&nus_cb);
+
+	k_work_init_delayable(&dummy_data_send_work, work_dummy_data_send);
 
 	ret = ext_adv_populate(ext_adv_buf, ARRAY_SIZE(ext_adv_buf), &ext_adv_buf_cnt);
 	ERR_CHK(ret);
