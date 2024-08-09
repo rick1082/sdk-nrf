@@ -355,6 +355,8 @@ static void discovery_complete(struct bt_gatt_dm *dm, void *context)
 	bt_nus_subscribe_receive(nus[channel_index]);
 
 	bt_gatt_dm_data_release(dm);
+
+	k_work_schedule(&unicast_servers[channel_index].dummy_data_send_work, K_MSEC(1000));
 }
 
 static void discovery_service_not_found(struct bt_conn *conn, void *context)
@@ -1423,7 +1425,7 @@ static void work_dummy_data_send(struct k_work *work)
 	}
 	sprintf(dummy_string, "message to headset %d", channel_index);
 	bt_nus_client_send(&nus_client[channel_index], dummy_string, sizeof(dummy_string));
-	k_work_reschedule(&unicast_servers[channel_index].dummy_data_send_work, K_MSEC(10));
+	k_work_reschedule(&unicast_servers[channel_index].dummy_data_send_work, K_MSEC(500));
 }
 
 int unicast_client_config_get(struct bt_conn *conn, enum bt_audio_dir dir, uint32_t *bitrate,
@@ -1515,6 +1517,7 @@ void unicast_client_conn_disconnected(struct bt_conn *conn)
 	} else {
 		disconnected_cleanup(device_index);
 	}
+	k_work_cancel_delayable(&unicast_servers[device_index].dummy_data_send_work);
 }
 
 int unicast_client_discover(struct bt_conn *conn, enum unicast_discover_dir dir)

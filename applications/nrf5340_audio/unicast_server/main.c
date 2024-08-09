@@ -51,6 +51,7 @@ K_THREAD_STACK_DEFINE(button_msg_sub_thread_stack, CONFIG_BUTTON_MSG_SUB_STACK_S
 K_THREAD_STACK_DEFINE(le_audio_msg_sub_thread_stack, CONFIG_LE_AUDIO_MSG_SUB_STACK_SIZE);
 
 static enum stream_state strm_state = STATE_PAUSED;
+static enum audio_channel channel;
 
 static struct k_work_delayable dummy_data_send_work;
 
@@ -58,9 +59,9 @@ static void work_dummy_data_send(struct k_work *work)
 {
 	char dummy_string[30];
 
-	sprintf(dummy_string, "dummy string from headset");
+	sprintf(dummy_string, "dummy string from headset %d", channel);
 	bt_nus_send(NULL, dummy_string, sizeof(dummy_string));
-	k_work_reschedule(&dummy_data_send_work, K_MSEC(100));
+	k_work_reschedule(&dummy_data_send_work, K_MSEC(500));
 }
 
 /* Function for handling all stream state changes */
@@ -529,11 +530,12 @@ static struct bt_nus_cb nus_cb = {
 	.received = bt_receive_cb,
 };
 
+
 int main(void)
 {
 	int ret;
 	enum bt_audio_location location;
-	enum audio_channel channel;
+	
 	static struct bt_data ext_adv_buf[CONFIG_EXT_ADV_BUF_MAX];
 
 	LOG_DBG("Main started");
