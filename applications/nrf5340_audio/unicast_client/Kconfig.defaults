@@ -78,3 +78,10 @@ config LC3_ENC_CHAN_MAX
 
 config LC3_DEC_CHAN_MAX
 	default 1
+
+## NUS ##
+config BT_GATT_DM
+	default y
+
+config BT_NUS_CLIENT
+	default y
