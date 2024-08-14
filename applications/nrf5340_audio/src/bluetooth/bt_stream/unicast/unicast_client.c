@@ -1401,7 +1401,7 @@ int unicast_client_discover(struct bt_conn *conn, enum unicast_discover_dir dir)
 
 	if (dir == UNICAST_SERVER_BIDIR) {
 		/* If we need to discover both source and sink, do sink first */
-		ret = bt_bap_unicast_client_discover(conn, BT_AUDIO_DIR_SINK);
+		ret = bt_bap_unicast_client_discover(conn, BT_AUDIO_DIR_SOURCE);
 		return ret;
 	}
 
@@ -1565,8 +1565,8 @@ int unicast_client_enable(le_audio_receive_cb recv_cb)
 	for (int i = 0; i < ARRAY_SIZE(group_stream_params); i++) {
 		/* Every other stream should be sink or source */
 		if ((i % 2) == 0) {
-			group_stream_params[i].qos = &lc3_preset_max.qos;
-			group_stream_params[i].stream = &headsets[headset_iterator].sink_stream;
+			//group_stream_params[i].qos = &lc3_preset_max.qos;
+			//group_stream_params[i].stream = &headsets[headset_iterator].sink_stream;
 		} else {
 			group_stream_params[i].qos = &lc3_preset_max.qos;
 			group_stream_params[i].stream = &headsets[headset_iterator].source_stream;
@@ -1575,7 +1575,7 @@ int unicast_client_enable(le_audio_receive_cb recv_cb)
 	}
 
 	for (int i = 0; i < ARRAY_SIZE(pair_params); i++) {
-		pair_params[i].tx_param = &group_stream_params[stream_iterator];
+		pair_params[i].tx_param = NULL;
 		stream_iterator++;
 
 		if (IS_ENABLED(CONFIG_BT_AUDIO_RX)) {

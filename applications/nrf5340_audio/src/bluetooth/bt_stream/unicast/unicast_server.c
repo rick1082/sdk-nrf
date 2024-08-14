@@ -56,13 +56,7 @@ static const uint8_t cap_adv_data[] = {
 	BT_AUDIO_UNICAST_ANNOUNCEMENT_TARGETED,
 };
 
-#if defined(CONFIG_BT_AUDIO_RX)
-#define AVAILABLE_SINK_CONTEXT                                                                     \
-	(BT_AUDIO_CONTEXT_TYPE_UNSPECIFIED | BT_AUDIO_CONTEXT_TYPE_MEDIA |                         \
-	 BT_AUDIO_CONTEXT_TYPE_CONVERSATIONAL)
-#else
 #define AVAILABLE_SINK_CONTEXT BT_AUDIO_CONTEXT_TYPE_PROHIBITED
-#endif /* CONFIG_BT_AUDIO_RX */
 
 #if defined(CONFIG_BT_AUDIO_TX)
 static struct bt_bap_stream *bap_tx_streams[CONFIG_BT_ASCS_ASE_SRC_COUNT];
@@ -755,9 +749,7 @@ int unicast_server_enable(le_audio_receive_cb recv_cb)
 			return ret;
 		}
 		ret = bt_pacs_set_supported_contexts(BT_AUDIO_DIR_SINK,
-						     BT_AUDIO_CONTEXT_TYPE_MEDIA |
-							     BT_AUDIO_CONTEXT_TYPE_CONVERSATIONAL |
-							     BT_AUDIO_CONTEXT_TYPE_UNSPECIFIED);
+						     BT_AUDIO_CONTEXT_TYPE_PROHIBITED);
 
 		if (ret) {
 			LOG_ERR("Supported context set failed. Err: %d", ret);
@@ -765,9 +757,7 @@ int unicast_server_enable(le_audio_receive_cb recv_cb)
 		}
 
 		ret = bt_pacs_set_available_contexts(BT_AUDIO_DIR_SINK,
-						     BT_AUDIO_CONTEXT_TYPE_MEDIA |
-							     BT_AUDIO_CONTEXT_TYPE_CONVERSATIONAL |
-							     BT_AUDIO_CONTEXT_TYPE_UNSPECIFIED);
+						     BT_AUDIO_CONTEXT_TYPE_PROHIBITED);
 		if (ret) {
 			LOG_ERR("Available context set failed. Err: %d", ret);
 			return ret;
