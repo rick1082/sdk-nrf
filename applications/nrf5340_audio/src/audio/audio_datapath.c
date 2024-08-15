@@ -888,6 +888,17 @@ void audio_datapath_stream_out(const uint8_t *buf, size_t size, uint32_t sdu_ref
 	static uint8_t stereo_encoded_data[CONFIG_BT_ISO_RX_MTU] = {0};
 	static int i = 0;
 	static int channel_received = 0;
+	static uint32_t prev_sdu_ref_us = 0;
+
+	printk("%5d %5d %7d\n", channel, bad_frame, sdu_ref_us);
+
+	int diff = sdu_ref_us - prev_sdu_ref_us;
+	if ((diff) < -CONFIG_AUDIO_FRAME_DURATION_US) {
+		LOG_WRN("Invalid frame timestamp, diff = %d us", diff);
+		return;
+	}
+	prev_sdu_ref_us = sdu_ref_us;
+
 	uint8_t bad_frame_ch = 0;
 	i++;
 	if (!ctrl_blk.stream_started) {
@@ -921,6 +932,7 @@ void audio_datapath_stream_out(const uint8_t *buf, size_t size, uint32_t sdu_ref
 		LOG_WRN("Invalid channel: %d", channel);
 		return;
 	}
+
 
 	if (channel_received == 0x03) {
 		// Bot L and R are received
@@ -1073,7 +1085,7 @@ int audio_datapath_init(void)
 	audio_i2s_init();
 	ctrl_blk.datapath_initialized = true;
 	ctrl_blk.drift_comp.enabled = true;
-	ctrl_blk.pres_comp.enabled = true;
+	ctrl_blk.pres_comp.enabled = false;
 
 	if (IS_ENABLED(CONFIG_STREAM_BIDIRECTIONAL) && (CONFIG_AUDIO_DEV == GATEWAY)) {
 		/* Disable presentation compensation feature for microphone return on gateway,
@@ -1082,7 +1094,7 @@ int audio_datapath_init(void)
 		 */
 		ctrl_blk.pres_comp.enabled = false;
 	} else {
-		ctrl_blk.pres_comp.enabled = true;
+		ctrl_blk.pres_comp.enabled = false;
 	}
 
 	ctrl_blk.pres_comp.pres_delay_us = CONFIG_BT_AUDIO_PRESENTATION_DELAY_US;

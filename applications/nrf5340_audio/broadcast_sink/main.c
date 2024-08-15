@@ -341,6 +341,18 @@ static void bt_mgmt_msg_sub_thread(void)
 
 		case BT_MGMT_SECURITY_CHANGED:
 			LOG_DBG("Security changed");
+			struct bt_le_conn_param param;
+
+			/* Set the ACL interval up to allow more time for ISO packets */
+			param.interval_min = 36;
+			param.interval_max = 36;
+			param.latency = 0;
+			param.timeout = 500;
+
+			ret = bt_conn_le_param_update(msg.conn, &param);
+			if (ret) {
+				LOG_ERR("Failed to update connection parameters: %d", ret);
+			}
 			break;
 
 		case BT_MGMT_PA_SYNCED:

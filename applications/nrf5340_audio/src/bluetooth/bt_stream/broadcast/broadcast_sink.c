@@ -67,7 +67,7 @@ static uint8_t active_stream_index;
 static struct bt_audio_codec_cap codec_cap = BT_AUDIO_CODEC_CAP_LC3(
 	BT_AUDIO_CODEC_CAPABILIY_FREQ,
 	(BT_AUDIO_CODEC_CAP_DURATION_10 | BT_AUDIO_CODEC_CAP_DURATION_PREFER_10),
-	BT_AUDIO_CODEC_CAP_CHAN_COUNT_SUPPORT(1), LE_AUDIO_SDU_SIZE_OCTETS(CONFIG_LC3_BITRATE_MIN),
+	BT_AUDIO_CODEC_CAP_CHAN_COUNT_SUPPORT(2), LE_AUDIO_SDU_SIZE_OCTETS(CONFIG_LC3_BITRATE_MIN),
 	LE_AUDIO_SDU_SIZE_OCTETS(CONFIG_LC3_BITRATE_MAX), 1u, BT_AUDIO_CONTEXT_TYPE_ANY);
 
 static struct bt_pacs_cap capabilities = {
@@ -683,6 +683,18 @@ int broadcast_sink_disable(void)
 	return 0;
 }
 
+BT_GATT_SERVICE_DEFINE(hrs_svc,
+	BT_GATT_PRIMARY_SERVICE(BT_UUID_ASCS),
+	BT_GATT_CHARACTERISTIC(BT_UUID_ASCS_ASE_CP, BT_GATT_CHRC_WRITE | BT_GATT_CHRC_WRITE_WITHOUT_RESP | BT_GATT_CHRC_NOTIFY,
+			       BT_GATT_PERM_NONE, NULL, NULL, NULL),
+	BT_GATT_CCC(NULL,
+		    (BT_GATT_PERM_READ | BT_GATT_PERM_WRITE)),
+	BT_GATT_CHARACTERISTIC(BT_UUID_ASCS_ASE_SNK, BT_GATT_CHRC_READ | BT_GATT_CHRC_NOTIFY,
+			       BT_GATT_PERM_READ_ENCRYPT, NULL, NULL, NULL),
+	BT_GATT_CCC(NULL,
+		    (BT_GATT_PERM_READ | BT_GATT_PERM_WRITE)),
+);
+
 int broadcast_sink_enable(le_audio_receive_cb recv_cb)
 {
 	int ret;
@@ -704,7 +716,7 @@ int broadcast_sink_enable(le_audio_receive_cb recv_cb)
 	channel_assignment_get(&channel);
 
 	if (channel == AUDIO_CH_L) {
-		ret = bt_pacs_set_location(BT_AUDIO_DIR_SINK, BT_AUDIO_LOCATION_FRONT_LEFT);
+		ret = bt_pacs_set_location(BT_AUDIO_DIR_SINK, BT_AUDIO_LOCATION_FRONT_LEFT|BT_AUDIO_LOCATION_FRONT_RIGHT);
 	} else {
 		ret = bt_pacs_set_location(BT_AUDIO_DIR_SINK, BT_AUDIO_LOCATION_FRONT_RIGHT);
 	}
