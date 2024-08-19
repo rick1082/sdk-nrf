@@ -227,8 +227,8 @@ menu "Stream"
 
 config BUF_BLE_RX_PACKET_NUM
 	int
-	default 5
-	range 2 5
+	default 10
+	range 2 10
 	help
 	  Value can be adjusted to affect the overall latency.
 	  This adjusts the number packets in the BLE FIFO RX buffer,

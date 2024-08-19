@@ -888,19 +888,13 @@ void audio_datapath_stream_out(const uint8_t *buf, size_t size, uint32_t sdu_ref
 	static uint8_t stereo_encoded_data[CONFIG_BT_ISO_RX_MTU] = {0};
 	static int i = 0;
 	static int channel_received = 0;
-	static uint32_t prev_sdu_ref_us = 0;
 
-	printk("%5d %5d %7d\n", channel, bad_frame, sdu_ref_us);
-
-	int diff = sdu_ref_us - prev_sdu_ref_us;
-	if ((diff) < -CONFIG_AUDIO_FRAME_DURATION_US) {
-		LOG_WRN("Invalid frame timestamp, diff = %d us", diff);
-		return;
-	}
-	prev_sdu_ref_us = sdu_ref_us;
+	static uint32_t prev_recv_frame_ts_us = 0;
+	printk("%2d %2d %9d %9d %7d\n", channel, bad_frame, sdu_ref_us, recv_frame_ts_us, (recv_frame_ts_us - prev_recv_frame_ts_us));
+	prev_recv_frame_ts_us = recv_frame_ts_us;
 
 	uint8_t bad_frame_ch = 0;
-	i++;
+
 	if (!ctrl_blk.stream_started) {
 		LOG_WRN("Stream not started");
 		return;
