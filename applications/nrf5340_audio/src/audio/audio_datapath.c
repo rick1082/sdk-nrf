@@ -882,16 +882,26 @@ void audio_datapath_pres_delay_us_get(uint32_t *delay_us)
 	*delay_us = ctrl_blk.pres_comp.pres_delay_us;
 }
 
+K_FIFO_DEFINE(ble_rx_l_fifo);
+K_FIFO_DEFINE(ble_rx_r_fifo);
+struct ble_fifo_data{
+	void *fifo_reserved;
+	uint32_t sdu_ref_us;
+	uint32_t recv_frame_ts_us;
+	uint8_t channel;
+	bool bad_frame;
+	uint8_t desired_data_size;
+	uint8_t buf[CONFIG_BT_ISO_RX_MTU];
+} __packed;
+
 void audio_datapath_stream_out(const uint8_t *buf, size_t size, uint32_t sdu_ref_us, bool bad_frame,
 			       uint32_t recv_frame_ts_us, uint8_t channel, uint8_t desired_data_size)
 {
 	static uint8_t stereo_encoded_data[CONFIG_BT_ISO_RX_MTU] = {0};
-	static int i = 0;
 	static int channel_received = 0;
-
-	static uint32_t prev_recv_frame_ts_us = 0;
-	printk("%2d %2d %9d %9d %7d\n", channel, bad_frame, sdu_ref_us, recv_frame_ts_us, (recv_frame_ts_us - prev_recv_frame_ts_us));
-	prev_recv_frame_ts_us = recv_frame_ts_us;
+	struct ble_fifo_data ble_rx_data_l;
+	struct ble_fifo_data ble_rx_data_r;
+	struct ble_fifo_data * ble_rx_data_ptr;
 
 	uint8_t bad_frame_ch = 0;
 
@@ -901,6 +911,60 @@ void audio_datapath_stream_out(const uint8_t *buf, size_t size, uint32_t sdu_ref
 	}
 
 	/*** Check incoming data ***/
+
+	if (channel == AUDIO_CH_L) {
+		ble_rx_data_l.sdu_ref_us = sdu_ref_us;
+		ble_rx_data_l.recv_frame_ts_us = recv_frame_ts_us;
+		ble_rx_data_l.channel = channel;
+		ble_rx_data_l.bad_frame = bad_frame;
+		ble_rx_data_l.desired_data_size = desired_data_size;
+		memcpy(ble_rx_data_l.buf, buf, size);
+		k_fifo_put(&ble_rx_l_fifo, &ble_rx_data_l);
+	} else if (channel == AUDIO_CH_R) {
+		ble_rx_data_r.sdu_ref_us = sdu_ref_us;
+		ble_rx_data_r.recv_frame_ts_us = recv_frame_ts_us;
+		ble_rx_data_r.channel = channel;
+		ble_rx_data_r.bad_frame = bad_frame;
+		ble_rx_data_r.desired_data_size = desired_data_size;
+		memcpy(ble_rx_data_r.buf, buf, size);
+		k_fifo_put(&ble_rx_r_fifo, &ble_rx_data_r);
+	}
+
+	static int buffer_fill_count = 0;
+	if (buffer_fill_count < 10) {
+		buffer_fill_count++;
+		return;
+	}
+
+	static int current_channel;
+	static int next_channel = AUDIO_CH_L;
+	current_channel = next_channel;
+
+	if (current_channel == AUDIO_CH_L) {
+		next_channel = AUDIO_CH_R;
+		ble_rx_data_ptr = k_fifo_get(&ble_rx_l_fifo, K_NO_WAIT);
+		if (ble_rx_data_ptr == NULL) {
+			LOG_INF("No data in L channel queue");
+			return;
+		}
+	}else if (current_channel == AUDIO_CH_R) {
+		next_channel = AUDIO_CH_L;
+		ble_rx_data_ptr = k_fifo_get(&ble_rx_r_fifo, K_NO_WAIT);
+		if (ble_rx_data_ptr == NULL) {
+			LOG_INF("No data in R channel queue");
+			return;
+		}
+	} else {
+		LOG_WRN("Invalid channel: %d", channel);
+		return;
+	}
+
+	sdu_ref_us = ble_rx_data_ptr->sdu_ref_us;
+	recv_frame_ts_us = ble_rx_data_ptr->recv_frame_ts_us;
+	channel = ble_rx_data_ptr->channel;
+	bad_frame = ble_rx_data_ptr->bad_frame;
+	desired_data_size = ble_rx_data_ptr->desired_data_size;
+	memcpy(buf, ble_rx_data_ptr->buf, size);
 
 	if (!buf) {
 		LOG_ERR("Buffer pointer is NULL");
@@ -1079,7 +1143,7 @@ int audio_datapath_init(void)
 	audio_i2s_init();
 	ctrl_blk.datapath_initialized = true;
 	ctrl_blk.drift_comp.enabled = true;
-	ctrl_blk.pres_comp.enabled = false;
+	ctrl_blk.pres_comp.enabled = true;
 
 	if (IS_ENABLED(CONFIG_STREAM_BIDIRECTIONAL) && (CONFIG_AUDIO_DEV == GATEWAY)) {
 		/* Disable presentation compensation feature for microphone return on gateway,
