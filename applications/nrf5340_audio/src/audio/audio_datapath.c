@@ -898,6 +898,7 @@ void audio_datapath_stream_out(const uint8_t *buf, size_t size, uint32_t sdu_ref
 			       uint32_t recv_frame_ts_us, uint8_t channel, uint8_t desired_data_size)
 {
 	static uint8_t stereo_encoded_data[CONFIG_BT_ISO_RX_MTU] = {0};
+	uint8_t channel_buf[CONFIG_BT_ISO_RX_MTU] = {0};
 	static int channel_received = 0;
 	struct ble_fifo_data ble_rx_data_l;
 	struct ble_fifo_data ble_rx_data_r;
@@ -964,11 +965,7 @@ void audio_datapath_stream_out(const uint8_t *buf, size_t size, uint32_t sdu_ref
 	channel = ble_rx_data_ptr->channel;
 	bad_frame = ble_rx_data_ptr->bad_frame;
 	desired_data_size = ble_rx_data_ptr->desired_data_size;
-	memcpy(buf, ble_rx_data_ptr->buf, size);
-
-	if (!buf) {
-		LOG_ERR("Buffer pointer is NULL");
-	}
+	memcpy(channel_buf, ble_rx_data_ptr->buf, size);
 
 	if (bad_frame) {
 		/* Error in the frame or frame lost - sdu_ref_us is stil valid */
@@ -982,15 +979,14 @@ void audio_datapath_stream_out(const uint8_t *buf, size_t size, uint32_t sdu_ref
 
 	if (channel == AUDIO_CH_L) {
 		channel_received |= 0x01;
-		memcpy(stereo_encoded_data, buf, desired_data_size);
+		memcpy(stereo_encoded_data, channel_buf, desired_data_size);
 	} else if (channel == AUDIO_CH_R) {
 		channel_received |= 0x02;
-		memcpy(stereo_encoded_data + desired_data_size, buf, desired_data_size);
+		memcpy(stereo_encoded_data + desired_data_size, channel_buf, desired_data_size);
 	} else {
 		LOG_WRN("Invalid channel: %d", channel);
 		return;
 	}
-
 
 	if (channel_received == 0x03) {
 		// Bot L and R are received
@@ -1014,8 +1010,8 @@ void audio_datapath_stream_out(const uint8_t *buf, size_t size, uint32_t sdu_ref
 			     (CONFIG_AUDIO_FRAME_DURATION_US + SDU_REF_DELTA_MAX_ERR_US)) ||
 			    (sdu_ref_delta_us <
 			     (CONFIG_AUDIO_FRAME_DURATION_US - SDU_REF_DELTA_MAX_ERR_US))) {
-				LOG_DBG("Invalid sdu_ref_us delta (%d) - Estimating sdu_ref_us",
-					sdu_ref_delta_us);
+				//LOG_DBG("Invalid sdu_ref_us delta (%d) - Estimating sdu_ref_us",
+				//	sdu_ref_delta_us);
 
 				/* Estimate sdu_ref_us */
 				sdu_ref_us = ctrl_blk.prev_pres_sdu_ref_us +
@@ -1143,7 +1139,7 @@ int audio_datapath_init(void)
 	audio_i2s_init();
 	ctrl_blk.datapath_initialized = true;
 	ctrl_blk.drift_comp.enabled = true;
-	ctrl_blk.pres_comp.enabled = true;
+	ctrl_blk.pres_comp.enabled = false;
 
 	if (IS_ENABLED(CONFIG_STREAM_BIDIRECTIONAL) && (CONFIG_AUDIO_DEV == GATEWAY)) {
 		/* Disable presentation compensation feature for microphone return on gateway,
