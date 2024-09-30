@@ -300,7 +300,7 @@ static void le_audio_msg_sub_thread(void)
 			break;
 
 		default:
-			LOG_WRN("Unexpected/unhandled le_audio event: %d", msg.event);
+			//LOG_WRN("Unexpected/unhandled le_audio event: %d", msg.event);
 
 			break;
 		}
