@@ -219,7 +219,7 @@ config BT_AUDIO_SCAN_DELEGATOR
 
 config BT_SET_IDENTITY_RESOLVING_KEY_DEFAULT
 	string
-	default "NRF5340_TWS_DEMO"
+	default "NRF5340_BIS_DEMO"
 	help
 	  Default string to configure the Set Identify Resolving Key (SIRK), must
 	  be changed before production uniquely for each coordinated set.
