@@ -882,10 +882,12 @@ void audio_datapath_pres_delay_us_get(uint32_t *delay_us)
 	*delay_us = ctrl_blk.pres_comp.pres_delay_us;
 }
 
-K_FIFO_DEFINE(ble_rx_l_fifo);
-K_FIFO_DEFINE(ble_rx_r_fifo);
-struct ble_fifo_data{
-	void *fifo_reserved;
+#include <zephyr/sys/ring_buffer.h>
+
+RING_BUF_DECLARE(ble_rx_l_ringbuf, CONFIG_BT_ISO_RX_MTU * 10);
+RING_BUF_DECLARE(ble_rx_r_ringbuf, CONFIG_BT_ISO_RX_MTU * 10);
+
+struct ble_ringbuf_data {
 	uint32_t sdu_ref_us;
 	uint32_t recv_frame_ts_us;
 	uint8_t channel;
@@ -895,14 +897,13 @@ struct ble_fifo_data{
 } __packed;
 
 void audio_datapath_stream_out(const uint8_t *buf, size_t size, uint32_t sdu_ref_us, bool bad_frame,
-			       uint32_t recv_frame_ts_us, uint8_t channel, uint8_t desired_data_size)
+				   uint32_t recv_frame_ts_us, uint8_t channel, uint8_t desired_data_size)
 {
 	static uint8_t stereo_encoded_data[CONFIG_BT_ISO_RX_MTU] = {0};
 	uint8_t channel_buf[CONFIG_BT_ISO_RX_MTU] = {0};
 	static int channel_received = 0;
-	struct ble_fifo_data ble_rx_data_l;
-	struct ble_fifo_data ble_rx_data_r;
-	struct ble_fifo_data * ble_rx_data_ptr;
+	struct ble_ringbuf_data ble_rx_data;
+	struct ble_ringbuf_data *ble_rx_data_ptr;
 
 	uint8_t bad_frame_ch = 0;
 
@@ -912,27 +913,28 @@ void audio_datapath_stream_out(const uint8_t *buf, size_t size, uint32_t sdu_ref
 	}
 
 	/*** Check incoming data ***/
+	printk("c s %d t %d c %d b %d ", sdu_ref_us, recv_frame_ts_us, channel, bad_frame);
+	ble_rx_data.sdu_ref_us = sdu_ref_us;
+	ble_rx_data.recv_frame_ts_us = recv_frame_ts_us;
+	ble_rx_data.channel = channel;
+	ble_rx_data.bad_frame = bad_frame;
+	ble_rx_data.desired_data_size = desired_data_size;
+	memcpy(ble_rx_data.buf, buf, size);
 
 	if (channel == AUDIO_CH_L) {
-		ble_rx_data_l.sdu_ref_us = sdu_ref_us;
-		ble_rx_data_l.recv_frame_ts_us = recv_frame_ts_us;
-		ble_rx_data_l.channel = channel;
-		ble_rx_data_l.bad_frame = bad_frame;
-		ble_rx_data_l.desired_data_size = desired_data_size;
-		memcpy(ble_rx_data_l.buf, buf, size);
-		k_fifo_put(&ble_rx_l_fifo, &ble_rx_data_l);
+		if (ring_buf_put(&ble_rx_l_ringbuf, (uint8_t *)&ble_rx_data, sizeof(ble_rx_data)) != sizeof(ble_rx_data)) {
+			LOG_WRN("Left channel ring buffer full");
+			return;
+		}
 	} else if (channel == AUDIO_CH_R) {
-		ble_rx_data_r.sdu_ref_us = sdu_ref_us;
-		ble_rx_data_r.recv_frame_ts_us = recv_frame_ts_us;
-		ble_rx_data_r.channel = channel;
-		ble_rx_data_r.bad_frame = bad_frame;
-		ble_rx_data_r.desired_data_size = desired_data_size;
-		memcpy(ble_rx_data_r.buf, buf, size);
-		k_fifo_put(&ble_rx_r_fifo, &ble_rx_data_r);
+		if (ring_buf_put(&ble_rx_r_ringbuf, (uint8_t *)&ble_rx_data, sizeof(ble_rx_data)) != sizeof(ble_rx_data)) {
+			LOG_WRN("Right channel ring buffer full");
+			return;
+		}
 	}
 
 	static int buffer_fill_count = 0;
-	if (buffer_fill_count < 10) {
+	if (buffer_fill_count < 8) {
 		buffer_fill_count++;
 		return;
 	}
@@ -942,33 +944,31 @@ void audio_datapath_stream_out(const uint8_t *buf, size_t size, uint32_t sdu_ref
 	current_channel = next_channel;
 
 	if (current_channel == AUDIO_CH_L) {
+		if (ring_buf_get(&ble_rx_l_ringbuf, (uint8_t *)&ble_rx_data, sizeof(ble_rx_data)) != sizeof(ble_rx_data)) {
+			printk("No data in L channel ring buffer");
+			return;
+		}
 		next_channel = AUDIO_CH_R;
-		ble_rx_data_ptr = k_fifo_get(&ble_rx_l_fifo, K_NO_WAIT);
-		if (ble_rx_data_ptr == NULL) {
-			LOG_INF("No data in L channel queue");
+	} else if (current_channel == AUDIO_CH_R) {
+		if (ring_buf_get(&ble_rx_r_ringbuf, (uint8_t *)&ble_rx_data, sizeof(ble_rx_data)) != sizeof(ble_rx_data)) {
+			printk("No data in R channel ring buffer");
 			return;
 		}
-	}else if (current_channel == AUDIO_CH_R) {
 		next_channel = AUDIO_CH_L;
-		ble_rx_data_ptr = k_fifo_get(&ble_rx_r_fifo, K_NO_WAIT);
-		if (ble_rx_data_ptr == NULL) {
-			LOG_INF("No data in R channel queue");
-			return;
-		}
 	} else {
-		LOG_WRN("Invalid channel: %d", channel);
+		printk("Invalid channel: %d", channel);
 		return;
 	}
 
-	sdu_ref_us = ble_rx_data_ptr->sdu_ref_us;
-	recv_frame_ts_us = ble_rx_data_ptr->recv_frame_ts_us;
-	channel = ble_rx_data_ptr->channel;
-	bad_frame = ble_rx_data_ptr->bad_frame;
-	desired_data_size = ble_rx_data_ptr->desired_data_size;
-	memcpy(channel_buf, ble_rx_data_ptr->buf, size);
-
+	sdu_ref_us = ble_rx_data.sdu_ref_us;
+	recv_frame_ts_us = ble_rx_data.recv_frame_ts_us;
+	channel = ble_rx_data.channel;
+	bad_frame = ble_rx_data.bad_frame;
+	desired_data_size = ble_rx_data.desired_data_size;
+	memcpy(channel_buf, ble_rx_data.buf, size);
+	printk("r s %d t %d c %d b %d \n", sdu_ref_us, recv_frame_ts_us, channel, bad_frame);
 	if (bad_frame) {
-		/* Error in the frame or frame lost - sdu_ref_us is stil valid */
+		/* Error in the frame or frame lost - sdu_ref_us is still valid */
 		LOG_DBG("Bad audio frame");
 		if (channel == 0) {
 			bad_frame_ch |= 0x01;
@@ -989,7 +989,7 @@ void audio_datapath_stream_out(const uint8_t *buf, size_t size, uint32_t sdu_ref
 	}
 
 	if (channel_received == 0x03) {
-		// Bot L and R are received
+		// Both L and R are received
 		channel_received = 0;
 	} else {
 		return;
@@ -1004,18 +1004,18 @@ void audio_datapath_stream_out(const uint8_t *buf, size_t size, uint32_t sdu_ref
 
 		/* Check if the delta is from two consecutive frames */
 		if (sdu_ref_delta_us <
-		    (CONFIG_AUDIO_FRAME_DURATION_US + (CONFIG_AUDIO_FRAME_DURATION_US / 2))) {
+			(CONFIG_AUDIO_FRAME_DURATION_US + (CONFIG_AUDIO_FRAME_DURATION_US / 2))) {
 			/* Check for invalid delta */
 			if ((sdu_ref_delta_us >
-			     (CONFIG_AUDIO_FRAME_DURATION_US + SDU_REF_DELTA_MAX_ERR_US)) ||
-			    (sdu_ref_delta_us <
-			     (CONFIG_AUDIO_FRAME_DURATION_US - SDU_REF_DELTA_MAX_ERR_US))) {
+				 (CONFIG_AUDIO_FRAME_DURATION_US + SDU_REF_DELTA_MAX_ERR_US)) ||
+				(sdu_ref_delta_us <
+				 (CONFIG_AUDIO_FRAME_DURATION_US - SDU_REF_DELTA_MAX_ERR_US))) {
 				//LOG_DBG("Invalid sdu_ref_us delta (%d) - Estimating sdu_ref_us",
 				//	sdu_ref_delta_us);
 
 				/* Estimate sdu_ref_us */
 				sdu_ref_us = ctrl_blk.prev_pres_sdu_ref_us +
-					     CONFIG_AUDIO_FRAME_DURATION_US;
+						 CONFIG_AUDIO_FRAME_DURATION_US;
 			}
 		} else {
 			LOG_INF("sdu_ref_us not from consecutive frames (diff: %d us)",
@@ -1075,12 +1075,12 @@ void audio_datapath_stream_out(const uint8_t *buf, size_t size, uint32_t sdu_ref
 	for (uint32_t i = 0; i < NUM_BLKS_IN_FRAME; i++) {
 		if (IS_ENABLED(CONFIG_AUDIO_BIT_DEPTH_16)) {
 			memcpy(&ctrl_blk.out.fifo[out_blk_idx * BLK_STEREO_NUM_SAMPS],
-			       &((int16_t *)ctrl_blk.decoded_data)[i * BLK_STEREO_NUM_SAMPS],
-			       BLK_STEREO_SIZE_OCTETS);
+				   &((int16_t *)ctrl_blk.decoded_data)[i * BLK_STEREO_NUM_SAMPS],
+				   BLK_STEREO_SIZE_OCTETS);
 		} else if (IS_ENABLED(CONFIG_AUDIO_BIT_DEPTH_32)) {
 			memcpy(&ctrl_blk.out.fifo[out_blk_idx * BLK_STEREO_NUM_SAMPS],
-			       &((int32_t *)ctrl_blk.decoded_data)[i * BLK_STEREO_NUM_SAMPS],
-			       BLK_STEREO_SIZE_OCTETS);
+				   &((int32_t *)ctrl_blk.decoded_data)[i * BLK_STEREO_NUM_SAMPS],
+				   BLK_STEREO_SIZE_OCTETS);
 		}
 
 		/* Record producer block start reference */
