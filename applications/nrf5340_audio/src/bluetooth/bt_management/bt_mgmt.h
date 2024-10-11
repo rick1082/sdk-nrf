@@ -48,6 +48,12 @@
 #error "Select either CONFIG_SCAN_MODE_ACTIVE or CONFIG_SCAN_MODE_PASSIVE"
 #endif
 
+struct broadcast_source {
+	char name[BLE_SEARCH_NAME_MAX_LEN];
+	uint32_t id;
+	bool high_pri_stream;
+};
+
 enum bt_mgmt_scan_type {
 	BT_MGMT_SCAN_TYPE_CONN = 1,
 	BT_MGMT_SCAN_TYPE_BROADCAST = 2,

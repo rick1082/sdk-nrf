@@ -8,7 +8,7 @@
 #define _BT_MGMT_SCAN_FOR_BROADCAST_INTERNAL_H_
 
 #include <zephyr/bluetooth/bluetooth.h>
-
+#include "bt_mgmt.h"
 /**
  * @brief	Scan for a broadcaster with the given @p name.
  *
@@ -20,5 +20,6 @@
  */
 int bt_mgmt_scan_for_broadcast_start(struct bt_le_scan_param *scan_param, char const *const name,
 				     uint32_t brdcast_id);
-
+void periodic_adv_sync(const struct bt_le_scan_recv_info *info,
+			      struct broadcast_source source);
 #endif /* _BT_MGMT_SCAN_FOR_BROADCAST_INTERNAL_H_ */

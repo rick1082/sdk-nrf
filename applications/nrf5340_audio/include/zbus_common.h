@@ -65,6 +65,7 @@ enum bt_mgmt_evt_type {
 	BT_MGMT_DISCONNECTED,
 	BT_MGMT_BROADCAST_SINK_DISABLE,
 	BT_MGMT_BROADCAST_CODE_RECEIVED,
+	BT_MGMT_SWITCH,
 };
 
 struct bt_mgmt_msg {
@@ -75,6 +76,7 @@ struct bt_mgmt_msg {
 	struct bt_le_per_adv_sync *pa_sync;
 	uint32_t broadcast_id;
 	uint8_t pa_sync_term_reason;
+	struct bt_le_scan_recv_info info;
 };
 
 enum volume_evt_type {

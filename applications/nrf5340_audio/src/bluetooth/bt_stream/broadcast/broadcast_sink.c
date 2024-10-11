@@ -93,7 +93,7 @@ static int broadcast_sink_cleanup(void)
 
 	if (broadcast_sink != NULL) {
 		ret = bt_bap_broadcast_sink_delete(broadcast_sink);
-		if (ret && ret != -EALREADY) {
+		if (ret && ret != -EALREADY && ret != -EBADMSG) {
 			return ret;
 		}
 
