@@ -72,10 +72,7 @@ static const struct device *gpio_53_dev;
  * @note Needed as low-level driver debouce is not
  * implemented in Zephyr for nRF53 yet
  */
-static void on_button_debounce_timeout(struct k_timer *timer)
-{
-	debounce_is_ongoing = false;
-}
+static void on_button_debounce_timeout(struct k_timer *timer);
 
 K_TIMER_DEFINE(button_debounce_timer, on_button_debounce_timeout, NULL);
 
@@ -141,36 +138,52 @@ static void button_publish_thread(void)
 K_THREAD_DEFINE(button_publish, CONFIG_BUTTON_PUBLISH_STACK_SIZE, button_publish_thread, NULL, NULL,
 		NULL, K_PRIO_PREEMPT(CONFIG_BUTTON_PUBLISH_THREAD_PRIO), 0, 0);
 
-/*  ISR triggered by GPIO when assigned button(s) are pushed */
-static void button_isr(const struct device *port, struct gpio_callback *cb, uint32_t pin_msk)
+static const struct device *isr_port;
+static uint32_t isr_pin_msk;
+
+static void on_button_debounce_timeout(struct k_timer *timer)
 {
 	int ret;
 	struct button_msg msg;
-
-	if (debounce_is_ongoing) {
-		LOG_DBG("Btn debounce in action");
-		return;
-	}
-
 	uint32_t btn_pin = 0;
 	uint32_t btn_idx = 0;
+	uint32_t btn_pin_state = 0;
 
-	ret = pin_msk_to_pin(pin_msk, &btn_pin);
+	debounce_is_ongoing = false;
+
+	ret = pin_msk_to_pin(isr_pin_msk, &btn_pin);
 	ERR_CHK(ret);
 
 	ret = pin_to_btn_idx(btn_pin, &btn_idx);
 	ERR_CHK(ret);
+
+	btn_pin_state = gpio_pin_get_raw(isr_port, btn_pin);
 
 	LOG_DBG("Pushed button idx: %d pin: %d name: %s", btn_idx, btn_pin,
 		btn_cfg[btn_idx].btn_name);
 
 	msg.button_pin = btn_pin;
 	msg.button_action = BUTTON_PRESS;
+	msg.button_state = btn_pin_state;
 
 	ret = k_msgq_put(&button_queue, (void *)&msg, K_NO_WAIT);
 	if (ret == -EAGAIN) {
 		LOG_WRN("Btn msg queue full");
 	}
+}
+
+
+/*  ISR triggered by GPIO when assigned button(s) are pushed */
+static void button_isr(const struct device *port, struct gpio_callback *cb, uint32_t pin_msk)
+{
+	isr_port = port;
+	isr_pin_msk = pin_msk;
+
+	if (debounce_is_ongoing) {
+		LOG_DBG("Btn debounce in action");
+		return;
+	}
+
 
 	debounce_is_ongoing = true;
 	k_timer_start(&button_debounce_timer, K_MSEC(CONFIG_BUTTON_DEBOUNCE_MS), K_NO_WAIT);
@@ -232,9 +245,13 @@ int button_handler_init(void)
 		if (ret) {
 			return ret;
 		}
-
+#if CONFIG_BT_AUDIO_HIGH_PRI_BROADCASTER
+		ret = gpio_pin_interrupt_configure(gpio_53_dev, btn_cfg[i].btn_pin,
+						   GPIO_INT_EDGE_BOTH);
+#else
 		ret = gpio_pin_interrupt_configure(gpio_53_dev, btn_cfg[i].btn_pin,
 						   GPIO_INT_EDGE_TO_INACTIVE);
+#endif
 		if (ret) {
 			return ret;
 		}
