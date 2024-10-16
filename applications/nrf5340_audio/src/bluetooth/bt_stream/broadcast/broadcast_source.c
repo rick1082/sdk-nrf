@@ -66,6 +66,21 @@ static int metadata_u8_add(uint8_t buffer[], uint8_t *index, uint8_t type, uint8
 	return 0;
 }
 
+static int metadata_u16_add(uint8_t buffer[], uint8_t *index, uint8_t type, uint16_t value)
+{
+	if (buffer == NULL || index == NULL) {
+		return -EINVAL;
+	}
+
+	/* Add length of type and value */
+	buffer[(*index)++] = (sizeof(type) + sizeof(uint16_t));
+	buffer[(*index)++] = type;
+	buffer[(*index)++] = 0xff & value;
+	buffer[(*index)++] = 0xff & (value >> 8);
+
+	return 0;
+}
+
 static void le_audio_event_publish(enum le_audio_evt_type event, const struct stream_index *idx)
 {
 	int ret;
@@ -276,6 +291,12 @@ int broadcast_source_ext_adv_populate(uint8_t big_index, bool fixed_id, uint32_t
 	public_broadcast_features_set(&ext_adv_data->pba_buf[PBA_FEATURES_INDEX], big_index);
 
 	/* Metadata */
+	ret = metadata_u16_add(&ext_adv_data->pba_buf[PBA_METADATA_START_INDEX], &meta_data_buf_size,
+			      BT_AUDIO_METADATA_TYPE_STREAM_CONTEXT,
+			      0x0400);
+	if (ret) {
+		return ret;
+	}
 	/* Parental rating */
 	ret = metadata_u8_add(&ext_adv_data->pba_buf[PBA_METADATA_START_INDEX], &meta_data_buf_size,
 			      BT_AUDIO_METADATA_TYPE_PARENTAL_RATING,
