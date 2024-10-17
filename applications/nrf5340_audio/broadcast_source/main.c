@@ -622,12 +622,13 @@ int main(void)
 	ret = per_adv_populate(0, &per_adv_data[0], &per_adv_buf[0], 1, &per_adv_buf_cnt);
 	ERR_CHK(ret);
 
-	/* Start broadcaster 
+	/* Start broadcaster */
+#if !CONFIG_BT_AUDIO_HIGH_PRI_BROADCASTER
 	ret = bt_mgmt_adv_start(0, ext_adv_buf[0], ext_adv_buf_cnt, &per_adv_buf[0],
 				per_adv_buf_cnt, false);
 	ERR_CHK_MSG(ret, "Failed to start first advertiser");
 
 	LOG_INF("Broadcast source: %s started", CONFIG_BT_AUDIO_BROADCAST_NAME);
-	*/
+#endif
 	return 0;
 }

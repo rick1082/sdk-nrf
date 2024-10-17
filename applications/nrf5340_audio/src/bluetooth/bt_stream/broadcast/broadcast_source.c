@@ -291,12 +291,14 @@ int broadcast_source_ext_adv_populate(uint8_t big_index, bool fixed_id, uint32_t
 	public_broadcast_features_set(&ext_adv_data->pba_buf[PBA_FEATURES_INDEX], big_index);
 
 	/* Metadata */
+#if CONFIG_BT_AUDIO_HIGH_PRI_BROADCASTER
 	ret = metadata_u16_add(&ext_adv_data->pba_buf[PBA_METADATA_START_INDEX], &meta_data_buf_size,
 			      BT_AUDIO_METADATA_TYPE_STREAM_CONTEXT,
 			      0x0400);
 	if (ret) {
 		return ret;
 	}
+#endif /* CONFIG_BT_AUDIO_HIGH_PRI_BROADCASTER */
 	/* Parental rating */
 	ret = metadata_u8_add(&ext_adv_data->pba_buf[PBA_METADATA_START_INDEX], &meta_data_buf_size,
 			      BT_AUDIO_METADATA_TYPE_PARENTAL_RATING,
