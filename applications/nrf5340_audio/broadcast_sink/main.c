@@ -85,7 +85,7 @@ static bool scan_check_high_pri_audio(struct bt_data *data, void *user_data)
 			memcpy(&u16, &data->data[i], sizeof(u16));
 			uuid = BT_UUID_DECLARE_16(sys_le16_to_cpu(u16));
 			if (bt_uuid_cmp(uuid, BT_UUID_PBA) == 0) {
-				LOG_HEXDUMP_INF(data->data, data->data_len, "");
+				LOG_HEXDUMP_DBG(data->data, data->data_len, "");
 				if (data->data[3] > 0) {
 					if (data->data[7] == 4){
 						LOG_WRN("Found high pri stream");
@@ -96,7 +96,7 @@ static bool scan_check_high_pri_audio(struct bt_data *data, void *user_data)
 				//LOG_HEXDUMP_INF(data->data, data->data_len, "audio broadcast");
 				source->id = sys_get_le24(data->data + BT_UUID_SIZE_16);
 				//LOG_WRN("found broadcast id %x", source->broadcast_id);
-			} 
+			}
 		}
 	}
 	return true;
@@ -172,7 +172,7 @@ static void button_msg_sub_thread(void)
 		LOG_INF("Got btn evt from queue - id = %d, action = %d, state = %d ", msg.button_pin,
 			msg.button_action, msg.button_state);
 
-		if (msg.button_action != BUTTON_PRESS && msg.button_state != 0) {
+		if (msg.button_action != BUTTON_PRESS || msg.button_state != 0) {
 			LOG_WRN("Unhandled button action");
 			continue;
 		}
@@ -228,7 +228,7 @@ static void button_msg_sub_thread(void)
 
 				break;
 			}
-
+			bt_le_scan_stop();
 			ret = broadcast_sink_disable();
 			if (ret) {
 				LOG_ERR("Failed to disable the broadcast sink: %d", ret);
@@ -343,7 +343,7 @@ static void le_audio_msg_sub_thread(void)
 
 		case LE_AUDIO_EVT_SYNC_LOST:
 			LOG_INF("Sync lost");
-
+			bt_le_scan_stop();
 			ret = bt_mgmt_pa_sync_delete(msg.pa_sync);
 			if (ret) {
 				LOG_WRN("Failed to delete PA sync");
@@ -404,7 +404,7 @@ static void pa_sync_worker(struct k_work *work)
 {
 	struct broadcast_source source = {.id = store_broadcast_id};
 	LOG_WRN("target broadcast id = %x, pass to periodic_adv_sync", store_broadcast_id);
-	led_on(LED_APP_RGB, LED_COLOR_RED);
+	led_blink(LED_APP_RGB, LED_COLOR_RED);
 	periodic_adv_sync(&store_info, source);
 }
 K_WORK_DEFINE(pa_sync_work, pa_sync_worker);

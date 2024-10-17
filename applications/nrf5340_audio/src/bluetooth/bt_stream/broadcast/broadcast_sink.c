@@ -213,8 +213,9 @@ static void stream_stopped_cb(struct bt_bap_stream *stream, uint8_t reason)
 
 	case BT_HCI_ERR_REMOTE_USER_TERM_CONN:
 		LOG_INF("Broadcast source stopped streaming");
-		le_audio_event_publish(LE_AUDIO_EVT_NOT_STREAMING);
-
+		k_work_submit(&bis_cleanup_work);
+		bt_le_scan_stop();
+		le_audio_event_publish(LE_AUDIO_EVT_SYNC_LOST);
 		break;
 
 	case BT_HCI_ERR_TERM_DUE_TO_MIC_FAIL:

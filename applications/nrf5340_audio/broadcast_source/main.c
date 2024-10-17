@@ -160,7 +160,7 @@ static void button_msg_sub_thread(void)
 				ERR_CHK_MSG(ret, "Failed to start first advertiser");
 
 				LOG_INF("Broadcast source: %s started", CONFIG_BT_AUDIO_BROADCAST_NAME);
-				ret = led_on(LED_APP_RGB, LED_COLOR_RED);
+				ret = led_blink(LED_APP_RGB, LED_COLOR_RED);
 				if (ret) {
 					LOG_ERR("LED set failed");
 				}
