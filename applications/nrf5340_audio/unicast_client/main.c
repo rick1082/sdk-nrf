@@ -15,7 +15,6 @@
 #include "button_assignments.h"
 #include "macros_common.h"
 #include "audio_system.h"
-#include "button_handler.h"
 #include "bt_le_audio_tx.h"
 #include "bt_mgmt.h"
 #include "bt_rendering_and_capture.h"
@@ -39,7 +38,7 @@ ZBUS_CHAN_DECLARE(bt_mgmt_chan);
 ZBUS_CHAN_DECLARE(cont_media_chan);
 ZBUS_CHAN_DECLARE(sdu_ref_chan);
 
-ZBUS_OBS_DECLARE(sdu_ref_msg_listen);
+//ZBUS_OBS_DECLARE(sdu_ref_msg_listen);
 
 static struct k_thread button_msg_sub_thread_data;
 static struct k_thread le_audio_msg_sub_thread_data;
@@ -117,85 +116,6 @@ static void button_msg_sub_thread(void)
 			return;
 		}
 
-		switch (msg.button_pin) {
-		case BUTTON_PLAY_PAUSE:
-			if (IS_ENABLED(CONFIG_WALKIE_TALKIE_DEMO)) {
-				LOG_WRN("Play/pause not supported in walkie-talkie mode");
-				break;
-			}
-
-			if (strm_state == STATE_STREAMING) {
-				ret = bt_content_ctrl_stop(NULL);
-				if (ret) {
-					LOG_WRN("Could not stop: %d", ret);
-				}
-
-			} else if (strm_state == STATE_PAUSED) {
-				ret = bt_content_ctrl_start(NULL);
-				if (ret) {
-					LOG_WRN("Could not start: %d", ret);
-				}
-
-			} else {
-				LOG_WRN("In invalid state: %d", strm_state);
-			}
-
-			break;
-
-		case BUTTON_VOLUME_UP:
-			ret = bt_r_and_c_volume_up();
-			if (ret) {
-				LOG_WRN("Failed to increase volume: %d", ret);
-			}
-
-			break;
-
-		case BUTTON_VOLUME_DOWN:
-			ret = bt_r_and_c_volume_down();
-			if (ret) {
-				LOG_WRN("Failed to decrease volume: %d", ret);
-			}
-
-			break;
-
-		case BUTTON_4:
-			if (IS_ENABLED(CONFIG_AUDIO_TEST_TONE)) {
-				if (IS_ENABLED(CONFIG_WALKIE_TALKIE_DEMO)) {
-					LOG_DBG("Test tone is disabled in walkie-talkie mode");
-					break;
-				}
-
-				if (strm_state != STATE_STREAMING) {
-					LOG_WRN("Not in streaming state");
-					break;
-				}
-
-				ret = audio_system_encode_test_tone_step();
-				if (ret) {
-					LOG_WRN("Failed to play test tone, ret: %d", ret);
-				}
-
-				break;
-			}
-
-			break;
-
-		case BUTTON_5:
-			if (IS_ENABLED(CONFIG_AUDIO_MUTE)) {
-				ret = bt_r_and_c_volume_mute(false);
-				if (ret) {
-					LOG_WRN("Failed to mute, ret: %d", ret);
-				}
-
-				break;
-			}
-
-			break;
-
-		default:
-			LOG_WRN("Unexpected/unhandled button id: %d", msg.button_pin);
-		}
-
 		STACK_USAGE_PRINT("button_msg_thread", &button_msg_sub_thread_data);
 	}
 }
@@ -234,8 +154,6 @@ static void le_audio_msg_sub_thread(void)
 			audio_system_start();
 			stream_state_set(STATE_STREAMING);
 
-			ret = led_blink(LED_APP_1_BLUE);
-			ERR_CHK(ret);
 			break;
 
 		case LE_AUDIO_EVT_NOT_STREAMING:
@@ -253,8 +171,6 @@ static void le_audio_msg_sub_thread(void)
 			stream_state_set(STATE_PAUSED);
 			audio_system_stop();
 
-			ret = led_on(LED_APP_1_BLUE);
-			ERR_CHK(ret);
 			break;
 
 		case LE_AUDIO_EVT_NO_VALID_CFG:
@@ -462,13 +378,13 @@ static int zbus_subscribers_create(void)
 	if (ret) {
 		return ret;
 	}
-
+/*
 	ret = zbus_chan_add_obs(&sdu_ref_chan, &sdu_ref_msg_listen, ZBUS_ADD_OBS_TIMEOUT_MS);
 	if (ret) {
 		LOG_ERR("Failed to add timestamp listener");
 		return ret;
 	}
-
+*/
 	return 0;
 }
 
@@ -542,8 +458,8 @@ int main(void)
 
 	LOG_DBG("Main started");
 
-	ret = nrf5340_audio_dk_init();
-	ERR_CHK(ret);
+	//ret = nrf5340_audio_dk_init();
+	//ERR_CHK(ret);
 
 	ret = fw_info_app_print();
 	ERR_CHK(ret);

@@ -52,7 +52,7 @@ config CONTIN_ARRAY
 	default y
 
 config NRFX_I2S0
-	default y
+	default n
 
 config PCM_MIX
 	default y
@@ -65,10 +65,10 @@ config DATA_FIFO
 
 # Enable NRFX_CLOCK for ACLK control
 config NRFX_CLOCK
-	default y
+	default n
 
 config I2C
-	default y
+	default n
 
 choice LIBC_IMPLEMENTATION
 	# NOTE: Since we are not using minimal libc, error codes from

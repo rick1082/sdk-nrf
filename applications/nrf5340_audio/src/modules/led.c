@@ -281,20 +281,5 @@ int led_init(void)
 {
 	int ret;
 
-	if (initialized) {
-		return -EPERM;
-	}
-
-	__ASSERT(ARRAY_SIZE(leds) != 0, "No LEDs found in dts");
-
-	leds_num = ARRAY_SIZE(leds);
-
-	ret = led_device_tree_parse();
-	if (ret) {
-		return ret;
-	}
-
-	k_timer_start(&led_blink_timer, K_MSEC(BLINK_FREQ_MS / 2), K_MSEC(BLINK_FREQ_MS / 2));
-	initialized = true;
 	return 0;
 }

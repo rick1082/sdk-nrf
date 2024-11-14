@@ -80,71 +80,12 @@ static void data_write(const struct device *dev)
 
 static void data_received(const struct device *dev, struct net_buf *buffer, size_t size)
 {
-	int ret;
-	void *data_in;
 
-	if (fifo_rx == NULL) {
-		/* Throwing away data */
-		net_buf_unref(buffer);
-		return;
-	}
-
-	if (buffer == NULL || size == 0 || buffer->data == NULL) {
-		/* This should never happen */
-		ERR_CHK(-EINVAL);
-	}
-
-	/* Receive data from USB */
-	if (size != USB_FRAME_SIZE_STEREO) {
-		LOG_WRN("Wrong length: %d", size);
-		net_buf_unref(buffer);
-		return;
-	}
-
-	ret = data_fifo_pointer_first_vacant_get(fifo_rx, &data_in, K_NO_WAIT);
-
-	/* RX FIFO can fill up due to retransmissions or disconnect */
-	if (ret == -ENOMEM) {
-		void *temp;
-		size_t temp_size;
-
-		rx_num_overruns++;
-		if ((rx_num_overruns % 100) == 1) {
-			LOG_WRN("USB RX overrun. Num: %d", rx_num_overruns);
-		}
-
-		ret = data_fifo_pointer_last_filled_get(fifo_rx, &temp, &temp_size, K_NO_WAIT);
-		ERR_CHK(ret);
-
-		data_fifo_block_free(fifo_rx, temp);
-
-		ret = data_fifo_pointer_first_vacant_get(fifo_rx, &data_in, K_NO_WAIT);
-	}
-
-	ERR_CHK_MSG(ret, "RX failed to get block");
-
-	memcpy(data_in, buffer->data, size);
-
-	ret = data_fifo_block_lock(fifo_rx, &data_in, size);
-	ERR_CHK_MSG(ret, "Failed to lock block");
-
-	net_buf_unref(buffer);
-
-	if (!rx_first_data) {
-		LOG_INF("USB RX first data received.");
-		rx_first_data = true;
-	}
 }
 
 static void feature_update(const struct device *dev, const struct usb_audio_fu_evt *evt)
 {
-	LOG_DBG("Control selector %d for channel %d updated", evt->cs, evt->channel);
-	switch (evt->cs) {
-	case USB_AUDIO_FU_MUTE_CONTROL:
-		/* Fall through */
-	default:
-		break;
-	}
+
 }
 
 static const struct usb_audio_ops ops = {
@@ -157,35 +98,18 @@ static const struct usb_audio_ops ops = {
 
 int audio_usb_start(struct data_fifo *fifo_tx_in, struct data_fifo *fifo_rx_in)
 {
-	if (fifo_tx_in == NULL || fifo_rx_in == NULL) {
-		return -EINVAL;
-	}
-
-	fifo_tx = fifo_tx_in;
-	fifo_rx = fifo_rx_in;
 
 	return 0;
 }
 
 void audio_usb_stop(void)
 {
-	rx_first_data = false;
-	tx_first_data = false;
-	fifo_tx = NULL;
-	fifo_rx = NULL;
+
 }
 
 int audio_usb_disable(void)
 {
 	int ret;
-
-	audio_usb_stop();
-
-	ret = usb_disable();
-	if (ret) {
-		LOG_ERR("Failed to disable USB");
-		return ret;
-	}
 
 	return 0;
 }
@@ -193,22 +117,7 @@ int audio_usb_disable(void)
 int audio_usb_init(void)
 {
 	int ret;
-	const struct device *hs_dev = DEVICE_DT_GET(DT_NODELABEL(hs_0));
 
-	if (!device_is_ready(hs_dev)) {
-		LOG_ERR("USB Headset Device not ready");
-		return -EIO;
-	}
-
-	usb_audio_register(hs_dev, &ops);
-
-	ret = usb_enable(NULL);
-	if (ret) {
-		LOG_ERR("Failed to enable USB");
-		return ret;
-	}
-
-	LOG_INF("Ready for USB host to send/receive.");
 
 	return 0;
 }
