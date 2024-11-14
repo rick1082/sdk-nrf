@@ -5,13 +5,13 @@
  */
 
 #include <zephyr/kernel.h>
-#include <nrfx_clock.h>
+//#include <nrfx_clock.h>
 
 #include "streamctrl.h"
 #include "audio_datapath.h"
 #include "macros_common.h"
 #include "audio_system.h"
-#include "audio_sync_timer.h"
+//#include "audio_sync_timer.h"
 
 #include <zephyr/logging/log.h>
 LOG_MODULE_REGISTER(le_audio_rx, CONFIG_LE_AUDIO_RX_LOG_LEVEL);
@@ -54,7 +54,7 @@ void le_audio_rx_data_handler(uint8_t const *const p_data, size_t data_size, boo
 	}
 
 	/* Capture timestamp of when audio frame is received */
-	uint32_t recv_frame_ts = audio_sync_timer_capture();
+	uint32_t recv_frame_ts = 0;//= audio_sync_timer_capture();
 
 	rx_stats[channel_index].recv_cnt++;
 

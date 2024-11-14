@@ -294,7 +294,7 @@ int bt_le_audio_tx_send(struct le_audio_tx_info *tx, uint8_t num_tx,
 		}
 
 		if (!ts_common_acquired) {
-			curr_ts_us = audio_sync_timer_capture();
+			//curr_ts_us = audio_sync_timer_capture();
 			common_tx_sync_ts_us = tx_info->iso_tx_readback.ts;
 			ts_common_acquired = true;
 		}

@@ -5,9 +5,9 @@
 #
 
 target_sources(app PRIVATE
-	       ${CMAKE_CURRENT_SOURCE_DIR}/channel_assignment.c
+	       #${CMAKE_CURRENT_SOURCE_DIR}/channel_assignment.c
 	       ${CMAKE_CURRENT_SOURCE_DIR}/error_handler.c
-	       ${CMAKE_CURRENT_SOURCE_DIR}/uicr.c
+	       #${CMAKE_CURRENT_SOURCE_DIR}/uicr.c
 )
 
 target_sources_ifdef(CONFIG_BOARD_NRF5340_AUDIO_DK_NRF5340_CPUAPP app PRIVATE
