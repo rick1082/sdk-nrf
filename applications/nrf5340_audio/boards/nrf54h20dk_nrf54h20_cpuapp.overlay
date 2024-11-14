@@ -4,52 +4,75 @@
  * SPDX-License-Identifier: LicenseRef-Nordic-5-Clause
  */
 
-// Base path of the following includes points to the nrf/include directory.
-#include <../samples/matter/common/dts/nrf54h20/nrf54h20_cpuapp_peripherals.dtsi>
-#include <../samples/matter/common/dts/nrf54h20/nrf54h20_cpuapp_memory_map.dtsi>
-#include <../samples/matter/common/dts/nrf54h20/nrf54h20_ram_allocation.dtsi>
 
-/delete-node/ &cpuapp_rx_partitions;
-/delete-node/ &cpuapp_rw_partitions;
+ #include <dt-bindings/usb/audio.h>
 
-&mram1x {
-	erase-block-size = <0x1000>;
-	write-block-size = <0x10>;
+ / {
+	 uac2_headphones: usb_audio2 {
+		 compatible = "zephyr,uac2";
+		 status = "okay";
+		 high-speed;
+		 audio-function = <AUDIO_FUNCTION_OTHER>;
+ 
+		 uac_aclk: aclk {
+			 compatible = "zephyr,uac2-clock-source";
+			 clock-type = "internal-programmable";
+			 frequency-control = "host-programmable";
+			 sampling-frequencies = <48000>;
+			 sof-synchronized;
+		 };
+ 
+		 out_terminal: out_terminal {
+			 compatible = "zephyr,uac2-input-terminal";
+			 clock-source = <&uac_aclk>;
+			 terminal-type = <USB_TERMINAL_STREAMING>;
+			 front-left;
+			 front-right;
+		 };
+ 
+		 headphones_output: headphones {
+			 compatible = "zephyr,uac2-output-terminal";
+			 data-source = <&out_terminal>;
+			 clock-source = <&uac_aclk>;
+			 terminal-type = <OUTPUT_TERMINAL_HEADPHONES>;
+		 };
+ 
+		 as_iso_out: out_interface {
+			 compatible = "zephyr,uac2-audio-streaming";
+			 linked-terminal = <&out_terminal>;
+			 subslot-size = <2>;
+			 bit-resolution = <16>;
+		 };
+	 };
+ };
+ 
 
-	cpuapp_rx_partitions: cpuapp-rx-partitions {
-		compatible = "nordic,owned-partitions", "fixed-partitions";
-		status = "okay";
-		nordic,access = <NRF_OWNER_ID_APPLICATION NRF_PERM_RXS>;
-		#address-cells = <1>;
-		#size-cells = <1>;
+ /delete-node/ &cpuapp_slot0_partition;
+ /delete-node/ &cpuppr_code_partition;
+ /delete-node/ &cpuflpr_code_partition;
+ 
+ &cpuapp_rx_partitions {
+	 cpuapp_slot0_partition: partition@a6000 {
+		 reg = <0xa6000 DT_SIZE_K(1140)>;
+	 };
+ 
+	 cpuppr_code_partition: partition@1c3000 {
+		 reg = <0x1c3000 DT_SIZE_K(64)>;
+	 };
+ 
+	 cpuflpr_code_partition: partition@1d3000 {
+		 reg = <0x1d3000 DT_SIZE_K(48)>;
+	 };
+ };
+ 
+ /delete-node/ &dfu_partition;
+ /delete-node/ &storage_partition;
+ 
+ &cpuapp_rw_partitions {
+	 storage_partition: partition@1df000 {
+		 reg = < 0x1df000 DT_SIZE_K(24) >;
+	 };
+ };
+ 
 
-		companion_partition: partition@98000 {
-			reg = <0x98000 DT_SIZE_K(64)>;
-		};
-
-		cpuapp_slot0_partition: partition@a8000 {
-			reg = <0xa8000 DT_SIZE_K(948)>;
-		};
-	};
-
-	cpuapp_rw_partitions: cpuapp-rw-partitions {
-		compatible = "nordic,owned-partitions", "fixed-partitions";
-		status = "okay";
-		nordic,access = <NRF_OWNER_ID_APPLICATION NRF_PERM_RW>;
-		#address-cells = <0x1>;
-		#size-cells = <0x1>;
-
-		storage_partition: partition@195000 {
-			reg = <0x195000 DT_SIZE_K(32)>;
-		};
-
-		factory_data: partition@19D000 {
-			reg = <0x19D000 DT_SIZE_K(4)>;
-		};
-
-		/* DFU partition to store SUIT manifests and Nordic Firmware update */
-		dfu_partition: partition@19E000 {
-			reg = <0x19E000 DT_SIZE_K(300)>;
-		};
-	};
-};
+ 

@@ -461,8 +461,8 @@ int main(void)
 	//ret = nrf5340_audio_dk_init();
 	//ERR_CHK(ret);
 
-	ret = fw_info_app_print();
-	ERR_CHK(ret);
+	//ret = fw_info_app_print();
+	//ERR_CHK(ret);
 
 	ret = bt_mgmt_init();
 	ERR_CHK(ret);
@@ -478,13 +478,13 @@ int main(void)
 
 	ret = le_audio_rx_init();
 	ERR_CHK(ret);
-
+/*
 	ret = bt_r_and_c_init();
 	ERR_CHK(ret);
 
 	ret = bt_content_ctrl_init();
 	ERR_CHK(ret);
-
+*/
 	ret = unicast_client_enable(0, le_audio_rx_data_handler);
 	ERR_CHK(ret);
 

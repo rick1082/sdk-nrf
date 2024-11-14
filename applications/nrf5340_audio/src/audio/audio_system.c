@@ -475,6 +475,7 @@ int audio_system_init(void)
 		return ret;
 	}
 #else
+/*
 	ret = audio_datapath_init();
 	if (ret) {
 		LOG_ERR("Failed to initialize audio datapath: %d", ret);
@@ -486,6 +487,7 @@ int audio_system_init(void)
 		LOG_ERR("Failed to initialize HW codec: %d", ret);
 		return ret;
 	}
+	*/
 #endif
 	k_poll_signal_init(&encoder_sig);
 
