@@ -80,5 +80,5 @@ endmenu # Log levels
 
 #----------------------------------------------------------------------------#
 endif # NRF5340_AUDIO
-
+source "${ZEPHYR_BASE}/samples/subsys/usb/common/Kconfig.sample_usbd"
 source "Kconfig.zephyr"
