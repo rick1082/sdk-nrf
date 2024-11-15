@@ -12,7 +12,7 @@ menu "FIFO"
 
 config FIFO_FRAME_SPLIT_NUM
 	int "Number of blocks to make up one frame of audio data"
-	default 10
+	default 80
 	help
 	  Easy DMA in I2S requires two buffers to be filled before I2S
 	  transmission will begin. In order to reduce latency, an audio

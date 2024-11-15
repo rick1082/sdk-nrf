@@ -45,6 +45,7 @@ endif()
 
 # Include application events and configuration headers
 zephyr_library_include_directories(
+    $ENV{ZEPHYR_BASE}/samples/subsys/usb/common
     include
     src/audio
     src/bluetooth
@@ -54,6 +55,7 @@ zephyr_library_include_directories(
     src/utils/macros
 )
 
+zephyr_sources($ENV{ZEPHYR_BASE}/samples/subsys/usb/common/sample_usbd_init.c)
 zephyr_library_include_directories(app PRIVATE
     ${ZEPHYR_NRF_MODULE_DIR}/boards/arm/nrf5340_audio_dk_nrf5340)
 
