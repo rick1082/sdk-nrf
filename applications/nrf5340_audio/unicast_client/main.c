@@ -451,10 +451,11 @@ void streamctrl_send(void const *const data, size_t size, uint8_t num_ch)
 		prev_ret = ret;
 	}
 }
-
+#include <zephyr/pm/policy.h>
 int main(void)
 {
 	int ret;
+	struct pm_policy_latency_request req;
 
 	LOG_DBG("Main started");
 
@@ -478,7 +479,7 @@ int main(void)
 
 	ret = le_audio_rx_init();
 	ERR_CHK(ret);
-/*
+/* something from the audio profile cause bus issue
 	ret = bt_r_and_c_init();
 	ERR_CHK(ret);
 
@@ -487,6 +488,9 @@ int main(void)
 */
 	ret = unicast_client_enable(0, le_audio_rx_data_handler);
 	ERR_CHK(ret);
+
+
+	//pm_policy_latency_request_add(&req, 30000);
 
 	ret = bt_mgmt_scan_start(0, 0, BT_MGMT_SCAN_TYPE_CONN, CONFIG_BT_DEVICE_NAME,
 				 BRDCAST_ID_NOT_USED);

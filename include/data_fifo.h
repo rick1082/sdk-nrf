@@ -42,9 +42,9 @@ struct data_fifo {
 };
 
 #define DATA_FIFO_DEFINE(name, elements_max_in, block_size_max_in)                                 \
-	char __aligned(WB_UP(                                                                      \
+	__attribute__((section("LOCAL_RAM_APP"))) char __aligned(WB_UP(                                                                      \
 		1)) _msgq_buffer_##name[(elements_max_in) * sizeof(struct data_fifo_msgq)] = {0};  \
-	char __aligned(WB_UP(1)) _slab_buffer_##name[(elements_max_in) * (block_size_max_in)] = {  \
+	__attribute__((section("LOCAL_RAM_APP"))) char __aligned(WB_UP(1)) _slab_buffer_##name[(elements_max_in) * (block_size_max_in)] = {  \
 		0};                                                                                \
 	struct data_fifo name = {.msgq_buffer = _msgq_buffer_##name,                               \
 				 .slab_buffer = _slab_buffer_##name,                               \
