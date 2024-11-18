@@ -32,7 +32,7 @@ LOG_MODULE_REGISTER(uac2_sample, LOG_LEVEL_INF);
 #define BLOCK_SIZE          (SAMPLES_PER_SOF * BYTES_PER_SLOT)
 #define MAX_BLOCK_SIZE      ((SAMPLES_PER_SOF + 1) * BYTES_PER_SLOT)
 
-static struct data_fifo *fifo_tx;
+//static struct data_fifo *fifo_tx;
 static struct data_fifo *fifo_rx;
 
 static uint32_t rx_num_overruns;
@@ -246,7 +246,7 @@ static uint32_t uac2_feedback_cb(const struct device *dev, uint8_t terminal,
 	 */
 	ARG_UNUSED(dev);
 	ARG_UNUSED(terminal);
-	LOG_INF("uac2_feedback_cb");
+	//LOG_INF("uac2_feedback_cb");
 	struct usb_i2s_ctx *ctx = user_data;
 
 	if (use_hardcoded_feedback) {

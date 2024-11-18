@@ -45,7 +45,15 @@
 		 };
 	 };
  };
- 
+
+/ {
+	cpu_app_local_ram: memory@22000000 {
+		compatible = "zephyr,memory-region";
+		reg = <0x22000000 DT_SIZE_K(64)>;
+		status = "okay";
+		zephyr,memory-region = "LOCAL_RAM_APP";
+	};
+};
 
  /delete-node/ &cpuapp_slot0_partition;
  /delete-node/ &cpuppr_code_partition;
