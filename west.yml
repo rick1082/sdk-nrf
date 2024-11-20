@@ -128,6 +128,10 @@ manifest:
           upstream-url: https://github.com/Wi-FiQuickTrack/Wi-FiQuickTrack-ControlAppC
           upstream-sha: 1225729e8d84075f03bf9fc51eee85d84dfb0091
           compare-by-default: true
+    - name: liblc3
+      url: https://github.com/google/liblc3
+      path: modules/lib/liblc3
+      revision: 8523516b89c170ffc09e1a3a5cfb103f762e62a1
     - name: mcuboot
       repo-path: sdk-mcuboot
       revision: b82206c15fff357c151c24bf97c99c4348d14a46

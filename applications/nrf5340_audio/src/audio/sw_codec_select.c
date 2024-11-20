@@ -12,7 +12,8 @@
 #include <sample_rate_converter.h>
 
 #if (CONFIG_SW_CODEC_LC3)
-#include "sw_codec_lc3.h"
+//#include "sw_codec_lc3.h"
+#include <sw_codec_google_lc3.h>
 #endif /* (CONFIG_SW_CODEC_LC3) */
 
 #include <zephyr/logging/log.h>
@@ -83,16 +84,18 @@ bool sw_codec_is_initialized(void)
 	return m_config.initialized;
 }
 
+/* Temp storage for split stereo PCM signal */
+__attribute__((section("LOCAL_RAM_APP"))) char pcm_data_mono_system_sample_rate[AUDIO_CH_NUM][PCM_NUM_BYTES_MONO] = {0};
+/* Make sure we have enough space for two frames (stereo) */
+__attribute__((section("LOCAL_RAM_APP"))) static uint8_t m_encoded_data[ENC_MAX_FRAME_SIZE * AUDIO_CH_NUM];
+
+__attribute__((section("LOCAL_RAM_APP"))) char pcm_data_mono_converted_buf[AUDIO_CH_NUM][PCM_NUM_BYTES_MONO] = {0};
+
 int sw_codec_encode(void *pcm_data, size_t pcm_size, uint8_t **encoded_data, size_t *encoded_size)
 {
 	int ret;
 
-	/* Temp storage for split stereo PCM signal */
-	char pcm_data_mono_system_sample_rate[AUDIO_CH_NUM][PCM_NUM_BYTES_MONO] = {0};
-	/* Make sure we have enough space for two frames (stereo) */
-	static uint8_t m_encoded_data[ENC_MAX_FRAME_SIZE * AUDIO_CH_NUM];
 
-	char pcm_data_mono_converted_buf[AUDIO_CH_NUM][PCM_NUM_BYTES_MONO] = {0};
 
 	size_t pcm_block_size_mono_system_sample_rate;
 	size_t pcm_block_size_mono;

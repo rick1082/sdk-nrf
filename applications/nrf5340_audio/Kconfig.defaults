@@ -129,3 +129,6 @@ config WATCHDOG
 
 config TASK_WDT
 	default n
+
+config ENCODER_STACK_SIZE
+	default 22000
