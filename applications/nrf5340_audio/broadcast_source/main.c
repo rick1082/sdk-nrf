@@ -33,8 +33,6 @@ ZBUS_CHAN_DECLARE(le_audio_chan);
 ZBUS_CHAN_DECLARE(bt_mgmt_chan);
 ZBUS_CHAN_DECLARE(sdu_ref_chan);
 
-ZBUS_OBS_DECLARE(sdu_ref_msg_listen);
-
 static struct k_thread button_msg_sub_thread_data;
 static struct k_thread le_audio_msg_sub_thread_data;
 
@@ -206,7 +204,6 @@ static void le_audio_msg_sub_thread(void)
 
 			audio_system_start();
 			stream_state_set(STATE_STREAMING);
-			ret = led_blink(LED_APP_1_BLUE);
 			ERR_CHK(ret);
 
 			break;
@@ -223,7 +220,6 @@ static void le_audio_msg_sub_thread(void)
 
 			stream_state_set(STATE_PAUSED);
 			audio_system_stop();
-			ret = led_on(LED_APP_1_BLUE);
 			ERR_CHK(ret);
 
 			break;
@@ -268,12 +264,6 @@ static int zbus_subscribers_create(void)
 	ret = k_thread_name_set(le_audio_msg_sub_thread_id, "LE_AUDIO_MSG_SUB");
 	if (ret) {
 		LOG_ERR("Failed to create le_audio_msg thread");
-		return ret;
-	}
-
-	ret = zbus_chan_add_obs(&sdu_ref_chan, &sdu_ref_msg_listen, ZBUS_ADD_OBS_TIMEOUT_MS);
-	if (ret) {
-		LOG_ERR("Failed to add timestamp listener");
 		return ret;
 	}
 
@@ -557,12 +547,6 @@ int main(void)
 
 	size_t ext_adv_buf_cnt = 0;
 	size_t per_adv_buf_cnt = 0;
-
-	ret = nrf5340_audio_dk_init();
-	ERR_CHK(ret);
-
-	ret = fw_info_app_print();
-	ERR_CHK(ret);
 
 	ret = bt_mgmt_init();
 	ERR_CHK(ret);
