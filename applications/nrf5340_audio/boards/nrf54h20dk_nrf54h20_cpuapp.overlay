@@ -49,7 +49,7 @@
 / {
 	cpu_app_local_ram: memory@22000000 {
 		compatible = "zephyr,memory-region";
-		reg = <0x22000000 DT_SIZE_K(64)>;
+		reg = <0x22000000 DT_SIZE_K(32)>;
 		status = "okay";
 		zephyr,memory-region = "LOCAL_RAM_APP";
 	};

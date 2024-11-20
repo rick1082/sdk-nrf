@@ -106,12 +106,19 @@ static void *uac2_get_recv_buf(const struct device *dev, uint8_t terminal,
 	return buf;
 }
 
+#include <stdio.h>
+#include <zephyr/kernel.h>
+#include <zephyr/drivers/gpio.h>
+#define LED0_NODE DT_ALIAS(led0)
+static const struct gpio_dt_spec led = GPIO_DT_SPEC_GET(LED0_NODE, gpios);
+
 static void uac2_data_recv_cb(const struct device *dev, uint8_t terminal,
 			      void *buf, uint16_t size, void *user_data)
 {
 	struct usb_i2s_ctx *ctx = user_data;
 	int ret;
 	void *data_in;
+	static bool led_state = true;
 
 	if (!ctx->terminal_enabled) {
 		k_mem_slab_free(&i2s_tx_slab, buf);
@@ -124,6 +131,14 @@ static void uac2_data_recv_cb(const struct device *dev, uint8_t terminal,
 		k_mem_slab_free(&i2s_tx_slab, buf);
 		return;
 	}
+
+
+	ret = gpio_pin_toggle_dt(&led);
+	if (ret < 0) {
+		return 0;
+	}
+
+	led_state = !led_state;
 
 
 	if (!size) {
@@ -335,6 +350,10 @@ int audio_usb_init(void)
 {
 	int ret;
 	LOG_INF("USB audio init");
+	ret = gpio_pin_configure_dt(&led, GPIO_OUTPUT_ACTIVE);
+	if (ret < 0) {
+		return 0;
+	}
 
 	const struct device *dev = DEVICE_DT_GET(DT_NODELABEL(uac2_headphones));
 	struct usbd_context *sample_usbd;

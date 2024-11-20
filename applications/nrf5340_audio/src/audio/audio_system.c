@@ -51,6 +51,19 @@ static struct sw_codec_config sw_codec_cfg;
 static int16_t test_tone_buf[CONFIG_AUDIO_SAMPLE_RATE_HZ / 1000];
 static size_t test_tone_size;
 
+#include <stdio.h>
+#include <zephyr/kernel.h>
+#include <zephyr/drivers/gpio.h>
+
+/* The devicetree node identifier for the "led0" alias. */
+#define LED1_NODE DT_ALIAS(led1)
+
+/*
+ * A build error on this line means your board is unsupported.
+ * See the sample documentation for information on how to fix this.
+ */
+static const struct gpio_dt_spec led = GPIO_DT_SPEC_GET(LED1_NODE, gpios);
+
 static bool sample_rate_valid(uint32_t sample_rate_hz)
 {
 	if (sample_rate_hz == 16000 || sample_rate_hz == 24000 || sample_rate_hz == 48000) {
@@ -156,10 +169,10 @@ static void encoder_thread(void *arg1, void *arg2, void *arg3)
 						    &num_bytes);
 				ERR_CHK(ret);
 			}
-
+	gpio_pin_set_dt(&led, 0);
 			ret = sw_codec_encode(pcm_raw_data, FRAME_SIZE_BYTES, &encoded_data,
 					      &encoded_data_size);
-
+	gpio_pin_set_dt(&led, 1);
 			ERR_CHK_MSG(ret, "Encode failed");
 		}
 
@@ -469,6 +482,12 @@ int audio_system_init(void)
 {
 	int ret;
 
+	ret = gpio_pin_configure_dt(&led, GPIO_OUTPUT_ACTIVE);
+	if (ret < 0) {
+		return 0;
+	}
+
+	gpio_pin_set_dt(&led, 1);
 #if ((CONFIG_AUDIO_DEV == GATEWAY) && (CONFIG_AUDIO_SOURCE_USB))
 	ret = audio_usb_init();
 	if (ret) {
