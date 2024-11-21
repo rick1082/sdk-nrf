@@ -21,6 +21,7 @@
 LOG_MODULE_REGISTER(uac2_sample, LOG_LEVEL_INF);
 
 #define HEADPHONES_OUT_TERMINAL_ID UAC2_ENTITY_ID(DT_NODELABEL(out_terminal))
+#define MICROPHONE_IN_TERMINAL_ID UAC2_ENTITY_ID(DT_NODELABEL(in_terminal))
 
 #define SAMPLES_PER_SOF     48
 #define SAMPLE_FREQUENCY    (SAMPLES_PER_SOF * 1000)
@@ -69,7 +70,7 @@ static void uac2_terminal_update_cb(const struct device *dev, uint8_t terminal,
 	/* This sample has only one terminal therefore the callback can simply
 	 * ignore the terminal variable.
 	 */
-	__ASSERT_NO_MSG(terminal == HEADPHONES_OUT_TERMINAL_ID);
+	//__ASSERT_NO_MSG(terminal == HEADPHONES_OUT_TERMINAL_ID);
 	/* This sample is for Full-Speed only devices. */
 	//This part is weird, need to check
 	//__ASSERT_NO_MSG(microframes == false);
@@ -355,7 +356,7 @@ int audio_usb_init(void)
 		return 0;
 	}
 
-	const struct device *dev = DEVICE_DT_GET(DT_NODELABEL(uac2_headphones));
+	const struct device *dev = DEVICE_DT_GET(DT_NODELABEL(uac2_headset));
 	struct usbd_context *sample_usbd;
 
 	//main_ctx.fb = feedback_init();
