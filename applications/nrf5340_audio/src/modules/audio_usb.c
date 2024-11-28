@@ -33,8 +33,13 @@ LOG_MODULE_REGISTER(uac2_sample, LOG_LEVEL_INF);
 #define BLOCK_SIZE          (SAMPLES_PER_SOF * BYTES_PER_SLOT)
 #define MAX_BLOCK_SIZE      ((SAMPLES_PER_SOF + 1) * BYTES_PER_SLOT)
 
-//static struct data_fifo *fifo_tx;
+static struct data_fifo *fifo_tx;
 static struct data_fifo *fifo_rx;
+
+#define USB_FRAME_SIZE_STEREO                                                                      \
+	(((CONFIG_AUDIO_SAMPLE_RATE_HZ * CONFIG_AUDIO_BIT_DEPTH_OCTETS) / 8000) * 2)
+NET_BUF_POOL_FIXED_DEFINE(pool_out, CONFIG_FIFO_FRAME_SPLIT_NUM, USB_FRAME_SIZE_STEREO, 8,
+			  net_buf_destroy);
 
 static uint32_t rx_num_overruns;
 static bool rx_first_data;
@@ -179,15 +184,6 @@ static void uac2_data_recv_cb(const struct device *dev, uint8_t terminal,
 		rx_first_data = true;
 	}
 
-	//LOG_INF("Received %d data to input terminal %d", size, terminal);
-	static int i = 0;
-	i++;
-	int16_t sample[12];
-	if(i % 1000 == 0) {
-		//LOG_INF("USB data received %d", size);
-		//LOG_HEXDUMP_INF(buf, 24, "USB data");
-	}
-	//ret = i2s_write(ctx->i2s_dev, buf, size);
 	k_mem_slab_free(&i2s_tx_slab, buf);
 	ret = 0;
 	if (ret < 0) {
@@ -272,15 +268,46 @@ static uint32_t uac2_feedback_cb(const struct device *dev, uint8_t terminal,
 	}
 }
 
+#include "pcm_stream_channel_modifier.h"
+static uint32_t tx_num_underruns;
+static uint8_t __aligned(UDC_BUF_ALIGN) data_buffer[ROUND_UP(12, UDC_BUF_GRANULARITY)] = {0};
 static void uac2_sof(const struct device *dev, void *user_data)
 {
 	ARG_UNUSED(dev);
+	int ret;
+	void *data_out;
+	size_t data_out_size;
 	struct usb_i2s_ctx *ctx = user_data;
 	//LOG_INF("uac2_sof");
+
+
+
+	if (fifo_tx == NULL) {
+		//LOG_INF("returning");
+		return;
+	}
+
+	ret = data_fifo_pointer_last_filled_get(fifo_tx, &data_out, &data_out_size, K_NO_WAIT);
+	if (ret) {
+		tx_num_underruns++;
+		if ((tx_num_underruns % 100) == 1) {
+			//LOG_WRN("USB TX underrun. Num: %d", tx_num_underruns);
+		}
+
+		return;
+	}
+
+	pscm_one_channel_split(data_out, data_out_size, 0, 16, data_buffer, &data_out_size);
+
+	data_fifo_block_free(fifo_tx, data_out);
+
 	if (ctx->i2s_started) {
 		//feedback_process(ctx->fb);
 	}
 
+
+	if (usbd_uac2_send(dev, MICROPHONE_IN_TERMINAL_ID, data_buffer, 12) < 0) {
+ 	}
 	/* We want to maintain 3 SOFs delay, i.e. samples received during SOF n
 	 * should be on I2S during SOF n+3. This provides enough wiggle room
 	 * for software scheduling that effectively eliminates "buffers not
@@ -327,6 +354,7 @@ int audio_usb_start(struct data_fifo *fifo_tx_in, struct data_fifo *fifo_rx_in)
 		return -EINVAL;
 	}
 
+	fifo_tx = fifo_tx_in;
 	fifo_rx = fifo_rx_in;
 
 	return 0;
@@ -336,7 +364,7 @@ void audio_usb_stop(void)
 {
 	rx_first_data = false;
 	tx_first_data = false;
-
+	fifo_tx = NULL;
 	fifo_rx = NULL;
 }
 
