@@ -21,17 +21,17 @@
 LOG_MODULE_REGISTER(uac2_sample, LOG_LEVEL_INF);
 
 #define HEADPHONES_OUT_TERMINAL_ID UAC2_ENTITY_ID(DT_NODELABEL(out_terminal))
-#define MICROPHONE_IN_TERMINAL_ID UAC2_ENTITY_ID(DT_NODELABEL(in_terminal))
+#define MICROPHONE_IN_TERMINAL_ID  UAC2_ENTITY_ID(DT_NODELABEL(in_terminal))
 
-#define SAMPLES_PER_SOF     48
-#define SAMPLE_FREQUENCY    (SAMPLES_PER_SOF * 1000)
-#define SAMPLE_BIT_WIDTH    16
-#define NUMBER_OF_CHANNELS  2
-#define BYTES_PER_SAMPLE    DIV_ROUND_UP(SAMPLE_BIT_WIDTH, 8)
-#define BYTES_PER_SLOT      (BYTES_PER_SAMPLE * NUMBER_OF_CHANNELS)
-#define MIN_BLOCK_SIZE      ((SAMPLES_PER_SOF - 1) * BYTES_PER_SLOT)
-#define BLOCK_SIZE          (SAMPLES_PER_SOF * BYTES_PER_SLOT)
-#define MAX_BLOCK_SIZE      ((SAMPLES_PER_SOF + 1) * BYTES_PER_SLOT)
+#define SAMPLES_PER_SOF	   48
+#define SAMPLE_FREQUENCY   (SAMPLES_PER_SOF * 1000)
+#define SAMPLE_BIT_WIDTH   16
+#define NUMBER_OF_CHANNELS 2
+#define BYTES_PER_SAMPLE   DIV_ROUND_UP(SAMPLE_BIT_WIDTH, 8)
+#define BYTES_PER_SLOT	   (BYTES_PER_SAMPLE * NUMBER_OF_CHANNELS)
+#define MIN_BLOCK_SIZE	   ((SAMPLES_PER_SOF - 1) * BYTES_PER_SLOT)
+#define BLOCK_SIZE	   (SAMPLES_PER_SOF * BYTES_PER_SLOT)
+#define MAX_BLOCK_SIZE	   ((SAMPLES_PER_SOF + 1) * BYTES_PER_SLOT)
 
 static struct data_fifo *fifo_tx;
 static struct data_fifo *fifo_rx;
@@ -50,13 +50,14 @@ static bool tx_first_data;
  * offset errors), but add 2 additional buffers to prevent out of memory errors
  * when USB host decides to perform rapid terminal enable/disable cycles.
  */
-#define I2S_BUFFERS_COUNT   7
+#define I2S_BUFFERS_COUNT 7
 K_MEM_SLAB_DEFINE_STATIC(i2s_tx_slab, ROUND_UP(MAX_BLOCK_SIZE, UDC_BUF_GRANULARITY),
 			 I2S_BUFFERS_COUNT, UDC_BUF_ALIGN);
 
 struct usb_i2s_ctx {
 	const struct device *i2s_dev;
-	bool terminal_enabled;
+	bool headphones_enabled;
+	bool microphone_enabled;
 	bool i2s_started;
 	/* Number of blocks written, used to determine when to start I2S.
 	 * Overflows are not a problem becuse this variable is not necessary
@@ -66,30 +67,25 @@ struct usb_i2s_ctx {
 	struct feedback_ctx *fb;
 };
 
-static void uac2_terminal_update_cb(const struct device *dev, uint8_t terminal,
-				    bool enabled, bool microframes,
-				    void *user_data)
+static void uac2_terminal_update_cb(const struct device *dev, uint8_t terminal, bool enabled,
+				    bool microframes, void *user_data)
 {
 	struct usb_i2s_ctx *ctx = user_data;
 
 	/* This sample has only one terminal therefore the callback can simply
 	 * ignore the terminal variable.
 	 */
-	//__ASSERT_NO_MSG(terminal == HEADPHONES_OUT_TERMINAL_ID);
-	/* This sample is for Full-Speed only devices. */
-	//This part is weird, need to check
-	//__ASSERT_NO_MSG(microframes == false);
 
-	ctx->terminal_enabled = enabled;
-	if (ctx->i2s_started && !enabled) {
-		//i2s_trigger(ctx->i2s_dev, I2S_DIR_TX, I2S_TRIGGER_DROP);
-		ctx->i2s_started = false;
-		ctx->i2s_blocks_written = 0;
+	if (terminal == HEADPHONES_OUT_TERMINAL_ID) {
+		ctx->headphones_enabled = enabled;
+	} else if (terminal == MICROPHONE_IN_TERMINAL_ID) {
+		ctx->microphone_enabled = enabled;
 	}
+
 }
 
-static void *uac2_get_recv_buf(const struct device *dev, uint8_t terminal,
-			       uint16_t size, void *user_data)
+static void *uac2_get_recv_buf(const struct device *dev, uint8_t terminal, uint16_t size,
+			       void *user_data)
 {
 	ARG_UNUSED(dev);
 	struct usb_i2s_ctx *ctx = user_data;
@@ -98,7 +94,7 @@ static void *uac2_get_recv_buf(const struct device *dev, uint8_t terminal,
 
 	if (terminal == HEADPHONES_OUT_TERMINAL_ID) {
 		__ASSERT_NO_MSG(size <= MAX_BLOCK_SIZE);
-		if (!ctx->terminal_enabled) {
+		if (!ctx->headphones_enabled) {
 			LOG_ERR("Buffer request on disabled terminal");
 			return NULL;
 		}
@@ -118,17 +114,16 @@ static void *uac2_get_recv_buf(const struct device *dev, uint8_t terminal,
 #define LED0_NODE DT_ALIAS(led0)
 static const struct gpio_dt_spec led = GPIO_DT_SPEC_GET(LED0_NODE, gpios);
 
-static void uac2_data_recv_cb(const struct device *dev, uint8_t terminal,
-			      void *buf, uint16_t size, void *user_data)
+static void uac2_data_recv_cb(const struct device *dev, uint8_t terminal, void *buf, uint16_t size,
+			      void *user_data)
 {
 	struct usb_i2s_ctx *ctx = user_data;
 	int ret;
 	void *data_in;
 	static bool led_state = true;
 
-	if (!ctx->terminal_enabled) {
+	if (!ctx->headphones_enabled && !ctx->microphone_enabled) {
 		k_mem_slab_free(&i2s_tx_slab, buf);
-		LOG_INF("!ctx->terimal_enabled");
 		return;
 	}
 
@@ -138,14 +133,12 @@ static void uac2_data_recv_cb(const struct device *dev, uint8_t terminal,
 		return;
 	}
 
-
 	ret = gpio_pin_toggle_dt(&led);
 	if (ret < 0) {
-		return 0;
+		LOG_INF("GPIO toggle failed");
 	}
 
 	led_state = !led_state;
-
 
 	if (!size) {
 		/* Zero fill to keep I2S going. If this is transient error, then
@@ -189,12 +182,12 @@ static void uac2_data_recv_cb(const struct device *dev, uint8_t terminal,
 	if (ret < 0) {
 		ctx->i2s_started = false;
 		ctx->i2s_blocks_written = 0;
-		//feedback_reset_ctx(ctx->fb);
+		// feedback_reset_ctx(ctx->fb);
 
 		/* Most likely underrun occurred, prepare I2S restart */
-		//i2s_trigger(ctx->i2s_dev, I2S_DIR_TX, I2S_TRIGGER_PREPARE);
+		// i2s_trigger(ctx->i2s_dev, I2S_DIR_TX, I2S_TRIGGER_PREPARE);
 
-		//ret = i2s_write(ctx->i2s_dev, buf, size);
+		// ret = i2s_write(ctx->i2s_dev, buf, size);
 		if (ret < 0) {
 			/* Drop data block, will try again on next frame */
 			k_mem_slab_free(&i2s_tx_slab, buf);
@@ -206,8 +199,8 @@ static void uac2_data_recv_cb(const struct device *dev, uint8_t terminal,
 	}
 }
 
-static void uac2_buf_release_cb(const struct device *dev, uint8_t terminal,
-				void *buf, void *user_data)
+static void uac2_buf_release_cb(const struct device *dev, uint8_t terminal, void *buf,
+				void *user_data)
 {
 	/* This sample does not send audio data so this won't be called */
 }
@@ -250,16 +243,13 @@ static void uac2_buf_release_cb(const struct device *dev, uint8_t terminal,
 static volatile bool use_hardcoded_feedback;
 static volatile uint32_t hardcoded_feedback = (48 << 14) + 1;
 
-static uint32_t uac2_feedback_cb(const struct device *dev, uint8_t terminal,
-				 void *user_data)
+static uint32_t uac2_feedback_cb(const struct device *dev, uint8_t terminal, void *user_data)
 {
 	/* Sample has only one UAC2 instance with one terminal so both can be
 	 * ignored here.
 	 */
 	ARG_UNUSED(dev);
 	ARG_UNUSED(terminal);
-	//LOG_INF("uac2_feedback_cb");
-	struct usb_i2s_ctx *ctx = user_data;
 
 	if (use_hardcoded_feedback) {
 		return hardcoded_feedback;
@@ -278,36 +268,34 @@ static void uac2_sof(const struct device *dev, void *user_data)
 	void *data_out;
 	size_t data_out_size;
 	struct usb_i2s_ctx *ctx = user_data;
-	//LOG_INF("uac2_sof");
 
-
-
-	if (fifo_tx == NULL) {
-		//LOG_INF("returning");
-		return;
-	}
-
-	ret = data_fifo_pointer_last_filled_get(fifo_tx, &data_out, &data_out_size, K_NO_WAIT);
-	if (ret) {
-		tx_num_underruns++;
-		if ((tx_num_underruns % 100) == 1) {
-			//LOG_WRN("USB TX underrun. Num: %d", tx_num_underruns);
+		if (fifo_tx == NULL) {
+			// LOG_INF("returning");
+			return;
 		}
 
-		return;
-	}
+		ret = data_fifo_pointer_last_filled_get(fifo_tx, &data_out, &data_out_size,
+							K_NO_WAIT);
+		if (ret) {
+			tx_num_underruns++;
+			if ((tx_num_underruns % 100) == 1) {
+				// LOG_WRN("USB TX underrun. Num: %d", tx_num_underruns);
+			}
 
-	pscm_one_channel_split(data_out, data_out_size, 0, 16, data_buffer, &data_out_size);
+			return;
+		}
 
-	data_fifo_block_free(fifo_tx, data_out);
+		pscm_one_channel_split(data_out, data_out_size, 0, 16, data_buffer, &data_out_size);
 
-	if (ctx->i2s_started) {
-		//feedback_process(ctx->fb);
-	}
+		data_fifo_block_free(fifo_tx, data_out);
 
+		if (ctx->i2s_started) {
+			// feedback_process(ctx->fb);
+		}
 
-	if (usbd_uac2_send(dev, MICROPHONE_IN_TERMINAL_ID, data_buffer, 12) < 0) {
- 	}
+		if (usbd_uac2_send(dev, MICROPHONE_IN_TERMINAL_ID, data_buffer, 12) < 0) {
+		}
+
 	/* We want to maintain 3 SOFs delay, i.e. samples received during SOF n
 	 * should be on I2S during SOF n+3. This provides enough wiggle room
 	 * for software scheduling that effectively eliminates "buffers not
@@ -328,13 +316,14 @@ static void uac2_sof(const struct device *dev, void *user_data)
 	 *   This function triggers I2S start
 	 *   DATA0 n+2 is copied; i2s_block_written is no longer relevant
 	 *   OUT DATA0 n+3 received from host
-	 */
+
 	if (!ctx->i2s_started && ctx->terminal_enabled &&
 	    ctx->i2s_blocks_written >= 2) {
 		//i2s_trigger(ctx->i2s_dev, I2S_DIR_TX, I2S_TRIGGER_START);
 		ctx->i2s_started = true;
 		//feedback_start(ctx->fb, ctx->i2s_blocks_written);
 	}
+	 */
 }
 
 static struct uac2_ops usb_audio_ops = {
@@ -370,7 +359,7 @@ void audio_usb_stop(void)
 
 int audio_usb_disable(void)
 {
-	int ret;
+	//int ret;
 
 	return 0;
 }
@@ -387,7 +376,7 @@ int audio_usb_init(void)
 	const struct device *dev = DEVICE_DT_GET(DT_NODELABEL(uac2_headset));
 	struct usbd_context *sample_usbd;
 
-	//main_ctx.fb = feedback_init();
+	// main_ctx.fb = feedback_init();
 
 	usbd_uac2_set_ops(dev, &usb_audio_ops, &main_ctx);
 
@@ -400,7 +389,6 @@ int audio_usb_init(void)
 	if (ret) {
 		return ret;
 	}
-
 
 	return 0;
 }
