@@ -14,7 +14,7 @@
 #include "audio_sync_timer.h"
 
 #include <zephyr/logging/log.h>
-LOG_MODULE_REGISTER(le_audio_rx, 4);
+LOG_MODULE_REGISTER(le_audio_rx, CONFIG_LE_AUDIO_RX_LOG_LEVEL);
 
 struct ble_iso_data {
 	uint8_t data[CONFIG_BT_ISO_RX_MTU];
@@ -62,7 +62,7 @@ void le_audio_rx_data_handler(uint8_t const *const p_data, size_t data_size, boo
 		/* A valid frame should always be equal to desired_data_size, set bad_frame
 		 * if that is not the case
 		 */
-		//bad_frame = true;
+		bad_frame = true;
 		rx_stats[channel_index].data_size_mismatch_cnt++;
 	}
 
@@ -72,7 +72,6 @@ void le_audio_rx_data_handler(uint8_t const *const p_data, size_t data_size, boo
 
 	if ((rx_stats[channel_index].recv_cnt % 100) == 0 && rx_stats[channel_index].recv_cnt) {
 		/* NOTE: The string below is used by the Nordic CI system */
-		LOG_INF("desired_data_size %d, data_size %d ", desired_data_size, data_size);
 		LOG_DBG("ISO RX SDUs: Ch: %d Total: %d Bad: %d Size mismatch %d", channel_index,
 			rx_stats[channel_index].recv_cnt, rx_stats[channel_index].bad_frame_cnt,
 			rx_stats[channel_index].data_size_mismatch_cnt);

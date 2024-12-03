@@ -246,9 +246,8 @@ int bt_le_audio_tx_send(struct le_audio_tx_info *tx, uint8_t num_tx,
 		}
 
 		if (data_size_pr_stream != LE_AUDIO_SDU_SIZE_OCTETS(bitrate)) {
-			//LOG_INF("data size pr stream %d LE_AUDIO_SDU_SIZE_OCTETS(bitrate) %d", data_size_pr_stream, LE_AUDIO_SDU_SIZE_OCTETS(bitrate));
-			//LOG_ERR("The encoded data size does not match the SDU size");
-			//return -EINVAL;
+			LOG_ERR("The encoded data size does not match the SDU size");
+			return -EINVAL;
 		}
 
 		if (common_interval != 0 &&

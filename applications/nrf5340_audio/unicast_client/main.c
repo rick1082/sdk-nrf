@@ -310,7 +310,7 @@ static void le_audio_msg_sub_thread(void)
 			LOG_DBG("\tBitrate (compressed): %d bps", bitrate_bps);
 
 			if (msg.dir == BT_AUDIO_DIR_SINK) {
-				ret = audio_system_config_set(sampling_rate_hz, bitrate_bps/2,
+				ret = audio_system_config_set(sampling_rate_hz, bitrate_bps,
 							      VALUE_NOT_SET);
 				ERR_CHK(ret);
 			} else if (msg.dir == BT_AUDIO_DIR_SOURCE) {

@@ -36,10 +36,6 @@ enum csip_set_rank {
 };
 
 static le_audio_receive_cb receive_cb;
-static struct bt_csip_set_member_svc_inst *csip;
-
-/* Advertising data for peer connection */
-static uint8_t csip_rsi_adv_data[BT_CSIP_RSI_SIZE];
 
 static uint8_t flags_adv_data;
 

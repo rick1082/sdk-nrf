@@ -170,7 +170,6 @@ static void encoder_thread(void *arg1, void *arg2, void *arg3)
 			LOG_DBG(COLOR_CYAN "RX alloced: %d, locked: %d" COLOR_RESET,
 				blocks_alloced_num, blocks_locked_num);
 			debug_trans_count = 0;
-			LOG_INF("encoded_data_size %d ", encoded_data_size);
 		} else {
 			debug_trans_count++;
 		}

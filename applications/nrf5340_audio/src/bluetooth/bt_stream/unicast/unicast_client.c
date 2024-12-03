@@ -94,12 +94,18 @@ static bool unicast_group_created;
 
 #define BT_BAP_LC3_UNICAST_PRESET_STEREO_24_2_1(_loc, _stream_context)                                    \
 	BT_BAP_LC3_PRESET(BT_AUDIO_CODEC_LC3_CONFIG(BT_AUDIO_CODEC_CFG_FREQ_24KHZ,                 \
-						    BT_AUDIO_CODEC_CFG_DURATION_10, _loc, 120U, 1,  \
+						    BT_AUDIO_CODEC_CFG_DURATION_10, _loc, 60U, 1,  \
 						    _stream_context),                              \
 			  BT_AUDIO_CODEC_QOS_UNFRAMED(10000u, 120u, 2u, 10u, 40000u))
 
+#define BT_BAP_LC3_UNICAST_PRESET_STEREO_48_2_1(_loc, _stream_context)                                    \
+	BT_BAP_LC3_PRESET(BT_AUDIO_CODEC_LC3_CONFIG(BT_AUDIO_CODEC_CFG_FREQ_24KHZ,                 \
+						    BT_AUDIO_CODEC_CFG_DURATION_10, _loc, 120U, 1,  \
+						    _stream_context),                              \
+			  BT_AUDIO_CODEC_QOS_UNFRAMED(10000u, 240u, 2u, 10u, 40000u))
+
 static struct bt_bap_lc3_preset lc3_preset_sink = BT_BAP_LC3_UNICAST_PRESET_NRF5340_AUDIO_SINK;
-static struct bt_bap_lc3_preset lc3_preset_sink_48_4_1 = BT_BAP_LC3_UNICAST_PRESET_48_4_1(
+static struct bt_bap_lc3_preset lc3_preset_sink_48_4_1 = BT_BAP_LC3_UNICAST_PRESET_STEREO_48_2_1(
 	BT_AUDIO_LOCATION_ANY, (BT_AUDIO_CONTEXT_TYPE_UNSPECIFIED));
 static struct bt_bap_lc3_preset lc3_preset_sink_24_2_1 = BT_BAP_LC3_UNICAST_PRESET_STEREO_24_2_1(
 	BT_AUDIO_LOCATION_ANY, (BT_AUDIO_CONTEXT_TYPE_UNSPECIFIED));
