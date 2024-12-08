@@ -538,6 +538,45 @@ void streamctrl_send(void const *const data, size_t size, uint8_t num_ch)
 
 #include <zephyr/bluetooth/hci.h>
 #include <bluetooth/hci_vs_sdc.h>
+#include "chmap_filter.h"
+
+struct params_ble {
+	uint16_t sample_count_min;
+	uint8_t min_channel_count;
+	int16_t weight_crc_ok;
+	int16_t weight_crc_error;
+	uint16_t ble_block_threshold;
+	uint8_t eval_max_count;
+	uint16_t eval_duration;
+	uint16_t eval_keepout_duration;
+	uint16_t eval_success_threshold;
+} __packed;
+
+struct params_wifi {
+	int16_t wifi_rating_inc;
+	int16_t wifi_present_threshold;
+	int16_t wifi_active_threshold;
+} __packed;
+
+struct params_chmap {
+	uint8_t chmap[CHMAP_BLE_BITMASK_SIZE];
+} __packed;
+
+struct params_blacklist {
+	uint16_t wifi_chn_bitmask;
+} __packed;
+
+static uint8_t chmap_instance_buf[CHMAP_FILTER_INST_SIZE] __aligned(CHMAP_FILTER_INST_ALIGN);
+static struct chmap_instance *chmap_inst;
+static uint8_t current_chmap[CHMAP_BLE_BITMASK_SIZE] = CHMAP_BLE_BITMASK_DEFAULT;
+static atomic_t processing;
+static atomic_t new_blacklist;
+static atomic_t params_updated;
+static struct chmap_filter_params filter_params;
+static struct k_mutex data_access_mutex;
+static struct chmap_instance *chmap_inst;
+
+
 
 static bool on_vs_evt(struct net_buf_simple *buf)
 {
@@ -553,6 +592,11 @@ static bool on_vs_evt(struct net_buf_simple *buf)
 		evt = (void *)buf->data;
 		LOG_INF("conn_handle: %2d, evt = %6d, ch_index: %2d, crc_ok: %d, crc_err: %d",
 			evt->conn_handle, evt->event_counter, evt->channel_index, evt->crc_ok_count, evt->crc_error_count);
+		chmap_filter_crc_update(
+			chmap_inst,
+			evt->channel_index,
+			evt->crc_ok_count,
+			evt->crc_error_count);
 		return true;
 	default:
 		return false;
@@ -576,6 +620,29 @@ static void enable_qos_reporting(void)
 	if (err) {
 		LOG_ERR("Failed to enable HCI VS QoS");
 	}
+}
+
+static void chmap_filter_setup(void)
+{
+	int ret;
+
+	chmap_filter_init();
+
+	chmap_inst =
+		(struct chmap_instance *) chmap_instance_buf;
+	ret = chmap_filter_instance_init(
+		chmap_inst,
+		sizeof(chmap_instance_buf));
+	if (ret) {
+		LOG_ERR("Failed to initialize filter, ret: %d", ret);
+		return;
+	}
+	LOG_INF("Chmap lib version: %s",
+		chmap_filter_version());
+
+	chmap_filter_params_get(chmap_inst, &filter_params);
+
+	enable_qos_reporting();
 }
 
 int main(void)
@@ -614,14 +681,14 @@ int main(void)
 	ret = unicast_client_enable(0, le_audio_rx_data_handler);
 	ERR_CHK(ret);
 
+	chmap_filter_setup();
+
 	ret = bt_mgmt_scan_start(0, 0, BT_MGMT_SCAN_TYPE_CONN, CONFIG_BT_DEVICE_NAME,
 				 BRDCAST_ID_NOT_USED);
 	if (ret) {
 		LOG_ERR("Failed to start scanning");
 		return ret;
 	}
-
-	enable_qos_reporting();
 
 	return 0;
 }
