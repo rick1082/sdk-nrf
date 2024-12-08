@@ -280,6 +280,7 @@ static void le_audio_msg_sub_thread(void)
 			}
 
 			/* Only update conn param once */
+			#if 0
 			if (((IS_ENABLED(CONFIG_BT_AUDIO_TX) && msg.dir == BT_AUDIO_DIR_SINK) ||
 			     (!IS_ENABLED(CONFIG_BT_AUDIO_TX) && msg.dir == BT_AUDIO_DIR_SOURCE)) &&
 			    interval != CONFIG_BLE_ACL_CONN_INTERVAL_SLOW) {
@@ -296,6 +297,7 @@ static void le_audio_msg_sub_thread(void)
 					LOG_WRN("Failed to update conn parameters: %d", ret);
 				}
 			}
+			#endif
 
 			LOG_DBG("LE audio config received");
 
@@ -575,7 +577,7 @@ static atomic_t params_updated;
 static struct chmap_filter_params filter_params;
 static struct k_mutex data_access_mutex;
 static struct chmap_instance *chmap_inst;
-
+#define INVALID_BLACKLIST 0xFFFF
 
 
 static bool on_vs_evt(struct net_buf_simple *buf)
@@ -590,8 +592,8 @@ static bool on_vs_evt(struct net_buf_simple *buf)
 	switch (*subevent_code) {
 	case SDC_HCI_SUBEVENT_VS_QOS_CONN_EVENT_REPORT:
 		evt = (void *)buf->data;
-		LOG_INF("conn_handle: %2d, evt = %6d, ch_index: %2d, crc_ok: %d, crc_err: %d",
-			evt->conn_handle, evt->event_counter, evt->channel_index, evt->crc_ok_count, evt->crc_error_count);
+		//LOG_INF("conn_handle: %2d, evt = %6d, ch_index: %2d, crc_ok: %d, crc_err: %d, crc_nak: %d",
+		//	evt->conn_handle, evt->event_counter, evt->channel_index, evt->crc_ok_count, evt->crc_error_count, evt->nak_count);
 		chmap_filter_crc_update(
 			chmap_inst,
 			evt->channel_index,
@@ -622,6 +624,95 @@ static void enable_qos_reporting(void)
 	}
 }
 
+static void apply_new_params(void)
+{
+	int err;
+
+	k_mutex_lock(&data_access_mutex, K_FOREVER);
+	/* chmap_filter_params_set returns immediately */
+	err = chmap_filter_params_set(chmap_inst, &filter_params);
+	atomic_set(&params_updated, false);
+	k_mutex_unlock(&data_access_mutex);
+
+	if (err) {
+		LOG_WRN("Param update failed");
+	}
+}
+
+static void ble_qos_thread_fn(void)
+{
+	while (true) {
+		bool update_channel_map;
+		int err;
+
+		//k_sleep(K_MSEC(CONFIG_DESKTOP_BLE_QOS_INTERVAL));
+		k_sleep(K_MSEC(1000));
+		LOG_INF("ble_qos_thread_fn");
+		/* Check and apply new parameters received via config channel */
+		if (atomic_get(&params_updated)) {
+			apply_new_params();
+		}
+
+		/* Check and apply new blacklist received via config channel */
+		uint16_t blacklist_update =
+			(uint16_t) atomic_set(&new_blacklist, INVALID_BLACKLIST);
+
+		if (blacklist_update != INVALID_BLACKLIST) {
+			err = chmap_filter_blacklist_set(
+				chmap_inst,
+				blacklist_update);
+			if (err) {
+				LOG_WRN("Blacklist update failed");
+			}
+		}
+
+		/* Run processing function. */
+		/* Atomic variable is used as data busy flag */
+		/* (this thread runs at the lowest priority) */
+		atomic_set(&processing, true);
+		update_channel_map = chmap_filter_process(chmap_inst);
+		atomic_set(&processing, false);
+
+		//ble_chn_stats_print(update_channel_map);
+
+		if (!update_channel_map) {
+			LOG_INF("!update_channel_map, continue");
+			continue;
+		}
+
+		uint8_t *chmap;
+
+		chmap = chmap_filter_suggested_map_get(chmap_inst);
+
+/*
+		struct ble_qos_event *event = new_ble_qos_event();
+		BUILD_ASSERT(sizeof(event->chmap) == CHMAP_BLE_BITMASK_SIZE, "");
+		memcpy(event->chmap, chmap, CHMAP_BLE_BITMASK_SIZE);
+		APP_EVENT_SUBMIT(event);
+*/
+
+		err = bt_le_set_chan_map(chmap);
+		if (err) {
+			LOG_WRN("bt_le_set_chan_map: %d", err);
+		} else {
+			LOG_WRN("Channel map update");
+		}
+
+
+		chmap_filter_suggested_map_confirm(chmap_inst);
+		k_mutex_lock(&data_access_mutex, K_FOREVER);
+		memcpy(current_chmap, chmap, sizeof(current_chmap));
+		k_mutex_unlock(&data_access_mutex);
+	}
+}
+
+
+#define THREAD_STACK_SIZE 2048
+#define THREAD_PRIORITY K_PRIO_PREEMPT(K_LOWEST_APPLICATION_THREAD_PRIO)
+
+static K_THREAD_STACK_DEFINE(thread_stack, THREAD_STACK_SIZE);
+static struct k_thread thread;
+#define MODULE_NAME "ble_qos"
 static void chmap_filter_setup(void)
 {
 	int ret;
@@ -641,6 +732,17 @@ static void chmap_filter_setup(void)
 		chmap_filter_version());
 
 	chmap_filter_params_get(chmap_inst, &filter_params);
+
+	k_mutex_init(&data_access_mutex);
+	new_blacklist = INVALID_BLACKLIST;
+	atomic_set(&params_updated, false);
+
+	k_thread_create(&thread, thread_stack,
+			THREAD_STACK_SIZE,
+			(k_thread_entry_t)ble_qos_thread_fn,
+			NULL, NULL, NULL,
+			THREAD_PRIORITY, 0, K_NO_WAIT);
+	k_thread_name_set(&thread, MODULE_NAME "_thread");
 
 	enable_qos_reporting();
 }
