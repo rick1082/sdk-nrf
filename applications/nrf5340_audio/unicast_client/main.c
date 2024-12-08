@@ -536,6 +536,48 @@ void streamctrl_send(void const *const data, size_t size, uint8_t num_ch)
 	}
 }
 
+#include <zephyr/bluetooth/hci.h>
+#include <bluetooth/hci_vs_sdc.h>
+
+static bool on_vs_evt(struct net_buf_simple *buf)
+{
+	uint8_t *subevent_code;
+	sdc_hci_subevent_vs_qos_conn_event_report_t *evt;
+
+	subevent_code = net_buf_simple_pull_mem(
+		buf,
+		sizeof(*subevent_code));
+
+	switch (*subevent_code) {
+	case SDC_HCI_SUBEVENT_VS_QOS_CONN_EVENT_REPORT:
+		evt = (void *)buf->data;
+		LOG_INF("conn_handle: %2d, evt = %6d, ch_index: %2d, crc_ok: %d, crc_err: %d",
+			evt->conn_handle, evt->event_counter, evt->channel_index, evt->crc_ok_count, evt->crc_error_count);
+		return true;
+	default:
+		return false;
+	}
+}
+
+static void enable_qos_reporting(void)
+{
+	int err;
+	sdc_hci_cmd_vs_qos_conn_event_report_enable_t cmd_enable;
+
+	err = bt_hci_register_vnd_evt_cb(on_vs_evt);
+	if (err) {
+		LOG_ERR("Failed to register HCI VS callback");
+		return;
+	}
+
+	cmd_enable.enable = 1;
+
+	err = hci_vs_sdc_qos_conn_event_report_enable(&cmd_enable);
+	if (err) {
+		LOG_ERR("Failed to enable HCI VS QoS");
+	}
+}
+
 int main(void)
 {
 	int ret;
@@ -578,6 +620,8 @@ int main(void)
 		LOG_ERR("Failed to start scanning");
 		return ret;
 	}
+
+	enable_qos_reporting();
 
 	return 0;
 }
