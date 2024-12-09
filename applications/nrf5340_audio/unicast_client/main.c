@@ -400,7 +400,7 @@ static void bt_mgmt_evt_handler(const struct zbus_channel *chan)
 		}
 
 		if (IS_ENABLED(CONFIG_STREAM_BIDIRECTIONAL)) {
-			ret = unicast_client_discover(msg->conn, UNICAST_SERVER_BIDIR);
+			ret = unicast_client_discover(msg->conn, UNICAST_SERVER_SOURCE);
 		} else {
 			ret = unicast_client_discover(msg->conn, UNICAST_SERVER_SINK);
 		}
@@ -645,9 +645,7 @@ static void ble_qos_thread_fn(void)
 		bool update_channel_map;
 		int err;
 
-		//k_sleep(K_MSEC(CONFIG_DESKTOP_BLE_QOS_INTERVAL));
 		k_sleep(K_MSEC(1000));
-		LOG_INF("ble_qos_thread_fn");
 		/* Check and apply new parameters received via config channel */
 		if (atomic_get(&params_updated)) {
 			apply_new_params();
@@ -676,7 +674,6 @@ static void ble_qos_thread_fn(void)
 		//ble_chn_stats_print(update_channel_map);
 
 		if (!update_channel_map) {
-			LOG_INF("!update_channel_map, continue");
 			continue;
 		}
 
@@ -696,6 +693,8 @@ static void ble_qos_thread_fn(void)
 			LOG_WRN("bt_le_set_chan_map: %d", err);
 		} else {
 			LOG_WRN("Channel map update");
+			LOG_WRN("chmap: 0x%02X 0x%02X 0x%02X 0x%02X 0x%02X",
+				chmap[0], chmap[1], chmap[2], chmap[3], chmap[4]);
 		}
 
 
