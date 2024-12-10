@@ -194,7 +194,7 @@ static void le_audio_msg_sub_thread(void)
 			} else {
 				interval = conn_info.le.interval;
 			}
-
+#if 0
 			/* Only update conn param once */
 			if (((IS_ENABLED(CONFIG_BT_AUDIO_TX) && msg.dir == BT_AUDIO_DIR_SINK) ||
 			     (!IS_ENABLED(CONFIG_BT_AUDIO_TX) && msg.dir == BT_AUDIO_DIR_SOURCE)) &&
@@ -212,7 +212,7 @@ static void le_audio_msg_sub_thread(void)
 					LOG_WRN("Failed to update conn parameters: %d", ret);
 				}
 			}
-
+#endif
 			LOG_DBG("LE audio config received");
 
 			ret = unicast_client_config_get(msg.conn, msg.dir, &bitrate_bps,

@@ -264,7 +264,7 @@ int bt_le_audio_tx_send(struct le_audio_tx_info *tx, uint8_t num_tx,
 		} else {
 			ret = iso_stream_send(
 				&enc_audio.data[(data_size_pr_stream * tx[i].audio_channel)],
-				data_size_pr_stream, tx[i].cap_stream, tx_info,
+				data_size_pr_stream * 2, tx[i].cap_stream, tx_info,
 				common_tx_sync_ts_us);
 		}
 
