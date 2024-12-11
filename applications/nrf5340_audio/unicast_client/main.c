@@ -21,6 +21,10 @@
 #include "bt_content_ctrl.h"
 #include "le_audio_rx.h"
 #include "fw_info_app.h"
+#include <bluetooth/services/nus.h>
+#include <bluetooth/services/nus_client.h>
+#include <bluetooth/gatt_dm.h>
+#include <stdio.h>
 
 #include <zephyr/logging/log.h>
 LOG_MODULE_REGISTER(main, CONFIG_MAIN_LOG_LEVEL);
@@ -52,7 +56,7 @@ K_THREAD_STACK_DEFINE(button_msg_sub_thread_stack, CONFIG_BUTTON_MSG_SUB_STACK_S
 K_THREAD_STACK_DEFINE(le_audio_msg_sub_thread_stack, CONFIG_LE_AUDIO_MSG_SUB_STACK_SIZE);
 K_THREAD_STACK_DEFINE(content_control_msg_sub_thread_stack,
 		      CONFIG_CONTENT_CONTROL_MSG_SUB_STACK_SIZE);
-
+static void gatt_discover(struct bt_conn *conn);
 /* Function for handling all stream state changes */
 static void stream_state_set(enum stream_state stream_state_new)
 {
@@ -257,7 +261,7 @@ static void le_audio_msg_sub_thread(void)
 				}
 			}
 
-			if (num_conn < CONFIG_BT_MAX_CONN) {
+			if (num_conn < 1) {
 				/* Room for more connections, start scanning again */
 				ret = bt_mgmt_scan_start(0, 0, BT_MGMT_SCAN_TYPE_CONN, NULL,
 							 BRDCAST_ID_NOT_USED);
@@ -307,7 +311,7 @@ static void bt_mgmt_evt_handler(const struct zbus_channel *chan)
 
 	case BT_MGMT_SECURITY_CHANGED:
 		LOG_INF("Security changed");
-
+		gatt_discover(msg->conn);
 		ret = bt_r_and_c_discover(msg->conn);
 		if (ret) {
 			LOG_WRN("Failed to discover rendering services");
@@ -451,6 +455,84 @@ void streamctrl_send(void const *const data, size_t size, uint8_t num_ch)
 		prev_ret = ret;
 	}
 }
+
+static struct bt_nus_client nus_client;
+static void discovery_complete(struct bt_gatt_dm *dm,
+			       void *context)
+{
+	struct bt_nus_client *nus = context;
+	LOG_INF("Service discovery completed");
+
+	bt_gatt_dm_data_print(dm);
+
+	bt_nus_handles_assign(dm, nus);
+	bt_nus_subscribe_receive(nus);
+
+	bt_gatt_dm_data_release(dm);
+}
+
+static void discovery_service_not_found(struct bt_conn *conn,
+					void *context)
+{
+	LOG_INF("Service not found");
+}
+
+static void discovery_error(struct bt_conn *conn,
+			    int err,
+			    void *context)
+{
+	LOG_WRN("Error while discovering GATT database: (%d)", err);
+}
+
+struct bt_gatt_dm_cb discovery_cb = {
+	.completed         = discovery_complete,
+	.service_not_found = discovery_service_not_found,
+	.error_found       = discovery_error,
+};
+
+static void gatt_discover(struct bt_conn *conn)
+{
+	int err;
+
+	err = bt_gatt_dm_start(conn,
+			       BT_UUID_NUS_SERVICE,
+			       &discovery_cb,
+			       &nus_client);
+	if (err) {
+		LOG_ERR("could not start the discovery procedure, error "
+			"code: %d", err);
+	}
+}
+static uint8_t ble_data_received(struct bt_nus_client *nus,
+						const uint8_t *data, uint16_t len)
+{
+	LOG_HEXDUMP_INF(data, len, "Received data");
+	return BT_GATT_ITER_CONTINUE;
+}
+static void ble_data_sent(struct bt_nus_client *nus, uint8_t err,
+					const uint8_t *const data, uint16_t len)
+{
+}
+static int nus_client_init(void)
+{
+	int err;
+	struct bt_nus_client_init_param init = {
+		.cb = {
+			.received = ble_data_received,
+			//.sent = ble_data_sent,
+		}
+	};
+
+	err = bt_nus_client_init(&nus_client, &init);
+	if (err) {
+		LOG_ERR("NUS Client initialization failed (err %d)", err);
+		return err;
+	}
+
+	LOG_INF("NUS Client module initialized");
+	return err;
+}
+
 #include <zephyr/pm/policy.h>
 int main(void)
 {
@@ -486,6 +568,8 @@ int main(void)
 	ret = bt_content_ctrl_init();
 	ERR_CHK(ret);
 */
+	nus_client_init();
+
 	ret = unicast_client_enable(0, le_audio_rx_data_handler);
 	ERR_CHK(ret);
 
