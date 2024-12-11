@@ -42,7 +42,7 @@ ZBUS_CHAN_DECLARE(bt_mgmt_chan);
 ZBUS_CHAN_DECLARE(cont_media_chan);
 ZBUS_CHAN_DECLARE(sdu_ref_chan);
 
-//ZBUS_OBS_DECLARE(sdu_ref_msg_listen);
+// ZBUS_OBS_DECLARE(sdu_ref_msg_listen);
 
 static struct k_thread button_msg_sub_thread_data;
 static struct k_thread le_audio_msg_sub_thread_data;
@@ -382,13 +382,12 @@ static int zbus_subscribers_create(void)
 	if (ret) {
 		return ret;
 	}
-/*
-	ret = zbus_chan_add_obs(&sdu_ref_chan, &sdu_ref_msg_listen, ZBUS_ADD_OBS_TIMEOUT_MS);
-	if (ret) {
-		LOG_ERR("Failed to add timestamp listener");
-		return ret;
-	}
-*/
+	/*
+		ret = zbus_chan_add_obs(&sdu_ref_chan, &sdu_ref_msg_listen,
+	   ZBUS_ADD_OBS_TIMEOUT_MS); if (ret) { LOG_ERR("Failed to add timestamp listener"); return
+	   ret;
+		}
+	*/
 	return 0;
 }
 
@@ -457,8 +456,7 @@ void streamctrl_send(void const *const data, size_t size, uint8_t num_ch)
 }
 
 static struct bt_nus_client nus_client;
-static void discovery_complete(struct bt_gatt_dm *dm,
-			       void *context)
+static void discovery_complete(struct bt_gatt_dm *dm, void *context)
 {
 	struct bt_nus_client *nus = context;
 	LOG_INF("Service discovery completed");
@@ -471,57 +469,84 @@ static void discovery_complete(struct bt_gatt_dm *dm,
 	bt_gatt_dm_data_release(dm);
 }
 
-static void discovery_service_not_found(struct bt_conn *conn,
-					void *context)
+static void discovery_service_not_found(struct bt_conn *conn, void *context)
 {
 	LOG_INF("Service not found");
 }
 
-static void discovery_error(struct bt_conn *conn,
-			    int err,
-			    void *context)
+static void discovery_error(struct bt_conn *conn, int err, void *context)
 {
 	LOG_WRN("Error while discovering GATT database: (%d)", err);
 }
 
 struct bt_gatt_dm_cb discovery_cb = {
-	.completed         = discovery_complete,
+	.completed = discovery_complete,
 	.service_not_found = discovery_service_not_found,
-	.error_found       = discovery_error,
+	.error_found = discovery_error,
 };
 
 static void gatt_discover(struct bt_conn *conn)
 {
 	int err;
 
-	err = bt_gatt_dm_start(conn,
-			       BT_UUID_NUS_SERVICE,
-			       &discovery_cb,
-			       &nus_client);
+	err = bt_gatt_dm_start(conn, BT_UUID_NUS_SERVICE, &discovery_cb, &nus_client);
 	if (err) {
 		LOG_ERR("could not start the discovery procedure, error "
-			"code: %d", err);
+			"code: %d",
+			err);
 	}
 }
-static uint8_t ble_data_received(struct bt_nus_client *nus,
-						const uint8_t *data, uint16_t len)
+#include "audio_usb.h"
+#include <zephyr/usb/class/usbd_hid.h>
+static uint8_t ble_data_received(struct bt_nus_client *nus, const uint8_t *data, uint16_t len)
 {
-	LOG_HEXDUMP_INF(data, len, "Received data");
+	 LOG_HEXDUMP_INF(data, len, "Received data");
+	 audio_usb_send_key(data[0]);
+	 /*
+	if (data[1] == 0x00) {
+		switch (data[0]) {
+		case 0x02:
+			//LOG_INF("HID_KEY_A");
+			audio_usb_send_key(HID_KEY_D);
+			break;
+		case 0x03:
+			//LOG_INF("HID_KEY_B");
+			audio_usb_send_key(HID_KEY_F);
+			break;
+		case 0x04:
+			//LOG_INF("HID_KEY_C");
+			audio_usb_send_key(HID_KEY_Q);
+			break;
+		case 0x05:
+			//LOG_INF("HID_KEY_D");
+			audio_usb_send_key(HID_KEY_K);
+			break;
+		case 0x06:
+			//LOG_INF("HID_KEY_E");
+			audio_usb_send_key(HID_KEY_H);
+			break;
+		default:
+			audio_usb_send_key(0);
+			break;
+		}
+
+	} else {
+		audio_usb_send_key(0);
+	}
+	*/
 	return BT_GATT_ITER_CONTINUE;
 }
-static void ble_data_sent(struct bt_nus_client *nus, uint8_t err,
-					const uint8_t *const data, uint16_t len)
+static void ble_data_sent(struct bt_nus_client *nus, uint8_t err, const uint8_t *const data,
+			  uint16_t len)
 {
 }
 static int nus_client_init(void)
 {
 	int err;
-	struct bt_nus_client_init_param init = {
-		.cb = {
-			.received = ble_data_received,
-			//.sent = ble_data_sent,
-		}
-	};
+	struct bt_nus_client_init_param init = {.cb = {
+							.received = ble_data_received,
+							//.sent = ble_data_sent,
+						}};
 
 	err = bt_nus_client_init(&nus_client, &init);
 	if (err) {
@@ -541,11 +566,11 @@ int main(void)
 
 	LOG_DBG("Main started");
 
-	//ret = nrf5340_audio_dk_init();
-	//ERR_CHK(ret);
+	// ret = nrf5340_audio_dk_init();
+	// ERR_CHK(ret);
 
-	//ret = fw_info_app_print();
-	//ERR_CHK(ret);
+	// ret = fw_info_app_print();
+	// ERR_CHK(ret);
 
 	ret = bt_mgmt_init();
 	ERR_CHK(ret);
@@ -561,20 +586,19 @@ int main(void)
 
 	ret = le_audio_rx_init();
 	ERR_CHK(ret);
-/* something from the audio profile cause bus issue
-	ret = bt_r_and_c_init();
-	ERR_CHK(ret);
+	/* something from the audio profile cause bus issue
+		ret = bt_r_and_c_init();
+		ERR_CHK(ret);
 
-	ret = bt_content_ctrl_init();
-	ERR_CHK(ret);
-*/
+		ret = bt_content_ctrl_init();
+		ERR_CHK(ret);
+	*/
 	nus_client_init();
 
 	ret = unicast_client_enable(0, le_audio_rx_data_handler);
 	ERR_CHK(ret);
 
-
-	//pm_policy_latency_request_add(&req, 30000);
+	// pm_policy_latency_request_add(&req, 30000);
 
 	ret = bt_mgmt_scan_start(0, 0, BT_MGMT_SCAN_TYPE_CONN, CONFIG_BT_DEVICE_NAME,
 				 BRDCAST_ID_NOT_USED);
