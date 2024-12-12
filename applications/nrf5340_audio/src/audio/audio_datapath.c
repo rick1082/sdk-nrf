@@ -915,7 +915,7 @@ void audio_datapath_stream_out(const uint8_t *buf, size_t size, uint32_t sdu_ref
 	}
 
 	/*** Check incoming data ***/
-	printk("c s %d t %d c %d b %d ", sdu_ref_us, recv_frame_ts_us, channel, bad_frame);
+	//printk("c s %d t %d c %d b %d ", sdu_ref_us, recv_frame_ts_us, channel, bad_frame);
 	ble_rx_data.sdu_ref_us = sdu_ref_us;
 	ble_rx_data.recv_frame_ts_us = recv_frame_ts_us;
 	ble_rx_data.channel = channel;
@@ -972,7 +972,7 @@ void audio_datapath_stream_out(const uint8_t *buf, size_t size, uint32_t sdu_ref
 	bad_frame = ble_rx_data.bad_frame;
 	desired_data_size = ble_rx_data.desired_data_size;
 	memcpy(channel_buf, ble_rx_data.buf, size);
-	printk("r s %d t %d c %d b %d \n", sdu_ref_us, recv_frame_ts_us, channel, bad_frame);
+	//printk("r s %d t %d c %d b %d \n", sdu_ref_us, recv_frame_ts_us, channel, bad_frame);
 	if (bad_frame) {
 		/* Error in the frame or frame lost - sdu_ref_us is still valid */
 		LOG_DBG("Bad audio frame");
