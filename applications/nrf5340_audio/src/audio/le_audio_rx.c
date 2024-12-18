@@ -22,6 +22,8 @@ struct ble_iso_data {
 	bool bad_frame;
 	uint32_t sdu_ref;
 	uint32_t recv_frame_ts;
+	uint8_t channel;
+	uint8_t desired_data_size;
 } __packed;
 
 struct rx_stats {
@@ -87,11 +89,6 @@ void le_audio_rx_data_handler(uint8_t const *const p_data, size_t data_size, boo
 		return;
 	}
 
-	if (channel_index != AUDIO_CH_L && (CONFIG_AUDIO_DEV == GATEWAY)) {
-		/* Only left channel RX data in use on gateway */
-		return;
-	}
-
 	ret = data_fifo_num_used_get(&ble_fifo_rx, &blocks_alloced_num, &blocks_locked_num);
 	ERR_CHK(ret);
 
@@ -127,6 +124,8 @@ void le_audio_rx_data_handler(uint8_t const *const p_data, size_t data_size, boo
 	iso_received->data_size = data_size;
 	iso_received->sdu_ref = sdu_ref;
 	iso_received->recv_frame_ts = recv_frame_ts;
+	iso_received->channel = channel_index;
+	iso_received->desired_data_size = desired_data_size;
 
 	ret = data_fifo_block_lock(&ble_fifo_rx, (void *)&iso_received,
 				   sizeof(struct ble_iso_data));
@@ -154,7 +153,7 @@ static void audio_datapath_thread(void *dummy1, void *dummy2, void *dummy3)
 		} else {
 			audio_datapath_stream_out(iso_received->data, iso_received->data_size,
 						  iso_received->sdu_ref, iso_received->bad_frame,
-						  iso_received->recv_frame_ts);
+						  iso_received->recv_frame_ts, iso_received->channel, iso_received->desired_data_size);
 		}
 		data_fifo_block_free(&ble_fifo_rx, (void *)iso_received);
 
