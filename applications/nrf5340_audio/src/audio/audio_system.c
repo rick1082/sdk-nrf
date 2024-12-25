@@ -68,8 +68,8 @@ static void audio_gateway_configure(void)
 	}
 
 #if (CONFIG_STREAM_BIDIRECTIONAL)
-	sw_codec_cfg.decoder.num_ch = 1;
-	sw_codec_cfg.decoder.channel_mode = SW_CODEC_MONO;
+	sw_codec_cfg.decoder.num_ch = 2;
+	sw_codec_cfg.decoder.channel_mode = SW_CODEC_STEREO;
 #endif /* (CONFIG_STREAM_BIDIRECTIONAL) */
 
 	if (IS_ENABLED(CONFIG_MONO_TO_ALL_RECEIVERS)) {

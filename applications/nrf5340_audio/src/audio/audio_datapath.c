@@ -906,21 +906,34 @@ void audio_datapath_stream_out(const uint8_t *buf, size_t size, uint32_t sdu_ref
 		return;
 	}
 
-	if (channel == AUDIO_CH_R)
-	{
-		return;
-	}
+
 	/*** Check incoming data ***/
 
 	if (!buf) {
 		LOG_ERR("Buffer pointer is NULL");
 	}
+	static uint8_t prev_channel = 0;
 
+	if (channel == prev_channel) {
+		LOG_WRN("same channel %d", channel);
+	}
+
+	if (channel == AUDIO_CH_R)
+	{
+		prev_channel = AUDIO_CH_R;
+		return;
+	}
+
+	if (channel == AUDIO_CH_L)
+	{
+		prev_channel = AUDIO_CH_L;
+	}
+/*
 	if (sdu_ref_us == ctrl_blk.prev_pres_sdu_ref_us && sdu_ref_us != 0) {
 		LOG_WRN("Duplicate sdu_ref_us (%d) - Dropping audio frame", sdu_ref_us);
 		return;
 	}
-
+*/
 	bool sdu_ref_not_consecutive = false;
 
 	if (ctrl_blk.prev_pres_sdu_ref_us) {
@@ -960,8 +973,18 @@ void audio_datapath_stream_out(const uint8_t *buf, size_t size, uint32_t sdu_ref
 
 	int ret;
 	size_t pcm_size;
-
-	ret = sw_codec_decode(buf, size, bad_frame, &ctrl_blk.decoded_data, &pcm_size);
+	static uint8_t encoded_data[400];
+	uint8_t bad_frame_ch = 0;
+	if(size != 200) {
+		memset(encoded_data, 0, sizeof(encoded_data));
+	}else {
+		memcpy(encoded_data, buf, size);
+		memset(encoded_data + size, 0, sizeof(encoded_data) - size);		
+	}
+	if (bad_frame) {
+		bad_frame_ch = 1;
+	}
+	ret = sw_codec_decode(encoded_data, 400, bad_frame, &ctrl_blk.decoded_data, &pcm_size);
 	if (ret) {
 		LOG_WRN("SW codec decode error: %d", ret);
 	}
