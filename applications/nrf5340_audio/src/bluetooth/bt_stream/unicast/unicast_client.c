@@ -1691,7 +1691,6 @@ int unicast_client_stream_state(uint8_t audio_channel)
 				unicast_servers[0][0][j].source_ep,
 				&state);
 			if (ret) {
-				LOG_ERR("Failed to get state: %d", ret);
 				return ret;
 			} else {
 				return state;

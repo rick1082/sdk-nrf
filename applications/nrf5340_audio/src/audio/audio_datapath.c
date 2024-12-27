@@ -25,6 +25,7 @@
 #include "audio_system.h"
 #include "streamctrl.h"
 #include "sd_card_playback.h"
+#include "unicast_client.h"
 
 #include <zephyr/logging/log.h>
 LOG_MODULE_REGISTER(audio_datapath, CONFIG_AUDIO_DATAPATH_LOG_LEVEL);
@@ -897,14 +898,40 @@ void audio_datapath_pres_delay_us_get(uint32_t *delay_us)
 {
 	*delay_us = ctrl_blk.pres_comp.pres_delay_us;
 }
-#include "unicast_client.h"
+
+#include <zephyr/sys/ring_buffer.h>
+
+RING_BUF_DECLARE(recv_ring_buf_l, 280 * 10);
+RING_BUF_DECLARE(recv_ring_buf_r, 280 * 10);
+
+static struct recv_pkt_info {
+	uint32_t sdu_ref_us;
+	uint32_t recv_frame_ts_us;
+	uint8_t channel;
+	bool bad_frame;
+	uint8_t size;
+	uint8_t desired_data_size;
+	uint8_t buf[CONFIG_BT_ISO_RX_MTU];
+}__packed;
+
 void audio_datapath_stream_out(const uint8_t *buf, size_t size, uint32_t sdu_ref_us, bool bad_frame,
 			       uint32_t recv_frame_ts_us, uint8_t channel, uint8_t desired_data_size)
 {
+	struct recv_pkt_info recv_pkt;
+	struct recv_pkt_info recv_pkt_dummy;
+
 	if (!ctrl_blk.stream_started) {
 		LOG_WRN("Stream not started");
 		return;
 	}
+
+	recv_pkt.sdu_ref_us = sdu_ref_us;
+	recv_pkt.recv_frame_ts_us = recv_frame_ts_us;
+	recv_pkt.channel = channel;
+	recv_pkt.bad_frame = bad_frame;
+	recv_pkt.size = size;
+	recv_pkt.desired_data_size = desired_data_size;
+	memcpy(recv_pkt.buf, buf, size);
 
 
 	/*** Check incoming data ***/
@@ -920,12 +947,12 @@ void audio_datapath_stream_out(const uint8_t *buf, size_t size, uint32_t sdu_ref
 	int state;
 	state = unicast_client_stream_state(1);
 	if(state != BT_BAP_EP_STATE_STREAMING) {
-		LOG_WRN(" L stream not started, %d", state);
+		//LOG_WRN(" L stream not started, %d", state);
 	}
 
 	state = unicast_client_stream_state(2);
 	if(state != BT_BAP_EP_STATE_STREAMING) {
-		LOG_WRN(" R stream not started, %d", state);
+		//LOG_WRN(" R stream not started, %d", state);
 	}
 
 	if (channel == AUDIO_CH_R)
@@ -936,8 +963,17 @@ void audio_datapath_stream_out(const uint8_t *buf, size_t size, uint32_t sdu_ref
 
 	if (channel == AUDIO_CH_L)
 	{
+		if(ring_buf_put(&recv_ring_buf_l, (uint8_t *)&recv_pkt, sizeof(recv_pkt)) != sizeof(recv_pkt)) {
+			//LOG_INF("ring_buf_put R");
+			ring_buf_get(&recv_ring_buf_l, (uint8_t *)&recv_pkt_dummy, sizeof(recv_pkt_dummy));
+			ring_buf_put(&recv_ring_buf_l, (uint8_t *)&recv_pkt, sizeof(recv_pkt));
+		}
 		prev_channel = AUDIO_CH_L;
 	}
+
+
+
+
 /*
 	if (sdu_ref_us == ctrl_blk.prev_pres_sdu_ref_us && sdu_ref_us != 0) {
 		LOG_WRN("Duplicate sdu_ref_us (%d) - Dropping audio frame", sdu_ref_us);
@@ -981,6 +1017,19 @@ void audio_datapath_stream_out(const uint8_t *buf, size_t size, uint32_t sdu_ref
 
 	/*** Decode ***/
 
+	if(ring_buf_get(&recv_ring_buf_l, (uint8_t *)&recv_pkt, sizeof(recv_pkt)) != sizeof(recv_pkt)) {
+		LOG_INF("ring_buf_get R");
+		return;
+	} 
+
+	sdu_ref_us = recv_pkt.sdu_ref_us;
+	recv_frame_ts_us = recv_pkt.recv_frame_ts_us;
+	channel = recv_pkt.channel;
+	bad_frame = recv_pkt.bad_frame;
+	size = recv_pkt.size;
+	desired_data_size = recv_pkt.desired_data_size;
+	//memcpy(buf, recv_pkt.buf, size);
+
 	int ret;
 	size_t pcm_size;
 	static uint8_t encoded_data[400];
@@ -988,7 +1037,7 @@ void audio_datapath_stream_out(const uint8_t *buf, size_t size, uint32_t sdu_ref
 	if(size != 200) {
 		memset(encoded_data, 0, sizeof(encoded_data));
 	}else {
-		memcpy(encoded_data, buf, size);
+		memcpy(encoded_data, recv_pkt.buf, size);
 		memset(encoded_data + size, 0, sizeof(encoded_data) - size);		
 	}
 	if (bad_frame) {
