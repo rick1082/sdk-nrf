@@ -897,7 +897,7 @@ void audio_datapath_pres_delay_us_get(uint32_t *delay_us)
 {
 	*delay_us = ctrl_blk.pres_comp.pres_delay_us;
 }
-
+#include "unicast_client.h"
 void audio_datapath_stream_out(const uint8_t *buf, size_t size, uint32_t sdu_ref_us, bool bad_frame,
 			       uint32_t recv_frame_ts_us, uint8_t channel, uint8_t desired_data_size)
 {
@@ -916,6 +916,16 @@ void audio_datapath_stream_out(const uint8_t *buf, size_t size, uint32_t sdu_ref
 
 	if (channel == prev_channel) {
 		LOG_WRN("same channel %d", channel);
+	}
+	int state;
+	state = unicast_client_stream_state(1);
+	if(state != BT_BAP_EP_STATE_STREAMING) {
+		LOG_WRN(" L stream not started, %d", state);
+	}
+
+	state = unicast_client_stream_state(2);
+	if(state != BT_BAP_EP_STATE_STREAMING) {
+		LOG_WRN(" R stream not started, %d", state);
 	}
 
 	if (channel == AUDIO_CH_R)
@@ -984,7 +994,7 @@ void audio_datapath_stream_out(const uint8_t *buf, size_t size, uint32_t sdu_ref
 	if (bad_frame) {
 		bad_frame_ch = 1;
 	}
-	ret = sw_codec_decode(encoded_data, 400, bad_frame, &ctrl_blk.decoded_data, &pcm_size);
+	ret = sw_codec_decode(encoded_data, desired_data_size*2, bad_frame, &ctrl_blk.decoded_data, &pcm_size);
 	if (ret) {
 		LOG_WRN("SW codec decode error: %d", ret);
 	}

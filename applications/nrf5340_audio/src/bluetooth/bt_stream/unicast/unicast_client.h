@@ -57,6 +57,14 @@ enum unicast_discover_dir {
 #endif /* CONFIG_BT_BAP_UNICAST_CONFIGURABLE */
 
 /**
+ * @brief	Get the state of the audio stream.
+ *
+ * @param[in]	channel		Channel to get the state for.
+ * @return	Stream state.
+ */
+int unicast_client_stream_state(enum audio_channel);
+
+/**
  * @brief	Get configuration for the audio stream.
  *
  * @param[in]	conn			Pointer to the connection to get the configuration for.
