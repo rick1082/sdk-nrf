@@ -56,7 +56,7 @@ LOG_MODULE_REGISTER(audio_datapath, CONFIG_AUDIO_DATAPATH_LOG_LEVEL);
 /* Increment sample FIFO index by one block */
 #define NEXT_IDX(i) (((i) < (FIFO_NUM_BLKS - 1)) ? ((i) + 1) : 0)
 /* Decrement sample FIFO index by one block */
-#define PREV_IDX(i) (((i) > 0) ? ((i)-1) : (FIFO_NUM_BLKS - 1))
+#define PREV_IDX(i) (((i) > 0) ? ((i) - 1) : (FIFO_NUM_BLKS - 1))
 
 #define NUM_BLKS_IN_FRAME      NUM_BLKS(CONFIG_AUDIO_FRAME_DURATION_US)
 #define BLK_MONO_NUM_SAMPS     BLK_SIZE_SAMPLES(CONFIG_AUDIO_SAMPLE_RATE_HZ)
@@ -912,13 +912,24 @@ static struct recv_pkt_info {
 	uint8_t size;
 	uint8_t desired_data_size;
 	uint8_t buf[CONFIG_BT_ISO_RX_MTU];
-}__packed;
+} __packed;
+
+#if (CONFIG_AUDIO_DEV != GATEWAY)
+int unicast_client_stream_state(enum audio_channel)
+{
+	return 0;
+}
+#endif
 
 void audio_datapath_stream_out(const uint8_t *buf, size_t size, uint32_t sdu_ref_us, bool bad_frame,
-			       uint32_t recv_frame_ts_us, uint8_t channel, uint8_t desired_data_size)
+			       uint32_t recv_frame_ts_us, uint8_t channel,
+			       uint8_t desired_data_size)
 {
 	struct recv_pkt_info recv_pkt;
+	struct recv_pkt_info ring_buf_l, ring_buf_r;
 	struct recv_pkt_info recv_pkt_dummy;
+	static uint8_t encoded_data[400];
+	uint8_t bad_frame_ch = 0;
 
 	if (!ctrl_blk.stream_started) {
 		LOG_WRN("Stream not started");
@@ -933,7 +944,6 @@ void audio_datapath_stream_out(const uint8_t *buf, size_t size, uint32_t sdu_ref
 	recv_pkt.desired_data_size = desired_data_size;
 	memcpy(recv_pkt.buf, buf, size);
 
-
 	/*** Check incoming data ***/
 
 	if (!buf) {
@@ -944,42 +954,113 @@ void audio_datapath_stream_out(const uint8_t *buf, size_t size, uint32_t sdu_ref
 	if (channel == prev_channel) {
 		LOG_WRN("same channel %d", channel);
 	}
-	int state;
-	state = unicast_client_stream_state(1);
-	if(state != BT_BAP_EP_STATE_STREAMING) {
-		//LOG_WRN(" L stream not started, %d", state);
-	}
+	/*
 
-	state = unicast_client_stream_state(2);
-	if(state != BT_BAP_EP_STATE_STREAMING) {
-		//LOG_WRN(" R stream not started, %d", state);
-	}
-
-	if (channel == AUDIO_CH_R)
-	{
+	*/
+	if (channel == AUDIO_CH_R) {
+		if (ring_buf_put(&recv_ring_buf_r, (uint8_t *)&recv_pkt, sizeof(recv_pkt)) !=
+		    sizeof(recv_pkt)) {
+			// LOG_INF("ring_buf_put R");
+			ring_buf_get(&recv_ring_buf_r, (uint8_t *)&recv_pkt_dummy,
+				     sizeof(recv_pkt_dummy));
+			ring_buf_put(&recv_ring_buf_r, (uint8_t *)&recv_pkt, sizeof(recv_pkt));
+		}
 		prev_channel = AUDIO_CH_R;
+
 		return;
 	}
 
-	if (channel == AUDIO_CH_L)
-	{
-		if(ring_buf_put(&recv_ring_buf_l, (uint8_t *)&recv_pkt, sizeof(recv_pkt)) != sizeof(recv_pkt)) {
-			//LOG_INF("ring_buf_put R");
-			ring_buf_get(&recv_ring_buf_l, (uint8_t *)&recv_pkt_dummy, sizeof(recv_pkt_dummy));
+	if (channel == AUDIO_CH_L) {
+		if (ring_buf_put(&recv_ring_buf_l, (uint8_t *)&recv_pkt, sizeof(recv_pkt)) !=
+		    sizeof(recv_pkt)) {
+			// LOG_INF("ring_buf_put R");
+			ring_buf_get(&recv_ring_buf_l, (uint8_t *)&recv_pkt_dummy,
+				     sizeof(recv_pkt_dummy));
 			ring_buf_put(&recv_ring_buf_l, (uint8_t *)&recv_pkt, sizeof(recv_pkt));
 		}
 		prev_channel = AUDIO_CH_L;
 	}
 
+	/*
+		if (sdu_ref_us == ctrl_blk.prev_pres_sdu_ref_us && sdu_ref_us != 0) {
+			LOG_WRN("Duplicate sdu_ref_us (%d) - Dropping audio frame", sdu_ref_us);
+			return;
+		}
+	*/
 
+	/*** Decode ***/
+	int state;
 
+	if (channel == AUDIO_CH_L) {
+		if (ring_buf_get(&recv_ring_buf_l, (uint8_t *)&recv_pkt, sizeof(recv_pkt)) !=
+		    sizeof(recv_pkt)) {
+			LOG_INF("Failed to get L while in L");
+			return;
+		}
+		sdu_ref_us = recv_pkt.sdu_ref_us;
+		recv_frame_ts_us = recv_pkt.recv_frame_ts_us;
+		channel = recv_pkt.channel;
+		bad_frame = recv_pkt.bad_frame;
+		size = recv_pkt.size;
+		desired_data_size = recv_pkt.desired_data_size;
+		if (bad_frame) {
+			bad_frame_ch &= 1;
+			memset(encoded_data, 0, sizeof(encoded_data));
+		} else {
+			memcpy(encoded_data, recv_pkt.buf, size);
+		}
 
-/*
-	if (sdu_ref_us == ctrl_blk.prev_pres_sdu_ref_us && sdu_ref_us != 0) {
-		LOG_WRN("Duplicate sdu_ref_us (%d) - Dropping audio frame", sdu_ref_us);
-		return;
+		state = unicast_client_stream_state(2);
+		if (state != BT_BAP_EP_STATE_STREAMING) {
+			// channel R is not in streaming state
+			memset(encoded_data + size, 0, sizeof(encoded_data) - size);
+		} else {
+			// channel R is in streaming state, fetch data from ring_buf_r
+			if (ring_buf_get(&recv_ring_buf_r, (uint8_t *)&ring_buf_r, sizeof(ring_buf_r)) !=
+				sizeof(ring_buf_r)) {
+				LOG_INF("Failed to get L while in L");
+				memset(encoded_data + size, 0, sizeof(encoded_data) - size);
+			} else {
+				memcpy(encoded_data + size, ring_buf_r.buf, ring_buf_r.size);
+			}
+		}
+	} else if (channel == AUDIO_CH_R) {
+		if (ring_buf_get(&recv_ring_buf_r, (uint8_t *)&recv_pkt, sizeof(recv_pkt)) !=
+		    sizeof(recv_pkt)) {
+			LOG_INF("Failed to get L while in L");
+			return;
+		}
+		sdu_ref_us = recv_pkt.sdu_ref_us;
+		recv_frame_ts_us = recv_pkt.recv_frame_ts_us;
+		channel = recv_pkt.channel;
+		bad_frame = recv_pkt.bad_frame;
+		size = recv_pkt.size;
+		desired_data_size = recv_pkt.desired_data_size;
+		if (bad_frame) {
+			bad_frame_ch &= 2;
+			memset(encoded_data+size, 0, sizeof(encoded_data));
+		} else {
+			memcpy(encoded_data+size, recv_pkt.buf, size);
+		}
+
+		state = unicast_client_stream_state(1);
+		if (state != BT_BAP_EP_STATE_STREAMING) {
+			// channel L is not in streaming state
+			memset(encoded_data, 0, sizeof(encoded_data) - size);
+		} else {
+			// channel L is in streaming state, fetch data from ring_buf_l
+			if (ring_buf_get(&recv_ring_buf_l, (uint8_t *)&ring_buf_l, sizeof(ring_buf_l)) !=
+				sizeof(ring_buf_l)) {
+				LOG_INF("Failed to get L while in L");
+				memset(encoded_data, 0, sizeof(encoded_data) - size);
+			} else {
+				memcpy(encoded_data, ring_buf_l.buf, ring_buf_l.size);
+			}
+		}
+	} else {
+		LOG_WRN("Invalid channel: %d", channel);
 	}
-*/
+
 	bool sdu_ref_not_consecutive = false;
 
 	if (ctrl_blk.prev_pres_sdu_ref_us) {
@@ -1015,38 +1096,16 @@ void audio_datapath_stream_out(const uint8_t *buf, size_t size, uint32_t sdu_ref
 							 sdu_ref_not_consecutive);
 	}
 
-	/*** Decode ***/
-
-	if(ring_buf_get(&recv_ring_buf_l, (uint8_t *)&recv_pkt, sizeof(recv_pkt)) != sizeof(recv_pkt)) {
-		LOG_INF("ring_buf_get R");
-		return;
-	} 
-
-	sdu_ref_us = recv_pkt.sdu_ref_us;
-	recv_frame_ts_us = recv_pkt.recv_frame_ts_us;
-	channel = recv_pkt.channel;
-	bad_frame = recv_pkt.bad_frame;
-	size = recv_pkt.size;
-	desired_data_size = recv_pkt.desired_data_size;
-	//memcpy(buf, recv_pkt.buf, size);
 
 	int ret;
 	size_t pcm_size;
-	static uint8_t encoded_data[400];
-	uint8_t bad_frame_ch = 0;
-	if(size != 200) {
-		memset(encoded_data, 0, sizeof(encoded_data));
-	}else {
-		memcpy(encoded_data, recv_pkt.buf, size);
-		memset(encoded_data + size, 0, sizeof(encoded_data) - size);		
-	}
-	if (bad_frame) {
-		bad_frame_ch = 1;
-	}
-	ret = sw_codec_decode(encoded_data, desired_data_size*2, bad_frame, &ctrl_blk.decoded_data, &pcm_size);
+
+	ret = sw_codec_decode(encoded_data, desired_data_size * 2, bad_frame_ch,
+			      &ctrl_blk.decoded_data, &pcm_size);
 	if (ret) {
 		LOG_WRN("SW codec decode error: %d", ret);
 	}
+	bad_frame_ch = 0;
 
 	if (IS_ENABLED(CONFIG_SD_CARD_PLAYBACK)) {
 		if (sd_card_playback_is_active()) {
