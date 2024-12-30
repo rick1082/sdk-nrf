@@ -1279,8 +1279,13 @@ static void stream_recv_cb(struct bt_bap_stream *stream, const struct bt_iso_rec
 		LOG_ERR("Device index not found");
 		return;
 	}
-
-	receive_cb(buf->data, buf->len, bad_frame, info->ts, idx.lvl3,
+	static uint8_t channel;
+	if (unicast_servers[0][0][idx.lvl3].location == BT_AUDIO_LOCATION_FRONT_LEFT) {
+		channel = 0;
+	} else {
+		channel = 1;
+	}
+	receive_cb(buf->data, buf->len, bad_frame, info->ts, channel,
 		   bt_audio_codec_cfg_get_octets_per_frame(stream->codec_cfg));
 }
 #endif /* (CONFIG_BT_AUDIO_RX) */

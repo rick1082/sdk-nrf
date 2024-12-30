@@ -667,8 +667,8 @@ static void audio_datapath_i2s_blk_complete(uint32_t frame_start_ts_us, uint32_t
 
 					if ((ctrl_blk.out.total_blk_underruns %
 					     UNDERRUN_LOG_INTERVAL_BLKS) == 0) {
-						LOG_WRN("In I2S TX under-run condition, total: %d",
-							ctrl_blk.out.total_blk_underruns);
+						//LOG_WRN("In I2S TX under-run condition, total: %d",
+						//	ctrl_blk.out.total_blk_underruns);
 					}
 				}
 
@@ -952,7 +952,7 @@ void audio_datapath_stream_out(const uint8_t *buf, size_t size, uint32_t sdu_ref
 	static uint8_t prev_channel = 0;
 
 	if (channel == prev_channel) {
-		LOG_WRN("same channel %d", channel);
+		//LOG_WRN("same channel %d", channel);
 	}
 	/*
 
@@ -967,7 +967,7 @@ void audio_datapath_stream_out(const uint8_t *buf, size_t size, uint32_t sdu_ref
 		}
 		prev_channel = AUDIO_CH_R;
 
-		return;
+		//return;
 	}
 
 	if (channel == AUDIO_CH_L) {
@@ -992,9 +992,29 @@ void audio_datapath_stream_out(const uint8_t *buf, size_t size, uint32_t sdu_ref
 	int state;
 
 	if (channel == AUDIO_CH_L) {
+		state = unicast_client_stream_state(2);
+		if (state != BT_BAP_EP_STATE_STREAMING) {
+			// channel R is not in streaming state
+			memset(encoded_data + size, 0, sizeof(encoded_data) - size);
+		} else {
+			// channel R is in streaming state, fetch data from ring_buf_r
+			if (ring_buf_get(&recv_ring_buf_r, (uint8_t *)&ring_buf_r, sizeof(ring_buf_r)) !=
+				sizeof(ring_buf_r)) {
+				//LOG_INF("Failed to get R while in L");
+				return;
+				//memset(encoded_data + size, 0, sizeof(encoded_data) - size);
+			} else {
+				if (ring_buf_r.bad_frame) {
+					bad_frame_ch &= 2;
+					memset(encoded_data + size, 0, size);
+				} else {
+					memcpy(encoded_data + size, ring_buf_r.buf, ring_buf_r.size);
+				}
+			}
+		}
 		if (ring_buf_get(&recv_ring_buf_l, (uint8_t *)&recv_pkt, sizeof(recv_pkt)) !=
 		    sizeof(recv_pkt)) {
-			LOG_INF("Failed to get L while in L");
+			//LOG_INF("Failed to get L while in L");
 			return;
 		}
 		sdu_ref_us = recv_pkt.sdu_ref_us;
@@ -1009,25 +1029,30 @@ void audio_datapath_stream_out(const uint8_t *buf, size_t size, uint32_t sdu_ref
 		} else {
 			memcpy(encoded_data, recv_pkt.buf, size);
 		}
-
-		state = unicast_client_stream_state(2);
+	} else if (channel == AUDIO_CH_R) {
+		state = unicast_client_stream_state(1);
 		if (state != BT_BAP_EP_STATE_STREAMING) {
-			// channel R is not in streaming state
-			memset(encoded_data + size, 0, sizeof(encoded_data) - size);
+			// channel L is not in streaming state
+			memset(encoded_data, 0, sizeof(encoded_data) - size);
 		} else {
-			// channel R is in streaming state, fetch data from ring_buf_r
-			if (ring_buf_get(&recv_ring_buf_r, (uint8_t *)&ring_buf_r, sizeof(ring_buf_r)) !=
-				sizeof(ring_buf_r)) {
-				LOG_INF("Failed to get L while in L");
-				memset(encoded_data + size, 0, sizeof(encoded_data) - size);
+			// channel L is in streaming state, fetch data from ring_buf_l
+			if (ring_buf_get(&recv_ring_buf_l, (uint8_t *)&ring_buf_l, sizeof(ring_buf_l)) !=
+				sizeof(ring_buf_l)) {
+				//LOG_INF("Failed to get L while in R");
+				return;
+				//memset(encoded_data, 0, sizeof(encoded_data) - size);
 			} else {
-				memcpy(encoded_data + size, ring_buf_r.buf, ring_buf_r.size);
+				if(ring_buf_l.bad_frame) {
+					bad_frame_ch &= 1;
+					memset(encoded_data, 0, sizeof(encoded_data));
+				} else {
+					memcpy(encoded_data, ring_buf_l.buf, ring_buf_l.size);
+				}
 			}
 		}
-	} else if (channel == AUDIO_CH_R) {
 		if (ring_buf_get(&recv_ring_buf_r, (uint8_t *)&recv_pkt, sizeof(recv_pkt)) !=
 		    sizeof(recv_pkt)) {
-			LOG_INF("Failed to get L while in L");
+			//LOG_INF("Failed to get R while in R");
 			return;
 		}
 		sdu_ref_us = recv_pkt.sdu_ref_us;
@@ -1038,24 +1063,9 @@ void audio_datapath_stream_out(const uint8_t *buf, size_t size, uint32_t sdu_ref
 		desired_data_size = recv_pkt.desired_data_size;
 		if (bad_frame) {
 			bad_frame_ch &= 2;
-			memset(encoded_data+size, 0, sizeof(encoded_data));
+			memset(encoded_data+size, 0, size);
 		} else {
 			memcpy(encoded_data+size, recv_pkt.buf, size);
-		}
-
-		state = unicast_client_stream_state(1);
-		if (state != BT_BAP_EP_STATE_STREAMING) {
-			// channel L is not in streaming state
-			memset(encoded_data, 0, sizeof(encoded_data) - size);
-		} else {
-			// channel L is in streaming state, fetch data from ring_buf_l
-			if (ring_buf_get(&recv_ring_buf_l, (uint8_t *)&ring_buf_l, sizeof(ring_buf_l)) !=
-				sizeof(ring_buf_l)) {
-				LOG_INF("Failed to get L while in L");
-				memset(encoded_data, 0, sizeof(encoded_data) - size);
-			} else {
-				memcpy(encoded_data, ring_buf_l.buf, ring_buf_l.size);
-			}
 		}
 	} else {
 		LOG_WRN("Invalid channel: %d", channel);
