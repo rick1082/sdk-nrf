@@ -949,15 +949,6 @@ void audio_datapath_stream_out(const uint8_t *buf, size_t size, uint32_t sdu_ref
 		LOG_ERR("Buffer pointer is NULL");
 	}
 
-	if (channel == AUDIO_CH_R) {
-		if (ring_buf_put(&recv_ring_buf_r, (uint8_t *)&recv_pkt, sizeof(recv_pkt)) !=
-		    sizeof(recv_pkt)) {
-			ring_buf_get(&recv_ring_buf_r, (uint8_t *)&recv_pkt_dummy,
-				     sizeof(recv_pkt_dummy));
-			ring_buf_put(&recv_ring_buf_r, (uint8_t *)&recv_pkt, sizeof(recv_pkt));
-		}
-	}
-
 	if (channel == AUDIO_CH_L) {
 		if (ring_buf_put(&recv_ring_buf_l, (uint8_t *)&recv_pkt, sizeof(recv_pkt)) !=
 		    sizeof(recv_pkt)) {
@@ -967,13 +958,23 @@ void audio_datapath_stream_out(const uint8_t *buf, size_t size, uint32_t sdu_ref
 		}
 	}
 
+	if (channel == AUDIO_CH_R) {
+		if (ring_buf_put(&recv_ring_buf_r, (uint8_t *)&recv_pkt, sizeof(recv_pkt)) !=
+		    sizeof(recv_pkt)) {
+			ring_buf_get(&recv_ring_buf_r, (uint8_t *)&recv_pkt_dummy,
+				     sizeof(recv_pkt_dummy));
+			ring_buf_put(&recv_ring_buf_r, (uint8_t *)&recv_pkt, sizeof(recv_pkt));
+		}
+	}
+
 	/*** Decode ***/
 	int state;
 
 	if (channel == AUDIO_CH_L) {
+		// check if channel R is in streaming state
 		state = unicast_client_stream_state(2);
 		if (state != BT_BAP_EP_STATE_STREAMING) {
-			// channel R is not in streaming state
+			// channel R is not in streaming state, set R channel to 0
 			memset(encoded_data + desired_data_size, 0, desired_data_size);
 		} else {
 			// channel R is in streaming state, fetch data from ring_buf_r
@@ -982,7 +983,7 @@ void audio_datapath_stream_out(const uint8_t *buf, size_t size, uint32_t sdu_ref
 				return;
 			} else {
 				if (ring_buf_r.bad_frame) {
-					bad_frame_ch &= 2;
+					bad_frame_ch |= 2;
 					memset(encoded_data + desired_data_size, 0, desired_data_size);
 				} else {
 					memcpy(encoded_data + desired_data_size, ring_buf_r.buf, ring_buf_r.size);
@@ -1000,7 +1001,7 @@ void audio_datapath_stream_out(const uint8_t *buf, size_t size, uint32_t sdu_ref
 		size = recv_pkt.size;
 		desired_data_size = recv_pkt.desired_data_size;
 		if (bad_frame) {
-			bad_frame_ch &= 1;
+			bad_frame_ch |= 1;
 			memset(encoded_data, 0, desired_data_size);
 		} else {
 			memcpy(encoded_data, recv_pkt.buf, desired_data_size);
@@ -1017,7 +1018,7 @@ void audio_datapath_stream_out(const uint8_t *buf, size_t size, uint32_t sdu_ref
 				return;
 			} else {
 				if(ring_buf_l.bad_frame) {
-					bad_frame_ch &= 1;
+					bad_frame_ch |= 1;
 					memset(encoded_data, 0, desired_data_size);
 				} else {
 					memcpy(encoded_data, ring_buf_l.buf, ring_buf_l.size);
@@ -1037,7 +1038,7 @@ void audio_datapath_stream_out(const uint8_t *buf, size_t size, uint32_t sdu_ref
 		size = recv_pkt.size;
 		desired_data_size = recv_pkt.desired_data_size;
 		if (bad_frame) {
-			bad_frame_ch &= 2;
+			bad_frame_ch |= 2;
 			memset(encoded_data+desired_data_size, 0, desired_data_size);
 		} else {
 			memcpy(encoded_data+desired_data_size, recv_pkt.buf, desired_data_size);
@@ -1107,8 +1108,8 @@ void audio_datapath_stream_out(const uint8_t *buf, size_t size, uint32_t sdu_ref
 
 	/*** Add audio data to FIFO buffer ***/
 	uint32_t num_blks_in_fifo = filled_blocks_get();
-
-	if ((num_blks_in_fifo + NUM_BLKS_IN_FRAME) > FIFO_NUM_BLKS) {
+	printk("%d %d  %d \n", num_blks_in_fifo, NUM_BLKS_IN_FRAME, FIFO_NUM_BLKS);
+	if ((num_blks_in_fifo + NUM_BLKS_IN_FRAME) >= FIFO_NUM_BLKS) {
 		LOG_WRN("Output audio stream overrun - Discarding audio frame");
 
 		/* Discard frame to allow consumer to catch up */
