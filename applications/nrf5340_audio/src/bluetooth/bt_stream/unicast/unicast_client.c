@@ -106,6 +106,7 @@ static struct bt_bap_lc3_preset lc3_preset_source_48k_160kbps = BT_BAP_LC3_PRESE
 				  BT_AUDIO_LOCATION_ANY, 200u, 1,
 				  BT_AUDIO_CONTEXT_TYPE_UNSPECIFIED),
 	BT_AUDIO_CODEC_QOS_UNFRAMED(10000u, 200u, 5u, 20u, 40000u));
+
 static struct bt_bap_lc3_preset lc3_preset_source_48_4_1 =
 	BT_BAP_LC3_UNICAST_PRESET_48_4_1(BT_AUDIO_LOCATION_ANY, BT_AUDIO_CONTEXT_TYPE_UNSPECIFIED);
 static struct bt_bap_lc3_preset lc3_preset_source_24_2_1 =

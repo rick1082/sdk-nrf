@@ -666,9 +666,9 @@ static void audio_datapath_i2s_blk_complete(uint32_t frame_start_ts_us, uint32_t
 					ctrl_blk.out.total_blk_underruns++;
 
 					if ((ctrl_blk.out.total_blk_underruns %
-					     UNDERRUN_LOG_INTERVAL_BLKS) == 0) {
-						//LOG_WRN("In I2S TX under-run condition, total: %d",
-						//	ctrl_blk.out.total_blk_underruns);
+					    UNDERRUN_LOG_INTERVAL_BLKS) == 0 && (CONFIG_AUDIO_DEV != HEADSET)) {
+						LOG_WRN("In I2S TX under-run condition, total: %d",
+							ctrl_blk.out.total_blk_underruns);
 					}
 				}
 
@@ -904,7 +904,7 @@ void audio_datapath_pres_delay_us_get(uint32_t *delay_us)
 RING_BUF_DECLARE(recv_ring_buf_l, 280 * 10);
 RING_BUF_DECLARE(recv_ring_buf_r, 280 * 10);
 
-static struct recv_pkt_info {
+struct recv_pkt_info {
 	uint32_t sdu_ref_us;
 	uint32_t recv_frame_ts_us;
 	uint8_t channel;
@@ -913,7 +913,6 @@ static struct recv_pkt_info {
 	uint8_t desired_data_size;
 	uint8_t buf[CONFIG_BT_ISO_RX_MTU];
 } __packed;
-
 #if (CONFIG_AUDIO_DEV != GATEWAY)
 int unicast_client_stream_state(enum audio_channel)
 {
@@ -928,7 +927,7 @@ void audio_datapath_stream_out(const uint8_t *buf, size_t size, uint32_t sdu_ref
 	struct recv_pkt_info recv_pkt;
 	struct recv_pkt_info ring_buf_l, ring_buf_r;
 	struct recv_pkt_info recv_pkt_dummy;
-	static uint8_t encoded_data[400];
+	static uint8_t encoded_data[CONFIG_BT_ISO_RX_MTU * 2];
 	uint8_t bad_frame_ch = 0;
 
 	if (!ctrl_blk.stream_started) {
@@ -949,44 +948,24 @@ void audio_datapath_stream_out(const uint8_t *buf, size_t size, uint32_t sdu_ref
 	if (!buf) {
 		LOG_ERR("Buffer pointer is NULL");
 	}
-	static uint8_t prev_channel = 0;
 
-	if (channel == prev_channel) {
-		//LOG_WRN("same channel %d", channel);
-	}
-	/*
-
-	*/
 	if (channel == AUDIO_CH_R) {
 		if (ring_buf_put(&recv_ring_buf_r, (uint8_t *)&recv_pkt, sizeof(recv_pkt)) !=
 		    sizeof(recv_pkt)) {
-			// LOG_INF("ring_buf_put R");
 			ring_buf_get(&recv_ring_buf_r, (uint8_t *)&recv_pkt_dummy,
 				     sizeof(recv_pkt_dummy));
 			ring_buf_put(&recv_ring_buf_r, (uint8_t *)&recv_pkt, sizeof(recv_pkt));
 		}
-		prev_channel = AUDIO_CH_R;
-
-		//return;
 	}
 
 	if (channel == AUDIO_CH_L) {
 		if (ring_buf_put(&recv_ring_buf_l, (uint8_t *)&recv_pkt, sizeof(recv_pkt)) !=
 		    sizeof(recv_pkt)) {
-			// LOG_INF("ring_buf_put R");
 			ring_buf_get(&recv_ring_buf_l, (uint8_t *)&recv_pkt_dummy,
 				     sizeof(recv_pkt_dummy));
 			ring_buf_put(&recv_ring_buf_l, (uint8_t *)&recv_pkt, sizeof(recv_pkt));
 		}
-		prev_channel = AUDIO_CH_L;
 	}
-
-	/*
-		if (sdu_ref_us == ctrl_blk.prev_pres_sdu_ref_us && sdu_ref_us != 0) {
-			LOG_WRN("Duplicate sdu_ref_us (%d) - Dropping audio frame", sdu_ref_us);
-			return;
-		}
-	*/
 
 	/*** Decode ***/
 	int state;
@@ -995,26 +974,23 @@ void audio_datapath_stream_out(const uint8_t *buf, size_t size, uint32_t sdu_ref
 		state = unicast_client_stream_state(2);
 		if (state != BT_BAP_EP_STATE_STREAMING) {
 			// channel R is not in streaming state
-			memset(encoded_data + size, 0, sizeof(encoded_data) - size);
+			memset(encoded_data + desired_data_size, 0, desired_data_size);
 		} else {
 			// channel R is in streaming state, fetch data from ring_buf_r
 			if (ring_buf_get(&recv_ring_buf_r, (uint8_t *)&ring_buf_r, sizeof(ring_buf_r)) !=
 				sizeof(ring_buf_r)) {
-				//LOG_INF("Failed to get R while in L");
 				return;
-				//memset(encoded_data + size, 0, sizeof(encoded_data) - size);
 			} else {
 				if (ring_buf_r.bad_frame) {
 					bad_frame_ch &= 2;
-					memset(encoded_data + size, 0, size);
+					memset(encoded_data + desired_data_size, 0, desired_data_size);
 				} else {
-					memcpy(encoded_data + size, ring_buf_r.buf, ring_buf_r.size);
+					memcpy(encoded_data + desired_data_size, ring_buf_r.buf, ring_buf_r.size);
 				}
 			}
 		}
 		if (ring_buf_get(&recv_ring_buf_l, (uint8_t *)&recv_pkt, sizeof(recv_pkt)) !=
 		    sizeof(recv_pkt)) {
-			//LOG_INF("Failed to get L while in L");
 			return;
 		}
 		sdu_ref_us = recv_pkt.sdu_ref_us;
@@ -1025,36 +1001,35 @@ void audio_datapath_stream_out(const uint8_t *buf, size_t size, uint32_t sdu_ref
 		desired_data_size = recv_pkt.desired_data_size;
 		if (bad_frame) {
 			bad_frame_ch &= 1;
-			memset(encoded_data, 0, sizeof(encoded_data));
+			memset(encoded_data, 0, desired_data_size);
 		} else {
-			memcpy(encoded_data, recv_pkt.buf, size);
+			memcpy(encoded_data, recv_pkt.buf, desired_data_size);
 		}
 	} else if (channel == AUDIO_CH_R) {
 		state = unicast_client_stream_state(1);
 		if (state != BT_BAP_EP_STATE_STREAMING) {
 			// channel L is not in streaming state
-			memset(encoded_data, 0, sizeof(encoded_data) - size);
+			memset(encoded_data, 0, desired_data_size);
 		} else {
 			// channel L is in streaming state, fetch data from ring_buf_l
 			if (ring_buf_get(&recv_ring_buf_l, (uint8_t *)&ring_buf_l, sizeof(ring_buf_l)) !=
 				sizeof(ring_buf_l)) {
-				//LOG_INF("Failed to get L while in R");
 				return;
-				//memset(encoded_data, 0, sizeof(encoded_data) - size);
 			} else {
 				if(ring_buf_l.bad_frame) {
 					bad_frame_ch &= 1;
-					memset(encoded_data, 0, sizeof(encoded_data));
+					memset(encoded_data, 0, desired_data_size);
 				} else {
 					memcpy(encoded_data, ring_buf_l.buf, ring_buf_l.size);
 				}
 			}
 		}
+
 		if (ring_buf_get(&recv_ring_buf_r, (uint8_t *)&recv_pkt, sizeof(recv_pkt)) !=
 		    sizeof(recv_pkt)) {
-			//LOG_INF("Failed to get R while in R");
 			return;
 		}
+
 		sdu_ref_us = recv_pkt.sdu_ref_us;
 		recv_frame_ts_us = recv_pkt.recv_frame_ts_us;
 		channel = recv_pkt.channel;
@@ -1063,9 +1038,9 @@ void audio_datapath_stream_out(const uint8_t *buf, size_t size, uint32_t sdu_ref
 		desired_data_size = recv_pkt.desired_data_size;
 		if (bad_frame) {
 			bad_frame_ch &= 2;
-			memset(encoded_data+size, 0, size);
+			memset(encoded_data+desired_data_size, 0, desired_data_size);
 		} else {
-			memcpy(encoded_data+size, recv_pkt.buf, size);
+			memcpy(encoded_data+desired_data_size, recv_pkt.buf, desired_data_size);
 		}
 	} else {
 		LOG_WRN("Invalid channel: %d", channel);

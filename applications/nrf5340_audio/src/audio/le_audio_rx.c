@@ -59,8 +59,9 @@ void le_audio_rx_data_handler(uint8_t const *const p_data, size_t data_size, boo
 	uint32_t recv_frame_ts = audio_sync_timer_capture();
 
 	rx_stats[channel_index].recv_cnt++;
+
 	if (data_size == 0) {
-		LOG_ERR("Received data size is 0, from ch %d, bad_frame %d", channel_index, bad_frame);
+		LOG_DBG("Received data size is 0, from ch %d, bad_frame %d", channel_index, bad_frame);
 	}
 
 	if (data_size != desired_data_size) {
