@@ -41,15 +41,20 @@ ZBUS_CHAN_DECLARE(cont_media_chan);
 static struct k_thread button_msg_sub_thread_data;
 static struct k_thread le_audio_msg_sub_thread_data;
 static struct k_thread content_control_msg_sub_thread_data;
+static struct k_thread ble_qos_thread_data;
 
 static k_tid_t button_msg_sub_thread_id;
 static k_tid_t le_audio_msg_sub_thread_id;
 static k_tid_t content_control_thread_id;
+static k_tid_t ble_qos_thread_id;
+
+#define BLE_QOS_THREAD_STACK_SIZE 2048
 
 K_THREAD_STACK_DEFINE(button_msg_sub_thread_stack, CONFIG_BUTTON_MSG_SUB_STACK_SIZE);
 K_THREAD_STACK_DEFINE(le_audio_msg_sub_thread_stack, CONFIG_LE_AUDIO_MSG_SUB_STACK_SIZE);
 K_THREAD_STACK_DEFINE(content_control_msg_sub_thread_stack,
 		      CONFIG_CONTENT_CONTROL_MSG_SUB_STACK_SIZE);
+K_THREAD_STACK_DEFINE(ble_qos_thread_stack, BLE_QOS_THREAD_STACK_SIZE);
 
 /* Function for handling all stream state changes */
 static void stream_state_set(enum stream_state stream_state_new)
@@ -662,8 +667,6 @@ static void ble_qos_thread_fn(void)
 		update_channel_map = chmap_filter_process(chmap_inst);
 		atomic_set(&processing, false);
 
-		//ble_chn_stats_print(update_channel_map);
-
 		if (!update_channel_map) {
 			continue;
 		}
@@ -671,13 +674,6 @@ static void ble_qos_thread_fn(void)
 		uint8_t *chmap;
 
 		chmap = chmap_filter_suggested_map_get(chmap_inst);
-
-/*
-		struct ble_qos_event *event = new_ble_qos_event();
-		BUILD_ASSERT(sizeof(event->chmap) == CHMAP_BLE_BITMASK_SIZE, "");
-		memcpy(event->chmap, chmap, CHMAP_BLE_BITMASK_SIZE);
-		APP_EVENT_SUBMIT(event);
-*/
 
 		err = bt_le_set_chan_map(chmap);
 		if (err) {
@@ -688,7 +684,6 @@ static void ble_qos_thread_fn(void)
 				chmap[0], chmap[1], chmap[2], chmap[3], chmap[4]);
 		}
 
-
 		chmap_filter_suggested_map_confirm(chmap_inst);
 		k_mutex_lock(&data_access_mutex, K_FOREVER);
 		memcpy(current_chmap, chmap, sizeof(current_chmap));
@@ -696,13 +691,6 @@ static void ble_qos_thread_fn(void)
 	}
 }
 
-
-#define THREAD_STACK_SIZE 2048
-#define THREAD_PRIORITY K_PRIO_PREEMPT(K_LOWEST_APPLICATION_THREAD_PRIO)
-
-static K_THREAD_STACK_DEFINE(thread_stack, THREAD_STACK_SIZE);
-static struct k_thread thread;
-#define MODULE_NAME "ble_qos"
 static void chmap_filter_setup(void)
 {
 	int ret;
@@ -727,12 +715,17 @@ static void chmap_filter_setup(void)
 	new_blacklist = INVALID_BLACKLIST;
 	atomic_set(&params_updated, false);
 
-	k_thread_create(&thread, thread_stack,
-			THREAD_STACK_SIZE,
+	ble_qos_thread_id = k_thread_create(&ble_qos_thread_data, ble_qos_thread_stack,
+			BLE_QOS_THREAD_STACK_SIZE,
 			(k_thread_entry_t)ble_qos_thread_fn,
 			NULL, NULL, NULL,
-			THREAD_PRIORITY, 0, K_NO_WAIT);
-	k_thread_name_set(&thread, MODULE_NAME "_thread");
+			K_PRIO_PREEMPT(K_LOWEST_APPLICATION_THREAD_PRIO), 0, K_NO_WAIT);
+
+	ret = k_thread_name_set(ble_qos_thread_id, "BLE_QOS");
+	if (ret) {
+		LOG_ERR("Failed to create ble_qos thread");
+		return;
+	}
 
 	enable_qos_reporting();
 }
