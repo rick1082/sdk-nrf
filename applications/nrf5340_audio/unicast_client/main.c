@@ -37,9 +37,6 @@ ZBUS_CHAN_DECLARE(button_chan);
 ZBUS_CHAN_DECLARE(le_audio_chan);
 ZBUS_CHAN_DECLARE(bt_mgmt_chan);
 ZBUS_CHAN_DECLARE(cont_media_chan);
-ZBUS_CHAN_DECLARE(sdu_ref_chan);
-
-ZBUS_OBS_DECLARE(sdu_ref_msg_listen);
 
 static struct k_thread button_msg_sub_thread_data;
 static struct k_thread le_audio_msg_sub_thread_data;
@@ -462,12 +459,6 @@ static int zbus_subscribers_create(void)
 		K_PRIO_PREEMPT(CONFIG_CONTENT_CONTROL_MSG_SUB_THREAD_PRIO), 0, K_NO_WAIT);
 	ret = k_thread_name_set(content_control_thread_id, "CONTENT_CONTROL_MSG_SUB");
 	if (ret) {
-		return ret;
-	}
-
-	ret = zbus_chan_add_obs(&sdu_ref_chan, &sdu_ref_msg_listen, ZBUS_ADD_OBS_TIMEOUT_MS);
-	if (ret) {
-		LOG_ERR("Failed to add timestamp listener");
 		return ret;
 	}
 
