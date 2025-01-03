@@ -1274,6 +1274,10 @@ static void stream_recv_cb(struct bt_bap_stream *stream, const struct bt_iso_rec
 	} else {
 		channel = 1;
 	}
+
+	if (bad_frame) {
+		LOG_WRN("Bad frame received, ch %d", channel);
+	}
 	receive_cb(buf->data, buf->len, bad_frame, info->ts, channel,
 		   bt_audio_codec_cfg_get_octets_per_frame(stream->codec_cfg));
 }

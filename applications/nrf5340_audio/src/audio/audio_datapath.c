@@ -1107,7 +1107,13 @@ void audio_datapath_stream_out(const uint8_t *buf, size_t size, uint32_t sdu_ref
 	}
 
 	/*** Add audio data to FIFO buffer ***/
+	static uint32_t prev_num_blks_in_fifo;
 	uint32_t num_blks_in_fifo = filled_blocks_get();
+
+	if (num_blks_in_fifo != prev_num_blks_in_fifo) {
+		//printk("Blocks in FIFO: %d\n", num_blks_in_fifo);
+		prev_num_blks_in_fifo = num_blks_in_fifo;
+	}
 
 	if ((num_blks_in_fifo + NUM_BLKS_IN_FRAME) >= FIFO_NUM_BLKS) {
 		LOG_WRN("Output audio stream overrun - Discarding audio frame");
