@@ -248,12 +248,13 @@ static void drift_comp_state_set(enum drift_comp_state new_state)
  */
 static void audio_datapath_drift_compensation(uint32_t frame_start_ts_us)
 {
-	if (CONFIG_AUDIO_DEV == HEADSET) {
+	// headset as mic source should also use TX timestamp to adjust for drift
+	//if (CONFIG_AUDIO_DEV == HEADSET) {
 		/** For headsets we do not use the timestamp gotten from hci_tx_sync_get to adjust
 		 * for drift
 		 */
-		ctrl_blk.prev_drift_sdu_ref_us = ctrl_blk.prev_pres_sdu_ref_us;
-	}
+	//	ctrl_blk.prev_drift_sdu_ref_us = ctrl_blk.prev_pres_sdu_ref_us;
+	//}
 	switch (ctrl_blk.drift_comp.state) {
 	case DRIFT_STATE_INIT: {
 		/* Check if audio data has been received */
@@ -834,7 +835,7 @@ static void audio_datapath_just_in_time_check_and_adjust(uint32_t tx_sync_ts_us,
 	    (diff > (JUST_IN_TIME_TARGET_DLY_US + JUST_IN_TIME_BOUND_US))) {
 		ret = audio_system_fifo_rx_block_drop();
 		if (ret) {
-			LOG_WRN("Not able to drop FIFO RX block");
+			LOG_DBG("Not able to drop FIFO RX block");
 			return;
 		}
 		LOG_DBG("Dropped block to align with connection interval");
@@ -866,7 +867,6 @@ static void audio_datapath_sdu_ref_update(const struct zbus_channel *chan)
 
 		if (ctrl_blk.stream_started) {
 			ctrl_blk.prev_drift_sdu_ref_us = tx_sync_ts_us;
-
 			if (adjust && tx_sync_ts_us != 0) {
 				audio_datapath_just_in_time_check_and_adjust(tx_sync_ts_us,
 									     curr_ts_us);
