@@ -26,6 +26,10 @@
 #include "zbus_common.h"
 #include "bt_le_audio_tx.h"
 #include "le_audio.h"
+#include <bluetooth/services/nus.h>
+#include <bluetooth/services/nus_client.h>
+#include <bluetooth/gatt_dm.h>
+#include <stdio.h>
 
 #include <zephyr/logging/log.h>
 LOG_MODULE_REGISTER(unicast_client, CONFIG_UNICAST_CLIENT_LOG_LEVEL);
@@ -34,6 +38,10 @@ ZBUS_CHAN_DEFINE(le_audio_chan, struct le_audio_msg, NULL, NULL, ZBUS_OBSERVERS_
 		 ZBUS_MSG_INIT(0));
 
 #define CAP_PROCED_MUTEX_WAIT_TIME_MS K_MSEC(500)
+
+static struct bt_nus_client *nus[CONFIG_BT_MAX_CONN];
+static struct bt_nus_client nus_client[CONFIG_BT_MAX_CONN];
+static void gatt_discover(struct bt_conn *conn);
 
 struct le_audio_unicast_server {
 	char *ch_name;
@@ -54,6 +62,7 @@ struct le_audio_unicast_server {
 	struct bt_bap_ep *source_ep;
 	struct bt_cap_stream cap_source_stream;
 	const struct bt_csip_set_coordinator_set_member *member;
+	struct k_work_delayable dummy_data_send_work;
 };
 
 struct discover_dir {
@@ -1350,6 +1359,8 @@ static void unicast_discovery_complete_cb(struct bt_conn *conn, int err,
 		msg.sirk = csis_inst->info.sirk;
 	}
 
+	gatt_discover(conn);
+
 	LOG_DBG("Unicast discovery complete cb");
 
 	msg.event = LE_AUDIO_EVT_COORD_SET_DISCOVERED;
@@ -1425,6 +1436,100 @@ static struct bt_cap_initiator_cb cap_cbs = {
 	.unicast_update_complete = unicast_update_complete_cb,
 	.unicast_stop_complete = unicast_stop_complete_cb,
 };
+
+static void discovery_complete(struct bt_gatt_dm *dm, void *context)
+{
+	int ret;
+	struct stream_index idx;
+	ret = device_index_get(bt_gatt_dm_conn_get(dm), &idx);
+	if (ret) {
+		LOG_ERR("Channel index not found");
+	}
+	LOG_INF("Service discovery completed");
+	nus[idx.lvl3] = context;
+	bt_gatt_dm_data_print(dm);
+	bt_nus_handles_assign(dm, nus[idx.lvl3]);
+	bt_nus_subscribe_receive(nus[idx.lvl3]);
+	bt_gatt_dm_data_release(dm);
+	k_work_schedule(&unicast_servers[0][0][idx.lvl3].dummy_data_send_work, K_MSEC(1000));
+}
+
+static void discovery_service_not_found(struct bt_conn *conn, void *context)
+{
+	LOG_INF("Service not found");
+}
+
+static void discovery_error(struct bt_conn *conn, int err, void *context)
+{
+	LOG_WRN("Error while discovering GATT database: (%d)", err);
+}
+
+struct bt_gatt_dm_cb discovery_cb = {
+	.completed = discovery_complete,
+	.service_not_found = discovery_service_not_found,
+	.error_found = discovery_error,
+};
+
+static void gatt_discover(struct bt_conn *conn)
+{
+	int ret;
+	struct stream_index idx;
+	ret = device_index_get(conn, &idx);
+	if (ret) {
+		LOG_ERR("Channel index not found");
+	}
+	ret = bt_gatt_dm_start(conn, BT_UUID_NUS_SERVICE, &discovery_cb,
+			       &nus_client[idx.lvl3]);
+	if (ret) {
+		LOG_ERR("could not start the discovery procedure, error "
+			"code: %d",
+			ret);
+	}
+}
+
+static void work_dummy_data_send(struct k_work *work)
+{
+	int ret;
+	char dummy_string[30] = {0};
+
+	struct stream_index idx;
+	struct le_audio_unicast_server *data;
+	data = CONTAINER_OF(work, struct le_audio_unicast_server, dummy_data_send_work.work);
+	ret = device_index_get(data->device_conn, &idx);
+	if (ret) {
+		LOG_ERR("Channel index not found");
+		return;
+	}
+
+	bt_nus_client_send(&nus_client[idx.lvl3], dummy_string, sizeof(dummy_string));
+	k_work_reschedule(&unicast_servers[idx.lvl1][idx.lvl2][idx.lvl3].dummy_data_send_work, K_MSEC(10));
+}
+
+static uint8_t ble_data_received(struct bt_nus_client *nus, const uint8_t *data, uint16_t len)
+{
+	LOG_HEXDUMP_INF(data, len, "NUS received:");
+	return BT_GATT_ITER_CONTINUE;
+}
+
+static int nus_client_init(void)
+{
+	int err;
+	struct bt_nus_client_init_param init = { .cb = {
+							 .received = ble_data_received,
+						 } };
+	err = bt_nus_client_init(&nus_client[0], &init);
+	if (err) {
+		LOG_ERR("NUS Client initialization failed (err %d)", err);
+		return err;
+	}
+	err = bt_nus_client_init(&nus_client[1], &init);
+	if (err) {
+		LOG_ERR("NUS Client initialization failed (err %d)", err);
+		return err;
+	}
+	LOG_INF("NUS Client module initialized");
+	return err;
+}
 
 int unicast_client_config_get(struct bt_conn *conn, enum bt_audio_dir dir, uint32_t *bitrate,
 			      uint32_t *sampling_rate_hz)
@@ -1515,6 +1620,7 @@ void unicast_client_conn_disconnected(struct bt_conn *conn)
 		LOG_WRN("Unknown connection disconnected");
 	} else {
 		disconnected_cleanup(idx);
+		k_work_cancel_delayable(&unicast_servers[0][0][idx.lvl3].dummy_data_send_work);
 	}
 }
 
@@ -1561,6 +1667,11 @@ int unicast_client_start(uint8_t cig_index)
 		cap_stream_params[CONFIG_BT_BAP_UNICAST_CLIENT_ASE_SRC_COUNT +
 				  CONFIG_BT_BAP_UNICAST_CLIENT_ASE_SNK_COUNT];
 	static struct bt_cap_unicast_audio_start_param param;
+
+	nus_client_init();
+	for(int i = 0; i < CONFIG_BT_MAX_CONN; i++) {
+		k_work_init_delayable(&unicast_servers[cig_index][0][i].dummy_data_send_work, work_dummy_data_send);
+	}
 
 	if (cig_index >= CONFIG_BT_ISO_MAX_CIG) {
 		LOG_ERR("Trying to start CIG %d out of %d", cig_index, CONFIG_BT_ISO_MAX_CIG);

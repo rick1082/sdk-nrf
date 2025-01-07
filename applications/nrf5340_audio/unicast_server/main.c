@@ -24,6 +24,8 @@
 #include "le_audio.h"
 #include "le_audio_rx.h"
 #include "fw_info_app.h"
+#include <bluetooth/services/nus.h>
+#include <stdio.h>
 
 #include <zephyr/logging/log.h>
 LOG_MODULE_REGISTER(main, CONFIG_MAIN_LOG_LEVEL);
@@ -519,6 +521,14 @@ void streamctrl_send(void const *const data, size_t size, uint8_t num_ch)
 	}
 }
 
+static void bt_receive_cb(struct bt_conn *conn, const uint8_t *const data, uint16_t len)
+{
+	LOG_HEXDUMP_DBG(data, len, "NUS received:");
+}
+static struct bt_nus_cb nus_cb = {
+	.received = bt_receive_cb,
+};
+
 int main(void)
 {
 	int ret;
@@ -567,6 +577,8 @@ int main(void)
 
 	ret = bt_content_ctrl_init();
 	ERR_CHK(ret);
+
+	bt_nus_init(&nus_cb);
 
 	ret = ext_adv_populate(ext_adv_buf, ARRAY_SIZE(ext_adv_buf), &ext_adv_buf_cnt);
 	ERR_CHK(ret);
