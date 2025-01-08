@@ -622,7 +622,7 @@ static void ble_qos_thread_fn(void)
 		int err;
 
 		//Configure processing interval for QoS algorithm.
-		k_sleep(K_MSEC(500));
+		k_sleep(K_MSEC(700));
 
 		/* Check and apply new parameters received via config channel */
 		if (atomic_get(&params_updated)) {
