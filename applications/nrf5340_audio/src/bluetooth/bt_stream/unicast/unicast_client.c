@@ -1490,7 +1490,7 @@ static void gatt_discover(struct bt_conn *conn)
 static void work_dummy_data_send(struct k_work *work)
 {
 	int ret;
-	char dummy_string[30] = {0};
+	char dummy_string[10] = {0};
 
 	struct stream_index idx;
 	struct le_audio_unicast_server *data;
@@ -1502,7 +1502,7 @@ static void work_dummy_data_send(struct k_work *work)
 	}
 
 	bt_nus_client_send(&nus_client[idx.lvl3], dummy_string, sizeof(dummy_string));
-	k_work_reschedule(&unicast_servers[idx.lvl1][idx.lvl2][idx.lvl3].dummy_data_send_work, K_MSEC(10));
+	k_work_reschedule(&unicast_servers[idx.lvl1][idx.lvl2][idx.lvl3].dummy_data_send_work, K_MSEC(3));
 }
 
 static uint8_t ble_data_received(struct bt_nus_client *nus, const uint8_t *data, uint16_t len)
