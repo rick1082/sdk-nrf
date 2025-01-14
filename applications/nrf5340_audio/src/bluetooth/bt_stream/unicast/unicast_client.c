@@ -1451,7 +1451,6 @@ static void discovery_complete(struct bt_gatt_dm *dm, void *context)
 	bt_nus_handles_assign(dm, nus[idx.lvl3]);
 	bt_nus_subscribe_receive(nus[idx.lvl3]);
 	bt_gatt_dm_data_release(dm);
-	k_work_schedule(&unicast_servers[0][0][idx.lvl3].dummy_data_send_work, K_MSEC(1000));
 }
 
 static void discovery_service_not_found(struct bt_conn *conn, void *context)
@@ -1485,24 +1484,6 @@ static void gatt_discover(struct bt_conn *conn)
 			"code: %d",
 			ret);
 	}
-}
-
-static void work_dummy_data_send(struct k_work *work)
-{
-	int ret;
-	char dummy_string[10] = {0};
-
-	struct stream_index idx;
-	struct le_audio_unicast_server *data;
-	data = CONTAINER_OF(work, struct le_audio_unicast_server, dummy_data_send_work.work);
-	ret = device_index_get(data->device_conn, &idx);
-	if (ret) {
-		LOG_ERR("Channel index not found");
-		return;
-	}
-
-	bt_nus_client_send(&nus_client[idx.lvl3], dummy_string, sizeof(dummy_string));
-	k_work_reschedule(&unicast_servers[idx.lvl1][idx.lvl2][idx.lvl3].dummy_data_send_work, K_MSEC(3));
 }
 
 static uint8_t ble_data_received(struct bt_nus_client *nus, const uint8_t *data, uint16_t len)
@@ -1669,9 +1650,6 @@ int unicast_client_start(uint8_t cig_index)
 	static struct bt_cap_unicast_audio_start_param param;
 
 	nus_client_init();
-	for(int i = 0; i < CONFIG_BT_MAX_CONN; i++) {
-		k_work_init_delayable(&unicast_servers[cig_index][0][i].dummy_data_send_work, work_dummy_data_send);
-	}
 
 	if (cig_index >= CONFIG_BT_ISO_MAX_CIG) {
 		LOG_ERR("Trying to start CIG %d out of %d", cig_index, CONFIG_BT_ISO_MAX_CIG);
