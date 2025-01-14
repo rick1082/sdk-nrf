@@ -523,7 +523,11 @@ void streamctrl_send(void const *const data, size_t size, uint8_t num_ch)
 
 static void bt_receive_cb(struct bt_conn *conn, const uint8_t *const data, uint16_t len)
 {
-	LOG_HEXDUMP_DBG(data, len, "NUS received:");
+	static int i = 0;
+	i++;
+	if (i % 100 == 0) {
+		LOG_HEXDUMP_INF(data, len, "NUS received:");
+	}
 }
 static struct bt_nus_cb nus_cb = {
 	.received = bt_receive_cb,

@@ -59,7 +59,7 @@ extern "C" {
 #define CHMAP_PARAM_DYN_BLOCK_INCREASE 2
 
 /* Default parameter values */
-#define DEFAULT_PARAM_MAINTENANCE_SAMPLE_COUNT 2000
+#define DEFAULT_PARAM_MAINTENANCE_SAMPLE_COUNT 10
 #define DEFAULT_PARAM_INITIAL_RATING           0
 #define DEFAULT_PARAM_BLE_MIN_CHANNEL_COUNT    4
 #define DEFAULT_PARAM_BLE_WIFI_KEEPOUT_DURATION 2
@@ -68,15 +68,15 @@ extern "C" {
 #define DEFAULT_PARAM_EVAL_KEEPOUT_DURATION    300
 #define DEFAULT_PARAM_DYN_DURATIONS            true
 /* The below parameters are fixed point values, with scaling factor of 1/100 */
-#define DEFAULT_PARAM_BLE_WEIGHT_CRC_OK        100  /* = 1.0 */
-#define DEFAULT_PARAM_BLE_WEIGHT_CRC_ERROR     -100 /* = -1.0 */
-#define DEFAULT_PARAM_BLE_RATING_TRIM          49   /* = 0.49 */
-#define DEFAULT_PARAM_BLE_BLOCK_THRESHOLD      25   /* = 0.25 */
-#define DEFAULT_PARAM_WIFI_RATING_INC          400  /* = 4.0 */
-#define DEFAULT_PARAM_WIFI_PRESENT_THRESHOLD   90   /* = 0.9 */
-#define DEFAULT_PARAM_WIFI_ACTIVE_THRESHOLD    75   /* = 0.75 */
-#define DEFAULT_PARAM_WIFI_RATING_TRIM         50   /* = 0.5 */
-#define DEFAULT_PARAM_EVAL_SUCCESS_THRESHOLD   85   /* = 0.85 */
+#define DEFAULT_PARAM_BLE_WEIGHT_CRC_OK        1
+#define DEFAULT_PARAM_BLE_WEIGHT_CRC_ERROR     -80
+#define DEFAULT_PARAM_BLE_RATING_TRIM          90
+#define DEFAULT_PARAM_BLE_BLOCK_THRESHOLD      25
+#define DEFAULT_PARAM_WIFI_RATING_INC          400
+#define DEFAULT_PARAM_WIFI_PRESENT_THRESHOLD   90
+#define DEFAULT_PARAM_WIFI_ACTIVE_THRESHOLD    75
+#define DEFAULT_PARAM_WIFI_RATING_TRIM         50
+#define DEFAULT_PARAM_EVAL_SUCCESS_THRESHOLD   85
 
 /**@brief Channel map filter parameters that can be changed at runtime
  *

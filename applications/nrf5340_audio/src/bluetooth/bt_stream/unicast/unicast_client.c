@@ -1451,7 +1451,7 @@ static void discovery_complete(struct bt_gatt_dm *dm, void *context)
 	bt_nus_handles_assign(dm, nus[idx.lvl3]);
 	bt_nus_subscribe_receive(nus[idx.lvl3]);
 	bt_gatt_dm_data_release(dm);
-	k_work_schedule(&unicast_servers[0][0][idx.lvl3].dummy_data_send_work, K_MSEC(1000));
+	//k_work_schedule(&unicast_servers[0][0][idx.lvl3].dummy_data_send_work, K_MSEC(2000));
 }
 
 static void discovery_service_not_found(struct bt_conn *conn, void *context)
@@ -1500,9 +1500,7 @@ static void work_dummy_data_send(struct k_work *work)
 		LOG_ERR("Channel index not found");
 		return;
 	}
-
-	bt_nus_client_send(&nus_client[idx.lvl3], dummy_string, sizeof(dummy_string));
-	k_work_reschedule(&unicast_servers[idx.lvl1][idx.lvl2][idx.lvl3].dummy_data_send_work, K_MSEC(3));
+	//k_work_reschedule(&unicast_servers[idx.lvl1][idx.lvl2][idx.lvl3].dummy_data_send_work, K_MSEC(10));
 }
 
 static uint8_t ble_data_received(struct bt_nus_client *nus, const uint8_t *data, uint16_t len)

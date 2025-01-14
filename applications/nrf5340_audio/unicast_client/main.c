@@ -570,6 +570,9 @@ static bool on_vs_evt(struct net_buf_simple *buf)
 		evt = (void *)buf->data;
 		//LOG_INF("conn_handle: %2d, evt = %6d, ch_index: %2d, crc_ok: %d, crc_err: %d, crc_nak: %d",
 		//	evt->conn_handle, evt->event_counter, evt->channel_index, evt->crc_ok_count, evt->crc_error_count, evt->nak_count);
+		if (evt->crc_error_count > 0) {
+			LOG_DBG("ch_index %d CRC error: %d", evt->channel_index, evt->crc_error_count);
+		}
 		chmap_filter_crc_update(
 			chmap_inst,
 			evt->channel_index,
@@ -617,15 +620,18 @@ static void apply_new_params(void)
 
 static void ble_qos_thread_fn(void)
 {
+	int err;
+	bool update_channel_map;
+	uint8_t *chmap;
+
 	while (true) {
-		bool update_channel_map;
-		int err;
 
 		//Configure processing interval for QoS algorithm.
-		k_sleep(K_MSEC(700));
+		k_sleep(K_MSEC(1000));
 
 		/* Check and apply new parameters received via config channel */
 		if (atomic_get(&params_updated)) {
+			LOG_INF("Applying new parameters");
 			apply_new_params();
 		}
 
@@ -652,8 +658,6 @@ static void ble_qos_thread_fn(void)
 		if (!update_channel_map) {
 			continue;
 		}
-
-		uint8_t *chmap;
 
 		chmap = chmap_filter_suggested_map_get(chmap_inst);
 
