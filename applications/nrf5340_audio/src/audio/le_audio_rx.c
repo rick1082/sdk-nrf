@@ -61,7 +61,10 @@ void le_audio_rx_data_handler(uint8_t const *const p_data, size_t data_size, boo
 	rx_stats[channel_index].recv_cnt++;
 
 	if (data_size == 0) {
-		LOG_DBG("Received data size is 0, from ch %d, bad_frame %d", channel_index, bad_frame);
+		LOG_WRN("Received data size is 0, from ch %d, bad_frame %d", channel_index, bad_frame);
+	}
+	if (bad_frame == true) {
+		LOG_WRN("Received bad frame, from ch %d", channel_index);
 	}
 
 	if (data_size != desired_data_size) {

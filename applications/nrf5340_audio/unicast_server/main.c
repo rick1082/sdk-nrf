@@ -168,11 +168,29 @@ static void button_msg_sub_thread(void)
 	}
 }
 
+static void dummy_data_send_thread(void)
+{
+	int ret;
+	uint8_t dummy_data[1] = {0x00};
+	while(1){
+		k_sleep(K_MSEC(10));
+		ret = bt_nus_send(NULL, dummy_data, sizeof(dummy_data));
+		if(ret) {
+			LOG_ERR("Failed to send data over BLE NUS %d", ret);
+		}
+	}
+}
+
+K_THREAD_DEFINE(dummy_data_send_thread_id, 2048,
+		dummy_data_send_thread, NULL, NULL, NULL,
+		K_PRIO_PREEMPT(5), 0, -1);
+
 /**
  * @brief	Handle Bluetooth LE audio events.
  */
 static void le_audio_msg_sub_thread(void)
 {
+
 	int ret;
 	uint32_t pres_delay_us;
 	uint32_t bitrate_bps;
@@ -190,7 +208,8 @@ static void le_audio_msg_sub_thread(void)
 		switch (msg.event) {
 		case LE_AUDIO_EVT_STREAMING:
 			LOG_DBG("LE audio evt streaming");
-
+			k_thread_start(dummy_data_send_thread_id);
+			k_thread_resume(dummy_data_send_thread_id);
 			if (msg.dir == BT_AUDIO_DIR_SOURCE) {
 				audio_system_encoder_start();
 			}
@@ -208,6 +227,7 @@ static void le_audio_msg_sub_thread(void)
 			break;
 
 		case LE_AUDIO_EVT_NOT_STREAMING:
+			k_thread_suspend(dummy_data_send_thread_id);
 			LOG_DBG("LE audio evt not streaming");
 
 			if (strm_state == STATE_PAUSED) {

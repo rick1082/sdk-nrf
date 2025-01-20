@@ -571,7 +571,7 @@ static bool on_vs_evt(struct net_buf_simple *buf)
 		//LOG_INF("conn_handle: %2d, evt = %6d, ch_index: %2d, crc_ok: %d, crc_err: %d, crc_nak: %d",
 		//	evt->conn_handle, evt->event_counter, evt->channel_index, evt->crc_ok_count, evt->crc_error_count, evt->nak_count);
 		if (evt->crc_error_count > 0) {
-			LOG_DBG("ch_index %d CRC error: %d", evt->channel_index, evt->crc_error_count);
+			LOG_WRN("ch_index %d CRC error: %d", evt->channel_index, evt->crc_error_count);
 		}
 		chmap_filter_crc_update(
 			chmap_inst,

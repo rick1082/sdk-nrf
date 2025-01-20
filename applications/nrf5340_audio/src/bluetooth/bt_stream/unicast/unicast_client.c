@@ -1505,7 +1505,7 @@ static void work_dummy_data_send(struct k_work *work)
 
 static uint8_t ble_data_received(struct bt_nus_client *nus, const uint8_t *data, uint16_t len)
 {
-	LOG_HEXDUMP_INF(data, len, "NUS received:");
+	//LOG_HEXDUMP_INF(data, len, "NUS received:");
 	return BT_GATT_ITER_CONTINUE;
 }
 
