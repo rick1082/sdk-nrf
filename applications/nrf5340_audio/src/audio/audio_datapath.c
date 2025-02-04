@@ -55,7 +55,7 @@ LOG_MODULE_REGISTER(audio_datapath, CONFIG_AUDIO_DATAPATH_LOG_LEVEL);
 /* Increment sample FIFO index by one block */
 #define NEXT_IDX(i) (((i) < (FIFO_NUM_BLKS - 1)) ? ((i) + 1) : 0)
 /* Decrement sample FIFO index by one block */
-#define PREV_IDX(i) (((i) > 0) ? ((i)-1) : (FIFO_NUM_BLKS - 1))
+#define PREV_IDX(i) (((i) > 0) ? ((i) - 1) : (FIFO_NUM_BLKS - 1))
 
 #define NUM_BLKS_IN_FRAME      NUM_BLKS(CONFIG_AUDIO_FRAME_DURATION_US)
 #define BLK_MONO_NUM_SAMPS     BLK_SIZE_SAMPLES(CONFIG_AUDIO_SAMPLE_RATE_HZ)
@@ -249,8 +249,8 @@ static void audio_datapath_drift_compensation(uint32_t frame_start_ts_us)
 {
 	if (CONFIG_AUDIO_DEV == HEADSET) {
 		/** For headsets we do not use the timestamp gotten from hci_tx_sync_get to adjust
-		 * for drift
-		 */
+		* for drift
+		*/
 		ctrl_blk.prev_drift_sdu_ref_us = ctrl_blk.prev_pres_sdu_ref_us;
 	}
 	switch (ctrl_blk.drift_comp.state) {
@@ -258,7 +258,6 @@ static void audio_datapath_drift_compensation(uint32_t frame_start_ts_us)
 		/* Check if audio data has been received */
 		if (ctrl_blk.prev_drift_sdu_ref_us) {
 			ctrl_blk.drift_comp.meas_start_time_us = ctrl_blk.prev_drift_sdu_ref_us;
-
 			drift_comp_state_set(DRIFT_STATE_CALIB);
 		}
 
@@ -665,7 +664,8 @@ static void audio_datapath_i2s_blk_complete(uint32_t frame_start_ts_us, uint32_t
 					ctrl_blk.out.total_blk_underruns++;
 
 					if ((ctrl_blk.out.total_blk_underruns %
-					     UNDERRUN_LOG_INTERVAL_BLKS) == 0) {
+					     UNDERRUN_LOG_INTERVAL_BLKS) == 0 &&
+					    (CONFIG_AUDIO_DEV != HEADSET)) {
 						LOG_WRN("In I2S TX under-run condition, total: %d",
 							ctrl_blk.out.total_blk_underruns);
 					}
@@ -833,7 +833,7 @@ static void audio_datapath_just_in_time_check_and_adjust(uint32_t tx_sync_ts_us,
 	    (diff > (JUST_IN_TIME_TARGET_DLY_US + JUST_IN_TIME_BOUND_US))) {
 		ret = audio_system_fifo_rx_block_drop();
 		if (ret) {
-			LOG_WRN("Not able to drop FIFO RX block");
+			LOG_DBG("Not able to drop FIFO RX block");
 			return;
 		}
 		LOG_DBG("Dropped block to align with connection interval");
@@ -865,7 +865,6 @@ static void audio_datapath_sdu_ref_update(const struct zbus_channel *chan)
 
 		if (ctrl_blk.stream_started) {
 			ctrl_blk.prev_drift_sdu_ref_us = tx_sync_ts_us;
-
 			if (adjust && tx_sync_ts_us != 0) {
 				audio_datapath_just_in_time_check_and_adjust(tx_sync_ts_us,
 									     curr_ts_us);
@@ -898,13 +897,49 @@ void audio_datapath_pres_delay_us_get(uint32_t *delay_us)
 	*delay_us = ctrl_blk.pres_comp.pres_delay_us;
 }
 
-void audio_datapath_stream_out(const uint8_t *buf, size_t size, uint32_t sdu_ref_us, bool bad_frame,
-			       uint32_t recv_frame_ts_us)
+#include <zephyr/sys/ring_buffer.h>
+
+RING_BUF_DECLARE(recv_ring_buf_l, 280 * 10);
+RING_BUF_DECLARE(recv_ring_buf_r, 280 * 10);
+
+struct recv_pkt_info {
+	uint32_t sdu_ref_us;
+	uint32_t recv_frame_ts_us;
+	uint8_t channel;
+	bool bad_frame;
+	uint8_t size;
+	uint8_t desired_data_size;
+	uint8_t buf[CONFIG_BT_ISO_RX_MTU];
+} __packed;
+#if (CONFIG_AUDIO_DEV != GATEWAY)
+int unicast_client_stream_state(enum audio_channel)
 {
+	return 0;
+}
+#endif
+
+void audio_datapath_stream_out(const uint8_t *buf, size_t size, uint32_t sdu_ref_us, bool bad_frame,
+			       uint32_t recv_frame_ts_us, uint8_t channel,
+			       uint8_t desired_data_size)
+{
+	struct recv_pkt_info recv_pkt;
+	struct recv_pkt_info ring_buf_l, ring_buf_r;
+	struct recv_pkt_info recv_pkt_dummy;
+	static uint8_t encoded_data[CONFIG_BT_ISO_RX_MTU * 2];
+	uint8_t bad_frame_ch = 0;
+
 	if (!ctrl_blk.stream_started) {
 		LOG_WRN("Stream not started");
 		return;
 	}
+
+	recv_pkt.sdu_ref_us = sdu_ref_us;
+	recv_pkt.recv_frame_ts_us = recv_frame_ts_us;
+	recv_pkt.channel = channel;
+	recv_pkt.bad_frame = bad_frame;
+	recv_pkt.size = size;
+	recv_pkt.desired_data_size = desired_data_size;
+	memcpy(recv_pkt.buf, buf, size);
 
 	/*** Check incoming data ***/
 
@@ -912,9 +947,104 @@ void audio_datapath_stream_out(const uint8_t *buf, size_t size, uint32_t sdu_ref
 		LOG_ERR("Buffer pointer is NULL");
 	}
 
-	if (sdu_ref_us == ctrl_blk.prev_pres_sdu_ref_us && sdu_ref_us != 0) {
-		LOG_WRN("Duplicate sdu_ref_us (%d) - Dropping audio frame", sdu_ref_us);
-		return;
+	if (channel == AUDIO_CH_L) {
+		if (ring_buf_put(&recv_ring_buf_l, (uint8_t *)&recv_pkt, sizeof(recv_pkt)) !=
+		    sizeof(recv_pkt)) {
+			ring_buf_get(&recv_ring_buf_l, (uint8_t *)&recv_pkt_dummy,
+				     sizeof(recv_pkt_dummy));
+			ring_buf_put(&recv_ring_buf_l, (uint8_t *)&recv_pkt, sizeof(recv_pkt));
+		}
+	}
+
+	if (channel == AUDIO_CH_R) {
+		if (ring_buf_put(&recv_ring_buf_r, (uint8_t *)&recv_pkt, sizeof(recv_pkt)) !=
+		    sizeof(recv_pkt)) {
+			ring_buf_get(&recv_ring_buf_r, (uint8_t *)&recv_pkt_dummy,
+				     sizeof(recv_pkt_dummy));
+			ring_buf_put(&recv_ring_buf_r, (uint8_t *)&recv_pkt, sizeof(recv_pkt));
+		}
+	}
+
+	/*** Decode ***/
+	int state;
+
+	if (channel == AUDIO_CH_L) {
+		// check if channel R is in streaming state
+		state = unicast_client_stream_state(BT_AUDIO_LOCATION_FRONT_RIGHT);
+		if (0) {
+			// channel R is not in streaming state, set R channel to 0
+			memset(encoded_data + desired_data_size, 0, desired_data_size);
+		} else {
+			// channel R is in streaming state, fetch data from ring_buf_r
+			if (ring_buf_get(&recv_ring_buf_r, (uint8_t *)&ring_buf_r,
+					 sizeof(ring_buf_r)) != sizeof(ring_buf_r)) {
+				return;
+			} else {
+				if (ring_buf_r.bad_frame) {
+					bad_frame_ch |= 2;
+					memset(encoded_data + desired_data_size, 0,
+					       desired_data_size);
+				} else {
+					memcpy(encoded_data + desired_data_size, ring_buf_r.buf,
+					       ring_buf_r.size);
+				}
+			}
+		}
+		if (ring_buf_get(&recv_ring_buf_l, (uint8_t *)&recv_pkt, sizeof(recv_pkt)) !=
+		    sizeof(recv_pkt)) {
+			return;
+		}
+		sdu_ref_us = recv_pkt.sdu_ref_us;
+		recv_frame_ts_us = recv_pkt.recv_frame_ts_us;
+		channel = recv_pkt.channel;
+		bad_frame = recv_pkt.bad_frame;
+		size = recv_pkt.size;
+		desired_data_size = recv_pkt.desired_data_size;
+		if (bad_frame) {
+			bad_frame_ch |= 1;
+			memset(encoded_data, 0, desired_data_size);
+		} else {
+			memcpy(encoded_data, recv_pkt.buf, desired_data_size);
+		}
+	} else if (channel == AUDIO_CH_R) {
+		state = unicast_client_stream_state(BT_AUDIO_LOCATION_FRONT_LEFT);
+		if (0) {
+			// channel L is not in streaming state
+			memset(encoded_data, 0, desired_data_size);
+		} else {
+			// channel L is in streaming state, fetch data from ring_buf_l
+			if (ring_buf_get(&recv_ring_buf_l, (uint8_t *)&ring_buf_l,
+					 sizeof(ring_buf_l)) != sizeof(ring_buf_l)) {
+				return;
+			} else {
+				if (ring_buf_l.bad_frame) {
+					bad_frame_ch |= 1;
+					memset(encoded_data, 0, desired_data_size);
+				} else {
+					memcpy(encoded_data, ring_buf_l.buf, ring_buf_l.size);
+				}
+			}
+		}
+
+		if (ring_buf_get(&recv_ring_buf_r, (uint8_t *)&recv_pkt, sizeof(recv_pkt)) !=
+		    sizeof(recv_pkt)) {
+			return;
+		}
+
+		sdu_ref_us = recv_pkt.sdu_ref_us;
+		recv_frame_ts_us = recv_pkt.recv_frame_ts_us;
+		channel = recv_pkt.channel;
+		bad_frame = recv_pkt.bad_frame;
+		size = recv_pkt.size;
+		desired_data_size = recv_pkt.desired_data_size;
+		if (bad_frame) {
+			bad_frame_ch |= 2;
+			memset(encoded_data + desired_data_size, 0, desired_data_size);
+		} else {
+			memcpy(encoded_data + desired_data_size, recv_pkt.buf, desired_data_size);
+		}
+	} else {
+		LOG_WRN("Invalid channel: %d", channel);
 	}
 
 	bool sdu_ref_not_consecutive = false;
@@ -952,15 +1082,15 @@ void audio_datapath_stream_out(const uint8_t *buf, size_t size, uint32_t sdu_ref
 							 sdu_ref_not_consecutive);
 	}
 
-	/*** Decode ***/
-
 	int ret;
 	size_t pcm_size;
 
-	ret = sw_codec_decode(buf, size, bad_frame, &ctrl_blk.decoded_data, &pcm_size);
+	ret = sw_codec_decode(encoded_data, desired_data_size * 2, bad_frame_ch,
+			      &ctrl_blk.decoded_data, &pcm_size);
 	if (ret) {
 		LOG_WRN("SW codec decode error: %d", ret);
 	}
+	bad_frame_ch = 0;
 
 	if (IS_ENABLED(CONFIG_SD_CARD_PLAYBACK)) {
 		if (sd_card_playback_is_active()) {
@@ -976,9 +1106,15 @@ void audio_datapath_stream_out(const uint8_t *buf, size_t size, uint32_t sdu_ref
 	}
 
 	/*** Add audio data to FIFO buffer ***/
+	static uint32_t prev_num_blks_in_fifo;
 	uint32_t num_blks_in_fifo = filled_blocks_get();
 
-	if ((num_blks_in_fifo + NUM_BLKS_IN_FRAME) > FIFO_NUM_BLKS) {
+	if (num_blks_in_fifo != prev_num_blks_in_fifo) {
+		//printk("Blocks in FIFO: %d\n", num_blks_in_fifo);
+		prev_num_blks_in_fifo = num_blks_in_fifo;
+	}
+
+	if ((num_blks_in_fifo + NUM_BLKS_IN_FRAME) >= FIFO_NUM_BLKS) {
 		LOG_WRN("Output audio stream overrun - Discarding audio frame");
 
 		/* Discard frame to allow consumer to catch up */

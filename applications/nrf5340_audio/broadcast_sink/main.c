@@ -257,9 +257,14 @@ static void le_audio_msg_sub_thread(void)
 		case LE_AUDIO_EVT_SYNC_LOST:
 			LOG_INF("Sync lost");
 
+			if (msg.pa_sync == NULL) {
+				LOG_WRN("PA sync is NULL");
+				//continue;
+			}
+
 			ret = bt_mgmt_pa_sync_delete(msg.pa_sync);
 			if (ret) {
-				LOG_WRN("Failed to delete PA sync");
+				LOG_WRN("Failed to delete PA sync %d", ret);
 			}
 
 			if (strm_state == STATE_STREAMING) {

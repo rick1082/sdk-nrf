@@ -60,7 +60,7 @@ void audio_datapath_pres_delay_us_get(uint32_t *delay_us);
  * @param recv_frame_ts_us Timestamp of when audio frame was received
  */
 void audio_datapath_stream_out(const uint8_t *buf, size_t size, uint32_t sdu_ref_us, bool bad_frame,
-			       uint32_t recv_frame_ts_us);
+			       uint32_t recv_frame_ts_us, uint8_t channel, uint8_t desired_data_size);
 
 /**
  * @brief Start the audio datapath module
