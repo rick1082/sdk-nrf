@@ -249,8 +249,8 @@ static void audio_datapath_drift_compensation(uint32_t frame_start_ts_us)
 {
 	if (CONFIG_AUDIO_DEV == HEADSET) {
 		/** For headsets we do not use the timestamp gotten from hci_tx_sync_get to adjust
-		* for drift
-		*/
+		 * for drift
+		 */
 		ctrl_blk.prev_drift_sdu_ref_us = ctrl_blk.prev_pres_sdu_ref_us;
 	}
 	switch (ctrl_blk.drift_comp.state) {
@@ -911,12 +911,6 @@ struct recv_pkt_info {
 	uint8_t desired_data_size;
 	uint8_t buf[CONFIG_BT_ISO_RX_MTU];
 } __packed;
-#if (CONFIG_AUDIO_DEV != GATEWAY)
-int unicast_client_stream_state(enum audio_channel)
-{
-	return 0;
-}
-#endif
 
 void audio_datapath_stream_out(const uint8_t *buf, size_t size, uint32_t sdu_ref_us, bool bad_frame,
 			       uint32_t recv_frame_ts_us, uint8_t channel,
@@ -966,28 +960,18 @@ void audio_datapath_stream_out(const uint8_t *buf, size_t size, uint32_t sdu_ref
 	}
 
 	/*** Decode ***/
-	int state;
-
 	if (channel == AUDIO_CH_L) {
-		// check if channel R is in streaming state
-		state = unicast_client_stream_state(BT_AUDIO_LOCATION_FRONT_RIGHT);
-		if (0) {
-			// channel R is not in streaming state, set R channel to 0
-			memset(encoded_data + desired_data_size, 0, desired_data_size);
+		// channel R is in streaming state, fetch data from ring_buf_r
+		if (ring_buf_get(&recv_ring_buf_r, (uint8_t *)&ring_buf_r, sizeof(ring_buf_r)) !=
+		    sizeof(ring_buf_r)) {
+			return;
 		} else {
-			// channel R is in streaming state, fetch data from ring_buf_r
-			if (ring_buf_get(&recv_ring_buf_r, (uint8_t *)&ring_buf_r,
-					 sizeof(ring_buf_r)) != sizeof(ring_buf_r)) {
-				return;
+			if (ring_buf_r.bad_frame) {
+				bad_frame_ch |= 2;
+				memset(encoded_data + desired_data_size, 0, desired_data_size);
 			} else {
-				if (ring_buf_r.bad_frame) {
-					bad_frame_ch |= 2;
-					memset(encoded_data + desired_data_size, 0,
-					       desired_data_size);
-				} else {
-					memcpy(encoded_data + desired_data_size, ring_buf_r.buf,
-					       ring_buf_r.size);
-				}
+				memcpy(encoded_data + desired_data_size, ring_buf_r.buf,
+				       ring_buf_r.size);
 			}
 		}
 		if (ring_buf_get(&recv_ring_buf_l, (uint8_t *)&recv_pkt, sizeof(recv_pkt)) !=
@@ -1007,22 +991,17 @@ void audio_datapath_stream_out(const uint8_t *buf, size_t size, uint32_t sdu_ref
 			memcpy(encoded_data, recv_pkt.buf, desired_data_size);
 		}
 	} else if (channel == AUDIO_CH_R) {
-		state = unicast_client_stream_state(BT_AUDIO_LOCATION_FRONT_LEFT);
-		if (0) {
-			// channel L is not in streaming state
-			memset(encoded_data, 0, desired_data_size);
+
+		// channel L is in streaming state, fetch data from ring_buf_l
+		if (ring_buf_get(&recv_ring_buf_l, (uint8_t *)&ring_buf_l, sizeof(ring_buf_l)) !=
+		    sizeof(ring_buf_l)) {
+			return;
 		} else {
-			// channel L is in streaming state, fetch data from ring_buf_l
-			if (ring_buf_get(&recv_ring_buf_l, (uint8_t *)&ring_buf_l,
-					 sizeof(ring_buf_l)) != sizeof(ring_buf_l)) {
-				return;
+			if (ring_buf_l.bad_frame) {
+				bad_frame_ch |= 1;
+				memset(encoded_data, 0, desired_data_size);
 			} else {
-				if (ring_buf_l.bad_frame) {
-					bad_frame_ch |= 1;
-					memset(encoded_data, 0, desired_data_size);
-				} else {
-					memcpy(encoded_data, ring_buf_l.buf, ring_buf_l.size);
-				}
+				memcpy(encoded_data, ring_buf_l.buf, ring_buf_l.size);
 			}
 		}
 
@@ -1068,8 +1047,10 @@ void audio_datapath_stream_out(const uint8_t *buf, size_t size, uint32_t sdu_ref
 					     CONFIG_AUDIO_FRAME_DURATION_US;
 			}
 		} else {
-			LOG_INF("sdu_ref_us not from consecutive frames (diff: %d us)",
+			/* TODO: investigate the impact of sdu_ref other than 10ms
+			LOG_DBG("sdu_ref_us not from consecutive frames (diff: %d us)",
 				sdu_ref_delta_us);
+			*/
 			sdu_ref_not_consecutive = true;
 		}
 	}
@@ -1110,7 +1091,7 @@ void audio_datapath_stream_out(const uint8_t *buf, size_t size, uint32_t sdu_ref
 	uint32_t num_blks_in_fifo = filled_blocks_get();
 
 	if (num_blks_in_fifo != prev_num_blks_in_fifo) {
-		//printk("Blocks in FIFO: %d\n", num_blks_in_fifo);
+		// printk("Blocks in FIFO: %d\n", num_blks_in_fifo);
 		prev_num_blks_in_fifo = num_blks_in_fifo;
 	}
 
