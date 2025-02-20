@@ -6,7 +6,9 @@
 
 #include <zephyr/ztest.h>
 #include <zephyr/tc_util.h>
-
+#ifdef CONFIG_BOARD_NRF5340_DK_NRF5340_CPUAPP
+#include <nrfx_clock.h>
+#endif
 #include "sw_codec_lc3.h"
 
 static const int16_t sample_sine_100hz[] = {
@@ -469,9 +471,34 @@ static uint16_t encoded_bytes_written_r;
 static uint16_t decoded_bytes_written_l;
 static uint16_t decoded_bytes_written_r;
 
+#include <stdio.h>
+#include <zephyr/kernel.h>
+#include <zephyr/drivers/gpio.h>
+
+#define LED0_NODE DT_ALIAS(led0)
+static const struct gpio_dt_spec led = GPIO_DT_SPEC_GET(LED0_NODE, gpios);
+
+
 static void *test_sw_codec_lc3_init(void)
 {
 	int ret;
+#ifdef CONFIG_BOARD_NRF5340_DK_NRF5340_CPUAPP
+	ret = nrfx_clock_divider_set(NRF_CLOCK_DOMAIN_HFCLK, NRF_CLOCK_HFCLK_DIV_1);
+	ret -= NRFX_ERROR_BASE_NUM;
+	if (ret) {
+		return;
+	}
+#endif
+	if (!gpio_is_ready_dt(&led)) {
+		return 0;
+	}
+
+	ret = gpio_pin_configure_dt(&led, GPIO_OUTPUT_ACTIVE);
+	if (ret < 0) {
+		return 0;
+	}
+
+	gpio_pin_set_dt(&led, 0);
 
 	sw_codec_lc3_init(NULL, NULL, LC3_FRAME_SIZE_US);
 
@@ -490,10 +517,12 @@ ZTEST(suite_sw_codec_lc3, test_sw_codec_lc3_enc_dec)
 {
 	int ret;
 
+	gpio_pin_set_dt(&led, 1);
 	ret = sw_codec_lc3_enc_run(sample_sine_100hz, sizeof(sample_sine_100hz),
 				   LC3_USE_BITRATE_FROM_INIT, AUDIO_CH_L, sizeof(audio_encoded_l),
 				   audio_encoded_l, &encoded_bytes_written_l);
 	zassert_equal(ret, 0, "sw_codec_lc3_enc_run did not return zero");
+	gpio_pin_set_dt(&led, 0);
 
 	ret = sw_codec_lc3_enc_run(sample_sine_100hz, sizeof(sample_sine_100hz),
 				   LC3_USE_BITRATE_FROM_INIT, AUDIO_CH_R, sizeof(audio_encoded_r),
