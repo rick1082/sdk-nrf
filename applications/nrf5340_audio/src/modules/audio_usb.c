@@ -23,7 +23,7 @@ LOG_MODULE_REGISTER(uac2_sample, LOG_LEVEL_INF);
 #define HEADPHONES_OUT_TERMINAL_ID UAC2_ENTITY_ID(DT_NODELABEL(out_terminal))
 #define MICROPHONE_IN_TERMINAL_ID  UAC2_ENTITY_ID(DT_NODELABEL(in_terminal))
 
-#define SAMPLES_PER_SOF	   48
+#define SAMPLES_PER_SOF	   16
 #define SAMPLE_FREQUENCY   (SAMPLES_PER_SOF * 1000)
 #define SAMPLE_BIT_WIDTH   16
 #define NUMBER_OF_CHANNELS 2
@@ -241,7 +241,7 @@ static void uac2_buf_release_cb(const struct device *dev, uint8_t terminal, void
  * is (6 << 16).
  */
 static volatile bool use_hardcoded_feedback;
-static volatile uint32_t hardcoded_feedback = (48 << 14) + 1;
+static volatile uint32_t hardcoded_feedback = (16 << 14) + 1;
 
 static uint32_t uac2_feedback_cb(const struct device *dev, uint8_t terminal, void *user_data)
 {
@@ -260,7 +260,7 @@ static uint32_t uac2_feedback_cb(const struct device *dev, uint8_t terminal, voi
 
 #include "pcm_stream_channel_modifier.h"
 static uint32_t tx_num_underruns;
-static uint8_t __aligned(UDC_BUF_ALIGN) data_buffer[ROUND_UP(12, UDC_BUF_GRANULARITY)] = {0};
+static uint8_t __aligned(UDC_BUF_ALIGN) data_buffer[ROUND_UP(4, UDC_BUF_GRANULARITY)] = {0};
 static void uac2_sof(const struct device *dev, void *user_data)
 {
 	ARG_UNUSED(dev);
@@ -293,7 +293,7 @@ static void uac2_sof(const struct device *dev, void *user_data)
 			// feedback_process(ctx->fb);
 		}
 
-		if (usbd_uac2_send(dev, MICROPHONE_IN_TERMINAL_ID, data_buffer, 12) < 0) {
+		if (usbd_uac2_send(dev, MICROPHONE_IN_TERMINAL_ID, data_buffer, 4) < 0) {
 		}
 
 	/* We want to maintain 3 SOFs delay, i.e. samples received during SOF n

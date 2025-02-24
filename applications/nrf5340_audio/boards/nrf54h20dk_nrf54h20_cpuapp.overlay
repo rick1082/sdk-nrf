@@ -17,7 +17,7 @@
 			 compatible = "zephyr,uac2-clock-source";
 			 clock-type = "internal-programmable";
 			 frequency-control = "host-programmable";
-			 sampling-frequencies = <48000>;
+			 sampling-frequencies = <16000>;
 			 sof-synchronized;
 		 };
  
