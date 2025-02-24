@@ -13,6 +13,9 @@
 #include <zephyr/device.h>
 #include <zephyr/usb/usbd.h>
 #include <zephyr/usb/class/usbd_uac2.h>
+#include <zephyr/usb/class/usbd_hid.h>
+#include <zephyr/drivers/spi.h>
+#include <zephyr/linker/devicetree_regions.h>
 #include <zephyr/drivers/i2s.h>
 #include <zephyr/logging/log.h>
 #include <data_fifo.h>
@@ -53,6 +56,8 @@ static bool tx_first_data;
 #define I2S_BUFFERS_COUNT 7
 K_MEM_SLAB_DEFINE_STATIC(i2s_tx_slab, ROUND_UP(MAX_BLOCK_SIZE, UDC_BUF_GRANULARITY),
 			 I2S_BUFFERS_COUNT, UDC_BUF_ALIGN);
+
+const struct device *hid_dev;
 
 struct usb_i2s_ctx {
 	const struct device *i2s_dev;
@@ -337,6 +342,72 @@ static struct uac2_ops usb_audio_ops = {
 
 static struct usb_i2s_ctx main_ctx;
 
+static uint32_t idle_duration;
+UDC_STATIC_BUF_DEFINE(report_mouse, 4);
+K_SEM_DEFINE(report_sem, 0, 1);
+
+void user_sof(const struct device *dev)
+{
+
+}
+
+static void iface_ready_next(const struct device *dev, const bool ready)
+{
+	LOG_INF("%s", __func__);
+	return;
+}
+
+static int get_report_next(const struct device *dev, const uint8_t type, const uint8_t id,
+			   const uint16_t len, uint8_t *const buf)
+{
+	// LOG_INF("%s", __func__);
+	return len;
+}
+
+static int set_report_next(const struct device *dev, const uint8_t type, const uint8_t id,
+			   const uint16_t len, const uint8_t *const buf)
+{
+	// LOG_INF("%s", __func__);
+	return len;
+}
+
+static void set_idle_next(const struct device *dev, const uint8_t id, const uint32_t duration)
+{
+	// LOG_INF("%s", __func__);
+	idle_duration = duration;
+}
+
+static uint32_t get_idle_next(const struct device *dev, const uint8_t id)
+{
+	// LOG_INF("%s", __func__);
+	return idle_duration;
+}
+
+static void report_sent_cb_next(const struct device *dev)
+{
+	// LOG_INF("%s", __func__);
+	return;
+}
+
+static void protocol_change(const struct device *dev, uint8_t protocol)
+{
+	// LOG_INF("%s", __func__);
+	return;
+}
+
+static const struct hid_device_ops my_ops = {
+	.iface_ready = iface_ready_next,
+	.get_report = get_report_next,
+	.set_report = set_report_next,
+	.set_idle = set_idle_next,
+	.get_idle = get_idle_next,
+	.set_protocol = protocol_change,
+	.input_report_done = report_sent_cb_next,
+	.sof = user_sof,
+};
+
+static const uint8_t hid_report_desc[] = HID_MOUSE_REPORT_DESC(2);
+
 int audio_usb_start(struct data_fifo *fifo_tx_in, struct data_fifo *fifo_rx_in)
 {
 	if (fifo_rx_in == NULL) {
@@ -379,6 +450,19 @@ int audio_usb_init(void)
 	// main_ctx.fb = feedback_init();
 
 	usbd_uac2_set_ops(dev, &usb_audio_ops, &main_ctx);
+
+	hid_dev = DEVICE_DT_GET_ONE(zephyr_hid_device);
+	if (!device_is_ready(hid_dev)) {
+		LOG_ERR("HID Device is not ready");
+		return -EIO;
+	}
+
+	ret = hid_device_register(hid_dev, hid_report_desc, sizeof(hid_report_desc), &my_ops);
+
+	if (ret != 0) {
+		LOG_ERR("Failed to register HID Device, %d", ret);
+		return ret;
+	}
 
 	sample_usbd = sample_usbd_init_device(NULL);
 	if (sample_usbd == NULL) {
