@@ -398,7 +398,7 @@ static void bt_mgmt_evt_handler(const struct zbus_channel *chan)
 		}
 
 		if (IS_ENABLED(CONFIG_STREAM_BIDIRECTIONAL)) {
-			ret = unicast_client_discover(msg->conn, UNICAST_SERVER_BIDIR);
+			ret = unicast_client_discover(msg->conn, UNICAST_SERVER_SOURCE);
 		} else {
 			ret = unicast_client_discover(msg->conn, UNICAST_SERVER_SINK);
 		}
