@@ -404,10 +404,18 @@ static void stream_recv(struct bt_bap_stream *stream, const struct bt_iso_recv_i
 	}
 }
 
+static void disconnect_work_handler(struct k_work *work)
+{
+	bt_conn_disconnect(default_conn, BT_HCI_ERR_REMOTE_USER_TERM_CONN);
+}
+
+K_WORK_DEFINE(work_disconnect, disconnect_work_handler);
+
 static void stream_stopped(struct bt_bap_stream *stream, uint8_t reason)
 {
 	int ret;
 	LOG_INF("Audio Stream %p stopped with reason 0x%02X", (void *)stream, reason);
+
 	if (stream_dir(stream) == BT_AUDIO_DIR_SOURCE) {
 		k_thread_suspend(dmic_fetch);
 		ret = dmic_trigger(dmic_dev, DMIC_TRIGGER_STOP);
@@ -417,6 +425,14 @@ static void stream_stopped(struct bt_bap_stream *stream, uint8_t reason)
 			LOG_INF("DMIC stop trigger success");
 		}
 		sw_codec_lc3_enc_uninit_all();
+	}
+
+	/* Workaround for unexpected disconnection
+	 * If ISO disconnected due to timeout, disconnect the ACL connection for central to
+	 * re-establish the link and stream.
+	 */
+	if (reason == 0x08) {
+		k_work_submit(&work_disconnect);
 	}
 }
 
@@ -456,7 +472,7 @@ static void stream_disabled_cb(struct bt_bap_stream *stream)
 
 static void stream_sent_cb(struct bt_bap_stream *stream)
 {
-	static uint16_t sent_num = 0;
+	static uint32_t sent_num;
 	sent_num++;
 	if (sent_num % 100 == 0) {
 		LOG_INF("Sent %u packets", sent_num);
