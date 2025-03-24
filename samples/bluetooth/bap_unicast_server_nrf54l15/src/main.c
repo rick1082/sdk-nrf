@@ -18,6 +18,7 @@
 #include <zephyr/bluetooth/audio/pacs.h>
 #include <zephyr/sys/byteorder.h>
 #include <zephyr/drivers/clock_control/nrf_clock_control.h>
+#include <dk_buttons_and_leds.h>
 #include "sw_codec_lc3.h"
 
 #if defined(NRF54L15_XXAA)
@@ -58,7 +59,7 @@ static const struct device *const dmic_dev = DEVICE_DT_GET(DT_NODELABEL(dmic_dev
 static int16_t send_pcm_data[MAX_NUM_SAMPLES];
 static const struct bt_audio_codec_cap lc3_codec_cap = BT_AUDIO_CODEC_CAP_LC3(
 	BT_AUDIO_CODEC_CAP_FREQ_16KHZ, BT_AUDIO_CODEC_CAP_DURATION_10,
-	BT_AUDIO_CODEC_CAP_CHAN_COUNT_SUPPORT(1), 40u, 40u, 1u, BT_AUDIO_CONTEXT_TYPE_ANY);
+	BT_AUDIO_CODEC_CAP_CHAN_COUNT_SUPPORT(1), 40u, 120u, 1u, BT_AUDIO_CONTEXT_TYPE_ANY);
 
 static struct bt_conn *default_conn;
 static struct bt_bap_stream sink_streams[CONFIG_BT_ASCS_MAX_ASE_SNK_COUNT];
@@ -95,6 +96,9 @@ static const struct bt_data ad[] = {
 #define SDU_INTERVAL_US		10000UL		   /* 10 ms SDU interval */
 #define AUDIO_VOLUME		(INT16_MAX - 3000) /* codec does clipping above INT16_MAX - 3000 */
 #define AUDIO_TONE_FREQUENCY_HZ 400
+
+#define ACL_LINK_STATUS	  DK_LED1
+#define ISO_STREAM_STATUS DK_LED2
 
 #define LC3_ENCODER_STACK_SIZE 8192
 #define LC3_ENCODER_PRIORITY   5
@@ -417,6 +421,7 @@ static void stream_stopped(struct bt_bap_stream *stream, uint8_t reason)
 	LOG_INF("Audio Stream %p stopped with reason 0x%02X", (void *)stream, reason);
 
 	if (stream_dir(stream) == BT_AUDIO_DIR_SOURCE) {
+		dk_set_led_off(ISO_STREAM_STATUS);
 		k_thread_suspend(dmic_fetch);
 		ret = dmic_trigger(dmic_dev, DMIC_TRIGGER_STOP);
 		if (ret < 0) {
@@ -441,6 +446,7 @@ static void stream_started(struct bt_bap_stream *stream)
 	int ret;
 	LOG_INF("Audio Stream %p started", (void *)stream);
 	if (stream_dir(stream) == BT_AUDIO_DIR_SOURCE) {
+		dk_set_led_on(ISO_STREAM_STATUS);
 		k_thread_resume(dmic_fetch);
 		ret = dmic_trigger(dmic_dev, DMIC_TRIGGER_START);
 		if (ret < 0) {
@@ -504,6 +510,7 @@ static void connected(struct bt_conn *conn, uint8_t err)
 
 	LOG_INF("Connected: %s", addr);
 	default_conn = bt_conn_ref(conn);
+	dk_set_led_on(ACL_LINK_STATUS);
 }
 
 static void disconnected(struct bt_conn *conn, uint8_t reason)
@@ -520,6 +527,7 @@ static void disconnected(struct bt_conn *conn, uint8_t reason)
 
 	bt_conn_unref(default_conn);
 	default_conn = NULL;
+	dk_set_led_off(ACL_LINK_STATUS);
 
 	k_sem_give(&sem_disconnected);
 }
@@ -613,7 +621,7 @@ static int set_available_contexts(void)
 	return 0;
 }
 
-int clocks_start(void)
+static int clocks_start(void)
 {
 	int err;
 	int res;
@@ -675,18 +683,9 @@ static void dmic_fetch_thread(void *arg1, void *arg2, void *arg3)
 	}
 }
 
-int main(void)
+static int pdm_mic_init()
 {
-	struct bt_le_ext_adv *adv;
 	int err;
-
-	clocks_start();
-
-	if (!device_is_ready(dmic_dev)) {
-		LOG_INF("DMIC device is not ready");
-		return 0;
-	}
-
 	struct pcm_stream_cfg stream = {
 		.pcm_width = SAMPLE_BIT_WIDTH,
 		.mem_slab = &mem_slab,
@@ -710,6 +709,12 @@ int main(void)
 			},
 	};
 
+	err = device_is_ready(dmic_dev);
+	if (err < 0) {
+		LOG_INF("DMIC device is not ready: %d", err);
+		return err;
+	}
+
 	cfg.channel.req_num_chan = 1;
 	cfg.channel.req_chan_map_lo = dmic_build_channel_map(0, 0, PDM_CHAN_LEFT);
 	cfg.streams[0].pcm_rate = MAX_SAMPLE_RATE;
@@ -718,7 +723,31 @@ int main(void)
 	err = dmic_configure(dmic_dev, &cfg);
 	if (err < 0) {
 		LOG_INF("Failed to configure the driver: %d", err);
+		return err;
+	}
+
+	return 0;
+}
+
+int main(void)
+{
+	struct bt_le_ext_adv *adv;
+	int err;
+
+	err = clocks_start();
+	if (err) {
+		LOG_INF("Failed to start clocks (err %d)", err);
 		return 0;
+	}
+
+	err = dk_leds_init();
+	if (err) {
+		LOG_ERR("Cannot init LEDs (err: %d)", err);
+	}
+
+	err = pdm_mic_init();
+	if (err) {
+		LOG_ERR("Cannot init PDM mic (err: %d)", err);
 	}
 
 	err = bt_enable(NULL);
