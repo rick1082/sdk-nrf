@@ -175,7 +175,7 @@ static void print_qos(const struct bt_audio_codec_qos *qos)
 static void send_data()
 {
 	int ret;
-	uint8_t lc3_encoded_buffer[40];
+	uint8_t lc3_encoded_buffer[CONFIG_BT_ISO_TX_MTU];
 	uint16_t encoded_bytes_written;
 	struct net_buf *buf;
 
@@ -199,7 +199,7 @@ static void send_data()
 			return;
 		}
 
-		net_buf_add_mem(buf, lc3_encoded_buffer, 40);
+		net_buf_add_mem(buf, lc3_encoded_buffer, configured_octets_per_frame);
 
 		ret = bt_bap_stream_send(stream, buf, get_and_incr_seq_num(stream));
 		if (ret < 0) {
