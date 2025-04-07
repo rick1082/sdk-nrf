@@ -20,6 +20,7 @@
 #include <zephyr/drivers/clock_control/nrf_clock_control.h>
 #include <dk_buttons_and_leds.h>
 #include "sw_codec_lc3.h"
+#include "hal/nrf_pdm.h"
 
 #if defined(NRF54L15_XXAA)
 #include <hal/nrf_clock.h>
@@ -34,6 +35,10 @@ NET_BUF_POOL_FIXED_DEFINE(tx_pool, CONFIG_BT_ASCS_MAX_ASE_SRC_COUNT,
 			  BT_ISO_SDU_BUF_SIZE(CONFIG_BT_ISO_TX_MTU),
 			  CONFIG_BT_CONN_TX_USER_DATA_SIZE, NULL);
 
+#define GAIN_UP_BTN             DK_BTN3_MSK
+#define GAIN_DOWN_BTN           DK_BTN4_MSK
+#define GAIN_STEP			 	5
+#define GAIN_DEFAULT		 	NRF_PDM_GAIN_DEFAULT
 #define MAX_SAMPLE_RATE	      16000
 #define MAX_FRAME_DURATION_US 10000
 #define MAX_NUM_SAMPLES	      ((MAX_FRAME_DURATION_US * MAX_SAMPLE_RATE) / USEC_PER_SEC)
@@ -445,6 +450,7 @@ static void stream_started(struct bt_bap_stream *stream)
 {
 	int ret;
 	LOG_INF("Audio Stream %p started", (void *)stream);
+
 	if (stream_dir(stream) == BT_AUDIO_DIR_SOURCE) {
 		dk_set_led_on(ISO_STREAM_STATUS);
 		k_thread_resume(dmic_fetch);
@@ -726,7 +732,34 @@ static int pdm_mic_init()
 		return err;
 	}
 
+	nrf_pdm_gain_set(NRF_PDM20_S, GAIN_DEFAULT, GAIN_DEFAULT);
+
 	return 0;
+}
+
+/* Handles button state changes and adjusts PDM gain accordingly */
+static void button_changed(uint32_t button_state, uint32_t has_changed)
+{
+	static uint8_t pdm_gain = NRF_PDM_GAIN_DEFAULT;
+	if ((button_state & has_changed) & GAIN_UP_BTN) {
+		if (pdm_gain + GAIN_STEP < NRF_PDM_GAIN_MAXIMUM) {
+			pdm_gain += GAIN_STEP;
+			nrf_pdm_gain_set(NRF_PDM20_S, pdm_gain, pdm_gain);
+			LOG_INF("Gain set to %d", pdm_gain);
+		} else {
+			nrf_pdm_gain_set(NRF_PDM20_S, NRF_PDM_GAIN_MAXIMUM, NRF_PDM_GAIN_MAXIMUM);
+			LOG_INF("Gain is already at maximum");
+		}
+	} else if ((button_state & has_changed) & GAIN_DOWN_BTN) {
+		if (pdm_gain - GAIN_STEP > 0) {
+			pdm_gain -= GAIN_STEP;
+			nrf_pdm_gain_set(NRF_PDM20_S, pdm_gain, pdm_gain);
+			LOG_INF("Gain set to %d", pdm_gain);
+		} else {
+			nrf_pdm_gain_set(NRF_PDM20_S, NRF_PDM_GAIN_MINIMUM, NRF_PDM_GAIN_MINIMUM);
+			LOG_INF("Gain is already at minimum");
+		}
+	}
 }
 
 int main(void)
@@ -743,6 +776,11 @@ int main(void)
 	err = dk_leds_init();
 	if (err) {
 		LOG_ERR("Cannot init LEDs (err: %d)", err);
+	}
+
+	err = dk_buttons_init(button_changed);
+	if (err) {
+		LOG_ERR("Cannot init buttons (err: %d)", err);
 	}
 
 	err = pdm_mic_init();
