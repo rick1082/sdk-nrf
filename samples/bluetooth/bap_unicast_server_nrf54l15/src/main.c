@@ -38,8 +38,8 @@ NET_BUF_POOL_FIXED_DEFINE(tx_pool, CONFIG_BT_ASCS_MAX_ASE_SRC_COUNT,
 #define GAIN_UP_BTN             DK_BTN3_MSK
 #define GAIN_DOWN_BTN           DK_BTN4_MSK
 #define GAIN_STEP			 	5
-#define GAIN_DEFAULT		 	NRF_PDM_GAIN_DEFAULT
-#define MAX_SAMPLE_RATE	      16000
+#define GAIN_DEFAULT		 	90
+#define MAX_SAMPLE_RATE	      48000
 #define MAX_FRAME_DURATION_US 10000
 #define MAX_NUM_SAMPLES	      ((MAX_FRAME_DURATION_US * MAX_SAMPLE_RATE) / USEC_PER_SEC)
 #define TOTAL_BUF_NEEDED      4
@@ -63,7 +63,7 @@ static const struct device *const dmic_dev = DEVICE_DT_GET(DT_NODELABEL(dmic_dev
 
 static int16_t send_pcm_data[MAX_NUM_SAMPLES];
 static const struct bt_audio_codec_cap lc3_codec_cap = BT_AUDIO_CODEC_CAP_LC3(
-	BT_AUDIO_CODEC_CAP_FREQ_16KHZ, BT_AUDIO_CODEC_CAP_DURATION_10,
+	BT_AUDIO_CODEC_CAP_FREQ_48KHZ, BT_AUDIO_CODEC_CAP_DURATION_10,
 	BT_AUDIO_CODEC_CAP_CHAN_COUNT_SUPPORT(1), 40u, 120u, 1u, BT_AUDIO_CONTEXT_TYPE_ANY);
 
 static struct bt_conn *default_conn;
@@ -104,12 +104,18 @@ static const struct bt_data ad[] = {
 
 #define ACL_LINK_STATUS	  DK_LED1
 #define ISO_STREAM_STATUS DK_LED2
+#define PDM_STATE	  DK_LED3
+#define BLE_STATE	  DK_LED4
 
 #define LC3_ENCODER_STACK_SIZE 8192
-#define LC3_ENCODER_PRIORITY   5
+#define LC3_ENCODER_PRIORITY   3
 static void dmic_fetch_thread(void *arg1, void *arg2, void *arg3);
+static void ble_send_thread(void *arg1, void *arg2, void *arg3);
 K_THREAD_DEFINE(dmic_fetch, LC3_ENCODER_STACK_SIZE, dmic_fetch_thread, NULL, NULL, NULL,
 		LC3_ENCODER_PRIORITY, 0, -1);
+K_THREAD_DEFINE(ble_send, LC3_ENCODER_STACK_SIZE*5, ble_send_thread, NULL, NULL, NULL,
+	5, 0, -1);
+	
 
 static uint16_t get_and_incr_seq_num(const struct bt_bap_stream *stream)
 {
@@ -205,13 +211,14 @@ static void send_data()
 		}
 
 		net_buf_add_mem(buf, lc3_encoded_buffer, configured_octets_per_frame);
-
+		dk_set_led_on(BLE_STATE);
 		ret = bt_bap_stream_send(stream, buf, get_and_incr_seq_num(stream));
 		if (ret < 0) {
 			LOG_INF("Failed to send audio data on streams[%zu] (%p): (%d)", i, stream,
 				ret);
 			net_buf_unref(buf);
 		}
+		dk_set_led_off(BLE_STATE);
 	}
 }
 
@@ -427,6 +434,7 @@ static void stream_stopped(struct bt_bap_stream *stream, uint8_t reason)
 
 	if (stream_dir(stream) == BT_AUDIO_DIR_SOURCE) {
 		dk_set_led_off(ISO_STREAM_STATUS);
+		dk_set_led_off(PDM_STATE);
 		k_thread_suspend(dmic_fetch);
 		ret = dmic_trigger(dmic_dev, DMIC_TRIGGER_STOP);
 		if (ret < 0) {
@@ -445,7 +453,8 @@ static void stream_stopped(struct bt_bap_stream *stream, uint8_t reason)
 		k_work_submit(&work_disconnect);
 	}
 }
-
+K_SEM_DEFINE(pdm_start_sem, 0, 1);
+static bool pdm_sample_start;
 static void stream_started(struct bt_bap_stream *stream)
 {
 	int ret;
@@ -459,6 +468,8 @@ static void stream_started(struct bt_bap_stream *stream)
 			LOG_INF("DMIC start trigger failed: %d", ret);
 		} else {
 			LOG_INF("DMIC start trigger success");
+			pdm_sample_start = true;
+			//k_sleep(K_MSEC(100));
 			k_sem_give(&lc3_encoder_sem);
 		}
 	}
@@ -665,27 +676,81 @@ static int clocks_start(void)
 	return 0;
 }
 
+#include <zephyr/sys/ring_buffer.h>
+#define PDM_SAMPLE_BLOCK_SIZE 48 /* 48 samples per block, each block contains 500uS sample*/
+#define PDM_BLOCK_PER_SAMPLE 200 /* 200 blocks for 10ms frame */
+#define RINGBUF_BLOCKS 400
+#define RINGBUF_SIZE (PDM_SAMPLE_BLOCK_SIZE * RINGBUF_BLOCKS)
+RING_BUF_DECLARE(audio_ring_buf, RINGBUF_SIZE);
+
+
+static void ble_send_thread(void *arg1, void *arg2, void *arg3)
+{
+	uint8_t buffer[RINGBUF_BLOCKS * PDM_SAMPLE_BLOCK_SIZE];
+	uint16_t previous_data[960];
+	while (true) {
+		k_sem_take(&lc3_encoder_sem, K_FOREVER);
+		//printk("ble_send_thread %d\n", ring_buf_size_get(&audio_ring_buf));
+
+		if (ring_buf_size_get(&audio_ring_buf) >= 960) {
+			size_t size = ring_buf_get(&audio_ring_buf, buffer,
+							 960);
+			memcpy(send_pcm_data, buffer, size);
+			memcpy(previous_data, send_pcm_data, sizeof(send_pcm_data));
+
+		} else {
+			printk("Ring buffer not enough data\n");
+			memcpy(send_pcm_data, previous_data, sizeof(send_pcm_data));
+		}
+		//dk_set_led_on(BLE_STATE);
+		send_data();
+		//dk_set_led_off(BLE_STATE);
+	}
+}
+
 static void dmic_fetch_thread(void *arg1, void *arg2, void *arg3)
 {
 	int ret;
 	void *buffer;
 	uint32_t size;
-
+	static int16_t pcm_data[MAX_NUM_SAMPLES];
 	while (true) {
-		k_sem_take(&lc3_encoder_sem, K_FOREVER);
 
+		//k_sem_take(&lc3_encoder_sem, K_FOREVER);
+
+		if (pdm_sample_start == false) {
+			k_sleep(K_MSEC(5));
+			continue;
+		}
+		dk_set_led_on(PDM_STATE);
 		ret = dmic_read(dmic_dev, 0, &buffer, &size, 10);
+		dk_set_led_off(PDM_STATE);
 		if (ret < 0) {
 			LOG_INF("DMIC read failed: %d", ret);
 		}
-		if (size > sizeof(send_pcm_data)) {
+		if (size > sizeof(pcm_data)) {
 			LOG_INF("Buffer size exceeds send_pcm_data size");
-			size = sizeof(send_pcm_data);
+			size = sizeof(pcm_data);
 		}
-		memcpy(send_pcm_data, buffer, size);
-
+		memcpy(pcm_data, buffer, size);
+		
 		k_mem_slab_free(&mem_slab, buffer);
-		send_data();
+		size_t wrote = ring_buf_put(&audio_ring_buf, (uint8_t *)pcm_data, size);
+		if (wrote < size) {
+			printk("Ring buffer full, dropped one audio block %d %d \n", wrote, size);
+			//break;
+		}
+/*
+		for (size_t offset = 0; offset + PDM_SAMPLE_BLOCK_SIZE <= size; offset += PDM_SAMPLE_BLOCK_SIZE) {
+			size_t wrote = ring_buf_put(&audio_ring_buf, send_pcm_data[offset], PDM_SAMPLE_BLOCK_SIZE);
+			if (wrote < PDM_SAMPLE_BLOCK_SIZE) {
+				printk("Ring buffer full, dropped one audio block\n");
+				break;
+			}
+		}
+*/		
+		//k_sleep(K_MSEC(5));
+		//send_data();
 	}
 }
 
@@ -733,6 +798,8 @@ static int pdm_mic_init()
 	}
 
 	nrf_pdm_gain_set(NRF_PDM20_S, GAIN_DEFAULT, GAIN_DEFAULT);
+	nrf_pdm_ratio_set(NRF_PDM20_S, 50);
+	nrf_pdm_prescaler_set(NRF_PDM20_S, 13);
 
 	return 0;
 }
@@ -844,6 +911,7 @@ int main(void)
 	}
 
 	k_thread_start(dmic_fetch);
+	k_thread_start(ble_send);
 
 	while (true) {
 		err = bt_le_ext_adv_start(adv, BT_LE_EXT_ADV_START_DEFAULT);
