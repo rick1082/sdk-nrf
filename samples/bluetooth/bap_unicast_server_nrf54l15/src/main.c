@@ -50,7 +50,7 @@ static K_SEM_DEFINE(lc3_encoder_sem, 0U, TOTAL_BUF_NEEDED);
 #define READ_TIMEOUT	 1000
 /* Size of a block for 10 ms of audio data. */
 #define BLOCK_SIZE(_sample_rate, _number_of_channels)                                              \
-	(BYTES_PER_SAMPLE * (_sample_rate / 100) * _number_of_channels)
+	(BYTES_PER_SAMPLE * (_sample_rate / 8000) * _number_of_channels)
 
 /* Driver will allocate blocks from this slab to receive audio data into them.
  * Application, after getting a given block from the driver and processing its
@@ -78,7 +78,7 @@ static int configured_octets_per_frame;
 static size_t configured_source_stream_count;
 
 static const struct bt_audio_codec_qos_pref qos_pref =
-	BT_AUDIO_CODEC_QOS_PREF(true, BT_GAP_LE_PHY_2M, 0x02, 10, 10000, 40000, 10000, 40000);
+	BT_AUDIO_CODEC_QOS_PREF(true, BT_GAP_LE_PHY_2M, 0x05, 20, 10000, 40000, 10000, 40000);
 
 static K_SEM_DEFINE(sem_disconnected, 0, 1);
 
@@ -469,7 +469,7 @@ static void stream_started(struct bt_bap_stream *stream)
 		} else {
 			LOG_INF("DMIC start trigger success");
 			pdm_sample_start = true;
-			//k_sleep(K_MSEC(100));
+			//k_sleep(K_MSEC(20));
 			k_sem_give(&lc3_encoder_sem);
 		}
 	}
@@ -691,16 +691,21 @@ static void ble_send_thread(void *arg1, void *arg2, void *arg3)
 	while (true) {
 		k_sem_take(&lc3_encoder_sem, K_FOREVER);
 		//printk("ble_send_thread %d\n", ring_buf_size_get(&audio_ring_buf));
-
-		if (ring_buf_size_get(&audio_ring_buf) >= 960) {
+		uint16_t ring_buffer_size = ring_buf_size_get(&audio_ring_buf);
+		if ( ring_buffer_size>= 960) {
 			size_t size = ring_buf_get(&audio_ring_buf, buffer,
 							 960);
 			memcpy(send_pcm_data, buffer, size);
 			memcpy(previous_data, send_pcm_data, sizeof(send_pcm_data));
 
 		} else {
-			printk("Ring buffer not enough data\n");
-			memcpy(send_pcm_data, previous_data, sizeof(send_pcm_data));
+			// try to fetch the maximum size, and then add the remaining data
+			//printk("Ring buffer not enough data, now only");
+			//printk(" %d\n", ring_buffer_size);
+			ring_buf_get(&audio_ring_buf, buffer, ring_buffer_size%960);
+			memcpy(send_pcm_data, previous_data+(960-ring_buffer_size%960)/2, sizeof(960-ring_buffer_size%960)/2);
+			memcpy(send_pcm_data+(960-ring_buffer_size%960)/2, buffer, ring_buffer_size%960/2);
+			//memcpy(send_pcm_data, previous_data, sizeof(send_pcm_data));
 		}
 		//dk_set_led_on(BLE_STATE);
 		send_data();
@@ -797,9 +802,9 @@ static int pdm_mic_init()
 		return err;
 	}
 
-	nrf_pdm_gain_set(NRF_PDM20_S, GAIN_DEFAULT, GAIN_DEFAULT);
-	nrf_pdm_ratio_set(NRF_PDM20_S, 50);
-	nrf_pdm_prescaler_set(NRF_PDM20_S, 13);
+	//nrf_pdm_gain_set(NRF_PDM20_S, GAIN_DEFAULT, GAIN_DEFAULT);
+	nrf_pdm_ratio_set(NRF_PDM20_S, 0);
+	nrf_pdm_prescaler_set(NRF_PDM20_S, 21);
 
 	return 0;
 }
