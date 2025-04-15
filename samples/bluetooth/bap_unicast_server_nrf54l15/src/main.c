@@ -469,7 +469,7 @@ static void stream_started(struct bt_bap_stream *stream)
 		} else {
 			LOG_INF("DMIC start trigger success");
 			pdm_sample_start = true;
-			//k_sleep(K_MSEC(20));
+			k_sleep(K_MSEC(5));
 			k_sem_give(&lc3_encoder_sem);
 		}
 	}
@@ -701,7 +701,7 @@ static void ble_send_thread(void *arg1, void *arg2, void *arg3)
 		} else {
 			// try to fetch the maximum size, and then add the remaining data
 			//printk("Ring buffer not enough data, now only");
-			//printk(" %d\n", ring_buffer_size);
+			printk(" %d\n", ring_buffer_size);
 			ring_buf_get(&audio_ring_buf, buffer, ring_buffer_size%960);
 			memcpy(send_pcm_data, previous_data+(960-ring_buffer_size%960)/2, sizeof(960-ring_buffer_size%960)/2);
 			memcpy(send_pcm_data+(960-ring_buffer_size%960)/2, buffer, ring_buffer_size%960/2);
@@ -740,10 +740,15 @@ static void dmic_fetch_thread(void *arg1, void *arg2, void *arg3)
 		memcpy(pcm_data, buffer, size);
 		
 		k_mem_slab_free(&mem_slab, buffer);
+		while (ring_buf_space_get(&audio_ring_buf) < size) {
+			uint8_t temp_buffer[PDM_SAMPLE_BLOCK_SIZE];
+			ring_buf_get(&audio_ring_buf, temp_buffer, PDM_SAMPLE_BLOCK_SIZE);
+			//printk("Ring buffer full, popped old audio block\n");
+		}
+
 		size_t wrote = ring_buf_put(&audio_ring_buf, (uint8_t *)pcm_data, size);
 		if (wrote < size) {
-			printk("Ring buffer full, dropped one audio block %d %d \n", wrote, size);
-			//break;
+			printk("Unexpected error: could not write entire block to ring buffer %d %d\n", wrote, size);
 		}
 /*
 		for (size_t offset = 0; offset + PDM_SAMPLE_BLOCK_SIZE <= size; offset += PDM_SAMPLE_BLOCK_SIZE) {
@@ -803,8 +808,8 @@ static int pdm_mic_init()
 	}
 
 	//nrf_pdm_gain_set(NRF_PDM20_S, GAIN_DEFAULT, GAIN_DEFAULT);
-	nrf_pdm_ratio_set(NRF_PDM20_S, 0);
-	nrf_pdm_prescaler_set(NRF_PDM20_S, 21);
+	nrf_pdm_ratio_set(NRF_PDM20_S, 50);
+	nrf_pdm_prescaler_set(NRF_PDM20_S, 13);
 
 	return 0;
 }
