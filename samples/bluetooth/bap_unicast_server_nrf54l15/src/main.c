@@ -35,10 +35,10 @@ NET_BUF_POOL_FIXED_DEFINE(tx_pool, CONFIG_BT_ASCS_MAX_ASE_SRC_COUNT,
 			  BT_ISO_SDU_BUF_SIZE(CONFIG_BT_ISO_TX_MTU),
 			  CONFIG_BT_CONN_TX_USER_DATA_SIZE, NULL);
 
-#define GAIN_UP_BTN             DK_BTN3_MSK
-#define GAIN_DOWN_BTN           DK_BTN4_MSK
-#define GAIN_STEP			 	5
-#define GAIN_DEFAULT		 	NRF_PDM_GAIN_DEFAULT
+#define GAIN_UP_BTN	      DK_BTN3_MSK
+#define GAIN_DOWN_BTN	      DK_BTN4_MSK
+#define GAIN_STEP	      5
+#define GAIN_DEFAULT	      NRF_PDM_GAIN_DEFAULT
 #define MAX_SAMPLE_RATE	      16000
 #define MAX_FRAME_DURATION_US 10000
 #define MAX_NUM_SAMPLES	      ((MAX_FRAME_DURATION_US * MAX_SAMPLE_RATE) / USEC_PER_SEC)
@@ -77,8 +77,8 @@ static struct audio_source {
 static int configured_octets_per_frame;
 static size_t configured_source_stream_count;
 
-static const struct bt_audio_codec_qos_pref qos_pref =
-	BT_AUDIO_CODEC_QOS_PREF(true, BT_GAP_LE_PHY_2M, 0x02, 10, 10000, 40000, 10000, 40000);
+static const struct bt_bap_qos_cfg_pref qos_pref =
+	BT_BAP_QOS_CFG_PREF(true, BT_GAP_LE_PHY_2M, 0x02, 10, 10000, 40000, 10000, 40000);
 
 static K_SEM_DEFINE(sem_disconnected, 0, 1);
 
@@ -170,7 +170,7 @@ static void print_codec_cfg(const struct bt_audio_codec_cfg *codec_cfg)
 	}
 }
 
-static void print_qos(const struct bt_audio_codec_qos *qos)
+static void print_qos(const struct bt_bap_qos_cfg *qos)
 {
 	LOG_INF("QoS: interval %u framing 0x%02x phy 0x%02x sdu %u "
 		"rtn %u latency %u pd %u",
@@ -258,7 +258,7 @@ static struct bt_bap_stream *stream_alloc(enum bt_audio_dir dir)
 
 static int lc3_config(struct bt_conn *conn, const struct bt_bap_ep *ep, enum bt_audio_dir dir,
 		      const struct bt_audio_codec_cfg *codec_cfg, struct bt_bap_stream **stream,
-		      struct bt_audio_codec_qos_pref *const pref, struct bt_bap_ascs_rsp *rsp)
+		      struct bt_bap_qos_cfg_pref *const pref, struct bt_bap_ascs_rsp *rsp)
 {
 	int ret;
 	uint16_t pcm_bytes_req_enc;
@@ -298,7 +298,7 @@ static int lc3_config(struct bt_conn *conn, const struct bt_bap_ep *ep, enum bt_
 
 static int lc3_reconfig(struct bt_bap_stream *stream, enum bt_audio_dir dir,
 			const struct bt_audio_codec_cfg *codec_cfg,
-			struct bt_audio_codec_qos_pref *const pref, struct bt_bap_ascs_rsp *rsp)
+			struct bt_bap_qos_cfg_pref *const pref, struct bt_bap_ascs_rsp *rsp)
 {
 	LOG_INF("ASE Codec Reconfig: stream %p", (void *)stream);
 
@@ -310,7 +310,7 @@ static int lc3_reconfig(struct bt_bap_stream *stream, enum bt_audio_dir dir,
 	return -ENOEXEC;
 }
 
-static int lc3_qos(struct bt_bap_stream *stream, const struct bt_audio_codec_qos *qos,
+static int lc3_qos(struct bt_bap_stream *stream, const struct bt_bap_qos_cfg *qos,
 		   struct bt_bap_ascs_rsp *rsp)
 {
 	LOG_INF("QoS: stream %p qos %p", (void *)stream, (void *)qos);
@@ -538,9 +538,20 @@ static void disconnected(struct bt_conn *conn, uint8_t reason)
 	k_sem_give(&sem_disconnected);
 }
 
+static void security_level_changed(struct bt_conn *conn, bt_security_t level,
+				   enum bt_security_err err)
+{
+	LOG_WRN("security_level_changed to %d, err %d", level, err);
+	if (err == BT_SECURITY_ERR_AUTH_REQUIREMENT) {
+		bt_unpair(BT_ID_DEFAULT, bt_conn_get_dst(conn));
+		bt_conn_disconnect(conn, BT_HCI_ERR_AUTH_FAIL);
+	}
+}
+
 BT_CONN_CB_DEFINE(conn_callbacks) = {
 	.connected = connected,
 	.disconnected = disconnected,
+	.security_changed = security_level_changed,
 };
 
 static struct bt_pacs_cap cap_sink = {
