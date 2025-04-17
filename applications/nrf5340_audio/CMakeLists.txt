@@ -47,6 +47,8 @@ if (CONFIG_BT_BAP_UNICAST_SERVER)
 	add_subdirectory(unicast_server)
 endif()
 
+include(${ZEPHYR_BASE}/samples/subsys/usb/common/common.cmake)
+#zephyr_sources($ENV{ZEPHYR_BASE}/samples/subsys/usb/common/sample_usbd_init.c)
 
 # Include application events and configuration headers
 zephyr_library_include_directories(

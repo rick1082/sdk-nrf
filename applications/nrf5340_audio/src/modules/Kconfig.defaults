@@ -9,7 +9,10 @@ if AUDIO_DEV = 2
 
 if AUDIO_SOURCE_USB
 
-config USB_DEVICE_STACK
+config USB_DEVICE_STACK_NEXT
+	default y
+
+config USBD_AUDIO2_CLASS
 	default y
 
 # Net buf options needed for USB stack
@@ -19,26 +22,23 @@ config NET_BUF
 config USB_DEVICE_AUDIO
 	default y
 
-## TODO: Nordic VID, change accordingly
-config USB_DEVICE_VID
-	default 0x1915
+config SAMPLE_USBD_MANUFACTURER
+	string "USB device sample manufacturer string"
+	default "Nordic Semiconductor"
+	help
+	  USB device sample manufacturer string.
 
-## TODO: Change for final product
-config USB_DEVICE_PID
-	default 0x530A
+config SAMPLE_USBD_PRODUCT
+	string "USB device sample product string"
+	default "nRF5340 Audio"
+	help
+	  USB device sample product stringa.
 
-config USB_DEVICE_PRODUCT
-	default "nRF5340 USB Audio"
-
-config USB_DEVICE_MANUFACTURER
-	default "Nordic Semiconductor AS"
-
-## Avoid redundant warnings for endpoint setting in USB stack
-config USB_DRIVER_LOG_LEVEL
-	default 1
-
-config USB_DEVICE_LOG_LEVEL
-	default 1
+config SAMPLE_USBD_PID
+	hex "USB device sample Product ID"
+	default 0x0001
+	help
+	  USB device sample Product ID.
 
 endif # AUDIO_SOURCE_USB
 
