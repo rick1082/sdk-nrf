@@ -45,7 +45,7 @@ def _program_cores(dev: DeviceConf) -> int:
         else:
             print(f"Programming net core on: {dev}")
             cmd = (f"nrfjprog --program {dev.hex_path_net}  -f NRF53  -q "
-                   f"--snr {dev.nrf5340_audio_dk_snr} --sectorerase --coprocessor CP_NETWORK")
+                   f"--snr {dev.nrf5340_audio_dk_snr} --chiperase --coprocessor CP_NETWORK")
             ret_val = system(cmd)
             if ret_val != 0:
                 if not dev.recover_on_fail:
