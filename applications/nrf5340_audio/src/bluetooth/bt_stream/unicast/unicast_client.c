@@ -92,16 +92,35 @@ static le_audio_receive_cb receive_cb;
 static struct bt_bap_unicast_group *unicast_group;
 static bool unicast_group_created;
 
+#define BT_BAP_LC3_UNICAST_PRESET_STEREO_48_1_1(_loc, _stream_context)                                    \
+	BT_BAP_LC3_PRESET(BT_AUDIO_CODEC_LC3_CONFIG(BT_AUDIO_CODEC_CFG_FREQ_48KHZ,                 \
+						    BT_AUDIO_CODEC_CFG_DURATION_7_5, _loc, 75U, 1, \
+						    _stream_context),                              \
+			  BT_BAP_QOS_CFG_UNFRAMED(7500u, 150u, 5u, 15u, 40000u))
+
+#define BT_BAP_LC3_UNICAST_PRESET_STEREO_24_1_1(_loc, _stream_context)                                    \
+	BT_BAP_LC3_PRESET(BT_AUDIO_CODEC_LC3_CONFIG(BT_AUDIO_CODEC_CFG_FREQ_24KHZ,                 \
+							BT_AUDIO_CODEC_CFG_DURATION_7_5, _loc, 45U, 1, \
+							_stream_context),                              \
+			BT_BAP_QOS_CFG_UNFRAMED(7500u, 90u, 2u, 8u, 40000u))
+
+#define BT_BAP_LC3_UNICAST_PRESET_STEREO_16_1_1(_loc, _stream_context)                                    \
+	BT_BAP_LC3_PRESET(BT_AUDIO_CODEC_LC3_CONFIG(BT_AUDIO_CODEC_CFG_FREQ_16KHZ,                 \
+							BT_AUDIO_CODEC_CFG_DURATION_7_5, _loc, 30U, 1, \
+							_stream_context),                              \
+				BT_BAP_QOS_CFG_UNFRAMED(7500u, 60u, 2u, 8u, 40000u))
+
+
 static struct bt_bap_lc3_preset lc3_preset_sink = BT_BAP_LC3_UNICAST_PRESET_NRF5340_AUDIO_SINK;
-static struct bt_bap_lc3_preset lc3_preset_sink_48_1_1 = BT_BAP_LC3_UNICAST_PRESET_48_1_1(
+static struct bt_bap_lc3_preset lc3_preset_sink_48_1_1 = BT_BAP_LC3_UNICAST_PRESET_STEREO_48_1_1(
 	BT_AUDIO_LOCATION_ANY, (BT_AUDIO_CONTEXT_TYPE_UNSPECIFIED));
 static struct bt_bap_lc3_preset lc3_preset_sink_48_4_1 = BT_BAP_LC3_UNICAST_PRESET_48_4_1(
 	BT_AUDIO_LOCATION_ANY, (BT_AUDIO_CONTEXT_TYPE_UNSPECIFIED));
-	static struct bt_bap_lc3_preset lc3_preset_sink_24_1_1 = BT_BAP_LC3_UNICAST_PRESET_24_1_1(
+	static struct bt_bap_lc3_preset lc3_preset_sink_24_1_1 = BT_BAP_LC3_UNICAST_PRESET_STEREO_24_1_1(
 		BT_AUDIO_LOCATION_ANY, (BT_AUDIO_CONTEXT_TYPE_UNSPECIFIED));
 static struct bt_bap_lc3_preset lc3_preset_sink_24_2_1 = BT_BAP_LC3_UNICAST_PRESET_24_2_1(
 	BT_AUDIO_LOCATION_ANY, (BT_AUDIO_CONTEXT_TYPE_UNSPECIFIED));
-	static struct bt_bap_lc3_preset lc3_preset_sink_16_1_1 = BT_BAP_LC3_UNICAST_PRESET_16_1_1(
+	static struct bt_bap_lc3_preset lc3_preset_sink_16_1_1 = BT_BAP_LC3_UNICAST_PRESET_STEREO_16_1_1(
 		BT_AUDIO_LOCATION_ANY, (BT_AUDIO_CONTEXT_TYPE_UNSPECIFIED));
 static struct bt_bap_lc3_preset lc3_preset_sink_16_2_1 = BT_BAP_LC3_UNICAST_PRESET_16_2_1(
 	BT_AUDIO_LOCATION_ANY, (BT_AUDIO_CONTEXT_TYPE_UNSPECIFIED));
@@ -1017,7 +1036,7 @@ static void discover_cb(struct bt_conn *conn, int err, enum bt_audio_dir dir)
 					  temp_cap[temp_cap_index].num_caps, BT_AUDIO_DIR_SINK,
 					  idx.lvl3)) {
 			bt_audio_codec_allocation_set(&lc3_preset_sink.codec_cfg,
-						      unicast_server->location);
+				BT_AUDIO_LOCATION_FRONT_RIGHT|BT_AUDIO_LOCATION_FRONT_LEFT);
 		} else {
 			/* NOTE: The string below is used by the Nordic CI system */
 			LOG_WRN("No valid codec capability found for %s sink",

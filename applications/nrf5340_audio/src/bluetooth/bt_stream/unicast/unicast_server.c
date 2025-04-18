@@ -117,7 +117,7 @@ struct bt_csip_set_member_register_param csip_param = {
 static struct bt_audio_codec_cap lc3_codec_sink = BT_AUDIO_CODEC_CAP_LC3(
 	BT_AUDIO_CODEC_CAPABILIY_FREQ,
 	(BT_AUDIO_CODEC_CAP_DURATION_7_5 | BT_AUDIO_CODEC_CAP_DURATION_PREFER_7_5),
-	BT_AUDIO_CODEC_CAP_CHAN_COUNT_SUPPORT(1), LE_AUDIO_SDU_SIZE_OCTETS(CONFIG_LC3_BITRATE_MIN),
+	BT_AUDIO_CODEC_CAP_CHAN_COUNT_SUPPORT(2), LE_AUDIO_SDU_SIZE_OCTETS(CONFIG_LC3_BITRATE_MIN),
 	LE_AUDIO_SDU_SIZE_OCTETS(CONFIG_LC3_BITRATE_MAX), 1u, AVAILABLE_SINK_CONTEXT);
 #endif /* (CONFIG_BT_AUDIO_RX) */
 
@@ -349,7 +349,7 @@ static void stream_recv_cb(struct bt_bap_stream *stream, const struct bt_iso_rec
 	}
 
 	receive_cb(buf->data, buf->len, bad_frame, info->ts, 0,
-		   bt_audio_codec_cfg_get_octets_per_frame(stream->codec_cfg));
+		   bt_audio_codec_cfg_get_octets_per_frame(stream->codec_cfg)*2);
 }
 #endif /* (CONFIG_BT_AUDIO_RX) */
 
@@ -668,19 +668,6 @@ int unicast_server_enable(le_audio_receive_cb recv_cb, enum bt_audio_location lo
 	bt_bap_unicast_server_register(&unicast_server_params);
 	bt_bap_unicast_server_register_cb(&unicast_server_cb);
 
-	if (IS_ENABLED(CONFIG_BT_CSIP_SET_MEMBER_TEST_SAMPLE_DATA)) {
-		LOG_WRN("CSIP test sample data is used, must be changed "
-			"before production");
-	} else {
-		if (strcmp(CONFIG_BT_SET_IDENTITY_RESOLVING_KEY_DEFAULT,
-			   CONFIG_BT_SET_IDENTITY_RESOLVING_KEY) == 0) {
-			LOG_WRN("CSIP using the default SIRK, must be changed "
-				"before production");
-		}
-
-		memcpy(csip_param.sirk, CONFIG_BT_SET_IDENTITY_RESOLVING_KEY, BT_CSIP_SIRK_SIZE);
-	}
-
 	for (int i = 0; i < ARRAY_SIZE(caps); i++) {
 		ret = bt_pacs_cap_register(caps_dirs[i], &caps[i]);
 		if (ret) {
@@ -690,15 +677,6 @@ int unicast_server_enable(le_audio_receive_cb recv_cb, enum bt_audio_location lo
 	}
 
 	if (IS_ENABLED(CONFIG_BT_AUDIO_RX)) {
-		if (location == BT_AUDIO_LOCATION_FRONT_LEFT) {
-			csip_param.rank = CSIP_HL_RANK;
-		} else if (location == BT_AUDIO_LOCATION_FRONT_RIGHT) {
-			csip_param.rank = CSIP_HR_RANK;
-		} else {
-			LOG_ERR("Channel not supported");
-			return -ECANCELED;
-		}
-
 		ret = bt_pacs_set_location(BT_AUDIO_DIR_SINK, location);
 		if (ret) {
 			LOG_ERR("Location set failed. Err: %d", ret);
@@ -709,7 +687,7 @@ int unicast_server_enable(le_audio_receive_cb recv_cb, enum bt_audio_location lo
 	if (IS_ENABLED(CONFIG_BT_AUDIO_TX)) {
 		bt_le_audio_tx_init();
 
-		ret = bt_pacs_set_location(BT_AUDIO_DIR_SOURCE, location);
+		ret = bt_pacs_set_location(BT_AUDIO_DIR_SOURCE, BT_AUDIO_LOCATION_FRONT_LEFT);
 		if (ret) {
 			LOG_ERR("Location set failed. Err: %d", ret);
 			return ret;

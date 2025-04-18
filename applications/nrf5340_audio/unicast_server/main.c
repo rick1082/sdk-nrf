@@ -545,12 +545,7 @@ int main(void)
 
 	channel_assignment_get(&channel);
 
-	if (channel == AUDIO_CH_L) {
-		location = BT_AUDIO_LOCATION_FRONT_LEFT;
-	} else {
-		location = BT_AUDIO_LOCATION_FRONT_RIGHT;
-	}
-
+	location = (BT_AUDIO_LOCATION_FRONT_LEFT|BT_AUDIO_LOCATION_FRONT_RIGHT);
 	ret = unicast_server_enable(le_audio_rx_data_handler, location);
 	ERR_CHK_MSG(ret, "Failed to enable LE Audio");
 

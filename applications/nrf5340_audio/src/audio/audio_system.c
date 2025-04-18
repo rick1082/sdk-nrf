@@ -99,8 +99,8 @@ static void audio_headset_configure(void)
 
 	channel_assignment_get(&sw_codec_cfg.decoder.audio_ch);
 
-	sw_codec_cfg.decoder.num_ch = 1;
-	sw_codec_cfg.decoder.channel_mode = SW_CODEC_MONO;
+	sw_codec_cfg.decoder.num_ch = 2;
+	sw_codec_cfg.decoder.channel_mode = SW_CODEC_STEREO;
 
 	if (IS_ENABLED(CONFIG_SD_CARD_PLAYBACK)) {
 		/* Need an extra decoder channel to decode data from SD card */
