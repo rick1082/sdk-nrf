@@ -224,14 +224,13 @@ static uint32_t uac2_feedback_cb(const struct device *dev, uint8_t terminal, voi
 
 #include "pcm_stream_channel_modifier.h"
 static uint32_t tx_num_underruns;
-static uint8_t __aligned(UDC_BUF_ALIGN) data_buffer[ROUND_UP(12, UDC_BUF_GRANULARITY)] = {0};
+static uint8_t __aligned(UDC_BUF_ALIGN) data_buffer[ROUND_UP(96, UDC_BUF_GRANULARITY)] = {0};
 static void uac2_sof(const struct device *dev, void *user_data)
 {
 	ARG_UNUSED(dev);
 	int ret;
 	void *data_out;
 	size_t data_out_size;
-	struct usb_i2s_ctx *ctx = user_data;
 
 	if (fifo_tx == NULL) {
 		//LOG_INF("returning");
@@ -247,16 +246,11 @@ static void uac2_sof(const struct device *dev, void *user_data)
 
 		return;
 	}
-
 	pscm_one_channel_split(data_out, data_out_size, 0, 16, data_buffer, &data_out_size);
-	LOG_INF("uac2_sof %d", (fifo_tx== NULL));
 	data_fifo_block_free(fifo_tx, data_out);
 
-	if (ctx->i2s_started) {
-		// feedback_process(ctx->fb);
-	}
-
-	if (usbd_uac2_send(dev, MICROPHONE_IN_TERMINAL_ID, data_buffer, 12) < 0) {
+	if (usbd_uac2_send(dev, MICROPHONE_IN_TERMINAL_ID, data_buffer, 96) < 0) {
+		printk("Failed to send data to USB\n");
 	}
 }
 
