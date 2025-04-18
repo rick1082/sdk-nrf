@@ -16,6 +16,7 @@
 #include <zephyr/drivers/i2s.h>
 #include <zephyr/logging/log.h>
 #include <data_fifo.h>
+#include <zephyr/drivers/gpio.h>
 #include <zephyr/usb/class/usbd_hid.h>
 #include "macros_common.h"
 
@@ -107,12 +108,6 @@ static void *uac2_get_recv_buf(const struct device *dev, uint8_t terminal, uint1
 	return buf;
 }
 
-#include <stdio.h>
-#include <zephyr/kernel.h>
-#include <zephyr/drivers/gpio.h>
-// #define LED0_NODE DT_ALIAS(led0)
-// static const struct gpio_dt_spec led = GPIO_DT_SPEC_GET(LED0_NODE, gpios);
-
 static void uac2_data_recv_cb(const struct device *dev, uint8_t terminal, void *buf, uint16_t size,
 			      void *user_data)
 {
@@ -131,13 +126,6 @@ static void uac2_data_recv_cb(const struct device *dev, uint8_t terminal, void *
 		k_mem_slab_free(&i2s_tx_slab, buf);
 		return;
 	}
-	/*
-		ret = gpio_pin_toggle_dt(&led);
-		if (ret < 0) {
-			LOG_INF("GPIO toggle failed");
-		}
-	*/
-	led_state = !led_state;
 
 	if (!size) {
 		/* Zero fill to keep I2S going. If this is transient error, then
@@ -149,53 +137,38 @@ static void uac2_data_recv_cb(const struct device *dev, uint8_t terminal, void *
 		memset(buf, 0, size);
 		sys_cache_data_flush_range(buf, size);
 	}
-	ret = data_fifo_pointer_first_vacant_get(fifo_rx, &data_in, K_NO_WAIT);
-	if (ret == -ENOMEM) {
-		void *temp;
-		size_t temp_size;
 
-		rx_num_overruns++;
-		if ((rx_num_overruns % 100) == 1) {
-			LOG_WRN("USB RX overrun. Num: %d", rx_num_overruns);
-		}
-
-		ret = data_fifo_pointer_last_filled_get(fifo_rx, &temp, &temp_size, K_NO_WAIT);
-		ERR_CHK(ret);
-		LOG_INF("uac2_data_recv_cb");
-		data_fifo_block_free(fifo_rx, temp);
-
+	for (int i = 0; i < 2; i++) {
 		ret = data_fifo_pointer_first_vacant_get(fifo_rx, &data_in, K_NO_WAIT);
-	}
-	ERR_CHK_MSG(ret, "RX failed to get block");
+		if (ret == -ENOMEM) {
+			void *temp;
+			size_t temp_size;
 
-	memcpy(data_in, buf, size);
-	ret = data_fifo_block_lock(fifo_rx, &data_in, size);
-	ERR_CHK_MSG(ret, "Failed to lock block");
+			rx_num_overruns++;
+			if ((rx_num_overruns % 100) == 1) {
+				LOG_WRN("USB RX overrun. Num: %d", rx_num_overruns);
+			}
+
+			ret = data_fifo_pointer_last_filled_get(fifo_rx, &temp, &temp_size, K_NO_WAIT);
+			ERR_CHK(ret);
+			data_fifo_block_free(fifo_rx, temp);
+
+			ret = data_fifo_pointer_first_vacant_get(fifo_rx, &data_in, K_NO_WAIT);
+		}
+		ERR_CHK_MSG(ret, "RX failed to get block");
+
+		memcpy(data_in, buf+(size*i/2), size/2);
+		ret = data_fifo_block_lock(fifo_rx, &data_in, size/2);
+		ERR_CHK_MSG(ret, "Failed to lock block");
+	}
+
 	if (!rx_first_data) {
 		LOG_INF("USB RX first data received.");
 		rx_first_data = true;
 	}
 
 	k_mem_slab_free(&i2s_tx_slab, buf);
-	ret = 0;
-	if (ret < 0) {
-		ctx->i2s_started = false;
-		ctx->i2s_blocks_written = 0;
-		// feedback_reset_ctx(ctx->fb);
 
-		/* Most likely underrun occurred, prepare I2S restart */
-		// i2s_trigger(ctx->i2s_dev, I2S_DIR_TX, I2S_TRIGGER_PREPARE);
-
-		// ret = i2s_write(ctx->i2s_dev, buf, size);
-		if (ret < 0) {
-			/* Drop data block, will try again on next frame */
-			k_mem_slab_free(&i2s_tx_slab, buf);
-		}
-	}
-
-	if (ret == 0) {
-		ctx->i2s_blocks_written++;
-	}
 }
 
 static void uac2_buf_release_cb(const struct device *dev, uint8_t terminal, void *buf,
@@ -231,23 +204,30 @@ static void uac2_sof(const struct device *dev, void *user_data)
 	int ret;
 	void *data_out;
 	size_t data_out_size;
+	uint8_t frame_data[192] = {0};
 
 	if (fifo_tx == NULL) {
-		//LOG_INF("returning");
+		// LOG_INF("returning");
 		return;
 	}
 
-	ret = data_fifo_pointer_last_filled_get(fifo_tx, &data_out, &data_out_size, K_NO_WAIT);
-	if (ret) {
-		tx_num_underruns++;
-		if ((tx_num_underruns % 100) == 1) {
-			// LOG_WRN("USB TX underrun. Num: %d", tx_num_underruns);
+	for (int i = 0; i < 2; i++) {
+		ret = data_fifo_pointer_last_filled_get(fifo_tx, &data_out, &data_out_size,
+							K_NO_WAIT);
+		if (ret) {
+			tx_num_underruns++;
+			if ((tx_num_underruns % 100) == 1) {
+				// LOG_WRN("USB TX underrun. Num: %d", tx_num_underruns);
+			}
+
+			return;
 		}
-
-		return;
+		memcpy(frame_data + (data_out_size * i), data_out, data_out_size);
+		data_fifo_block_free(fifo_tx, data_out);
 	}
-	pscm_one_channel_split(data_out, data_out_size, 0, 16, data_buffer, &data_out_size);
-	data_fifo_block_free(fifo_tx, data_out);
+	data_out_size *= 2;
+
+	pscm_one_channel_split(frame_data, data_out_size, 0, 16, data_buffer, &data_out_size);
 
 	if (usbd_uac2_send(dev, MICROPHONE_IN_TERMINAL_ID, data_buffer, 96) < 0) {
 		printk("Failed to send data to USB\n");

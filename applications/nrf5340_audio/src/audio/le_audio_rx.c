@@ -62,6 +62,7 @@ void le_audio_rx_data_handler(uint8_t const *const p_data, size_t data_size, boo
 		/* A valid frame should always be equal to desired_data_size, set bad_frame
 		 * if that is not the case
 		 */
+		LOG_ERR("Data size mismatch: %zu != %zu", data_size, desired_data_size);
 		bad_frame = true;
 		rx_stats[channel_index].data_size_mismatch_cnt++;
 	}

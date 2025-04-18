@@ -10,7 +10,7 @@ menu "Audio"
 
 choice AUDIO_FRAME_DURATION
 	prompt "Select frame duration - 7.5 ms frame duration is not tested"
-	default AUDIO_FRAME_DURATION_10_MS
+	default AUDIO_FRAME_DURATION_7_5_MS
 	help
 	  LC3 supports frame duration of 7.5 and 10 ms.
 	  If USB is selected as audio source, we should
@@ -41,7 +41,7 @@ config AUDIO_MIN_PRES_DLY_US
 
 config AUDIO_MAX_PRES_DLY_US
 	int "The maximum presentation delay"
-	default 60000
+	default 75000
 	help
 	  The maximum allowable presentation delay in microseconds.
 	  Increasing this will also increase the FIFO buffers to allow buffering.
