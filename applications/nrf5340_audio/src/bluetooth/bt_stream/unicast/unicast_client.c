@@ -69,21 +69,16 @@ struct temp_cap_storage {
 	struct bt_audio_codec_cap codec[CONFIG_CODEC_CAP_COUNT_MAX];
 };
 
+
+#define HEADSET_MAX_CONN 1
+
 /* Since there is no subgroups for CIG we will use 1 as a hard coded value */
-static struct le_audio_unicast_server unicast_servers[CONFIG_BT_ISO_MAX_CIG][1][CONFIG_BT_MAX_CONN];
+static struct le_audio_unicast_server unicast_servers[CONFIG_BT_ISO_MAX_CIG][1][HEADSET_MAX_CONN];
 
 K_MSGQ_DEFINE(cap_start_msgq, sizeof(struct stream_index), CONFIG_BT_ISO_MAX_CHAN,
 	      sizeof(uint32_t));
 
 static struct temp_cap_storage temp_cap[CONFIG_BT_ISO_MAX_CHAN];
-
-/* Make sure that we have at least one unicast_server per CONFIG_BT_BAP_UNICAST_CLIENT_ASE_SNK */
-BUILD_ASSERT(ARRAY_SIZE(unicast_servers[0][0]) >= CONFIG_BT_BAP_UNICAST_CLIENT_ASE_SNK_COUNT,
-	     "We need to have at least one unicast_server per ASE SINK");
-
-/* Make sure that we have at least one unicast_server per CONFIG_BT_BAP_UNICAST_CLIENT_ASE_SRC */
-BUILD_ASSERT(ARRAY_SIZE(unicast_servers[0][0]) >= CONFIG_BT_BAP_UNICAST_CLIENT_ASE_SRC_COUNT,
-	     "We need to have at least one unicast_server per ASE SOURCE");
 
 BUILD_ASSERT(CONFIG_BT_ISO_MAX_CIG == 1, "Only one CIG is supported");
 

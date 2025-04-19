@@ -77,7 +77,7 @@ LOG_MODULE_REGISTER(audio_datapath, CONFIG_AUDIO_DATAPATH_LOG_LEVEL);
 #define APLL_FREQ_ADJ(t) (-((t)*1000) / 331)
 /* clang-format on */
 
-#define DRIFT_MEAS_PERIOD_US	   100000
+#define DRIFT_MEAS_PERIOD_US	   75000
 #define DRIFT_ERR_THRESH_LOCK	   16
 #define DRIFT_ERR_THRESH_UNLOCK	   32
 /* To get smaller corrections */
@@ -1053,8 +1053,8 @@ int audio_datapath_init(void)
 	audio_i2s_blk_comp_cb_register(audio_datapath_i2s_blk_complete);
 	audio_i2s_init();
 	ctrl_blk.datapath_initialized = true;
-	ctrl_blk.drift_comp.enabled = false;
-	ctrl_blk.pres_comp.enabled = false;
+	ctrl_blk.drift_comp.enabled = true;
+	ctrl_blk.pres_comp.enabled = true;
 
 	if (IS_ENABLED(CONFIG_STREAM_BIDIRECTIONAL) && (CONFIG_AUDIO_DEV == GATEWAY)) {
 		/* Disable presentation compensation feature for microphone return on gateway,
@@ -1063,7 +1063,7 @@ int audio_datapath_init(void)
 		 */
 		ctrl_blk.pres_comp.enabled = false;
 	} else {
-		ctrl_blk.pres_comp.enabled = false;
+		ctrl_blk.pres_comp.enabled = true;
 	}
 
 	ctrl_blk.pres_comp.pres_delay_us = CONFIG_BT_AUDIO_PRESENTATION_DELAY_US;
