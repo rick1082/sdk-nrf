@@ -350,6 +350,10 @@ static void security_changed(struct bt_conn *conn, bt_security_t level,
 	} else {
 		printk("Security failed: %s level %u err %d %s\n", addr, level, err,
 		       bt_security_err_to_str(err));
+		if (err == BT_SECURITY_ERR_AUTH_REQUIREMENT) {
+			bt_unpair(BT_ID_DEFAULT, bt_conn_get_dst(conn));
+			bt_conn_disconnect(conn, BT_HCI_ERR_AUTH_FAIL);
+		}
 	}
 }
 #endif

@@ -145,9 +145,9 @@ static struct keyboard_state {
 	uint8_t keys_state[KEY_PRESS_MAX];
 } hid_keyboard_state;
 
-#if CONFIG_NFC_OOB_PAIRING
+
 static struct k_work adv_work;
-#endif
+
 
 static struct k_work pairing_work;
 struct pairing_data_mitm {
@@ -185,13 +185,13 @@ static void advertising_start(void)
 }
 
 
-#if CONFIG_NFC_OOB_PAIRING
+
 static void delayed_advertising_start(struct k_work *work)
 {
 	advertising_start();
 }
 
-
+#if CONFIG_NFC_OOB_PAIRING
 void nfc_field_detected(void)
 {
 	dk_set_led_on(NFC_LED);
@@ -315,7 +315,8 @@ static void disconnected(struct bt_conn *conn, uint8_t reason)
 		is_adv = false;
 	}
 #else
-	advertising_start();
+	k_work_submit(&adv_work);
+	//advertising_start();
 #endif
 }
 
@@ -332,6 +333,10 @@ static void security_changed(struct bt_conn *conn, bt_security_t level,
 	} else {
 		printk("Security failed: %s level %u err %d %s\n", addr, level, err,
 		       bt_security_err_to_str(err));
+		if (err == BT_SECURITY_ERR_AUTH_REQUIREMENT) {
+			bt_unpair(BT_ID_DEFAULT, bt_conn_get_dst(conn));
+			bt_conn_disconnect(conn, BT_HCI_ERR_AUTH_FAIL);
+		}
 	}
 }
 
@@ -962,8 +967,9 @@ int main(void)
 		settings_load();
 	}
 
-#if CONFIG_NFC_OOB_PAIRING
+
 	k_work_init(&adv_work, delayed_advertising_start);
+#if CONFIG_NFC_OOB_PAIRING
 	app_nfc_init();
 #else
 	advertising_start();

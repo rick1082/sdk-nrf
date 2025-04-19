@@ -175,6 +175,21 @@ static void security_changed_cb(struct bt_conn *conn, bt_security_t level, enum 
 	if (err) {
 		LOG_WRN("Security failed: level %d err %d %s", level, err,
 			bt_security_err_to_str(err));
+/* Add unpair for development easier */
+#ifdef CONFIG_BT_PERIPHERAL
+		if (err == BT_SECURITY_ERR_AUTH_REQUIREMENT) {
+			LOG_WRN("Trigger unpair");
+			bt_unpair(BT_ID_DEFAULT, bt_conn_get_dst(conn));
+		}
+#endif /* CONFIG_BT_PERIPHERAL */
+
+#ifdef CONFIG_BT_CENTRAL
+		if (err == BT_SECURITY_ERR_PIN_OR_KEY_MISSING) {
+			LOG_WRN("Trigger unpair");
+			bt_unpair(BT_ID_DEFAULT, bt_conn_get_dst(conn));
+		}
+#endif /* CONFIG_BT_CENTRAL */
+
 		ret = bt_conn_disconnect(conn, BT_HCI_ERR_AUTH_FAIL);
 		if (ret) {
 			LOG_WRN("Failed to disconnect %d", ret);

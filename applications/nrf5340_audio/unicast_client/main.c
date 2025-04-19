@@ -395,16 +395,30 @@ static void bt_mgmt_evt_handler(const struct zbus_channel *chan)
 		ret = bt_r_and_c_discover(msg->conn);
 		if (ret) {
 			LOG_WRN("Failed to discover rendering services");
-		}
-
-		if (IS_ENABLED(CONFIG_STREAM_BIDIRECTIONAL)) {
-			ret = unicast_client_discover(msg->conn, UNICAST_SERVER_BIDIR);
+			LOG_WRN("HID device found?");
 		} else {
-			ret = unicast_client_discover(msg->conn, UNICAST_SERVER_SINK);
-		}
+			if (IS_ENABLED(CONFIG_STREAM_BIDIRECTIONAL)) {
+				ret = unicast_client_discover(msg->conn, UNICAST_SERVER_BIDIR);
+			} else {
+				ret = unicast_client_discover(msg->conn, UNICAST_SERVER_SINK);
+			}
 
-		if (ret) {
-			LOG_ERR("Failed to handle unicast client discover: %d", ret);
+			if (ret) {
+				LOG_ERR("Failed to handle unicast client discover: %d", ret);
+			}
+		}
+		uint8_t num_conn = 0;
+
+		bt_mgmt_num_conn_get(&num_conn);
+
+		if (num_conn < CONFIG_BT_MAX_CONN) {
+			/* Room for more connections, start scanning again */
+			LOG_INF("Room for more connections, start scanning again");
+			ret = bt_mgmt_scan_start(0, 0, BT_MGMT_SCAN_TYPE_CONN, NULL,
+						 BRDCAST_ID_NOT_USED);
+			if (ret) {
+				LOG_ERR("Failed to resume scanning: %d", ret);
+			}
 		}
 
 		break;
