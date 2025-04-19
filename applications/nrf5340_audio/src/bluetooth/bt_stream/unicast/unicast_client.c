@@ -95,15 +95,21 @@ static bool unicast_group_created;
 
 #define BT_BAP_LC3_UNICAST_PRESET_STEREO_24_1_1(_loc, _stream_context)                                    \
 	BT_BAP_LC3_PRESET(BT_AUDIO_CODEC_LC3_CONFIG(BT_AUDIO_CODEC_CFG_FREQ_24KHZ,                 \
-							BT_AUDIO_CODEC_CFG_DURATION_7_5, _loc, 45U, 1, \
+							BT_AUDIO_CODEC_CFG_DURATION_7_5, _loc, 30U, 1, \
 							_stream_context),                              \
-			BT_BAP_QOS_CFG_UNFRAMED(7500u, 90u, 2u, 8u, 40000u))
+			BT_BAP_QOS_CFG_UNFRAMED(7500u, 60u, 1u, 8u, 40000u))
 
 #define BT_BAP_LC3_UNICAST_PRESET_STEREO_16_1_1(_loc, _stream_context)                                    \
 	BT_BAP_LC3_PRESET(BT_AUDIO_CODEC_LC3_CONFIG(BT_AUDIO_CODEC_CFG_FREQ_16KHZ,                 \
 							BT_AUDIO_CODEC_CFG_DURATION_7_5, _loc, 30U, 1, \
 							_stream_context),                              \
 				BT_BAP_QOS_CFG_UNFRAMED(7500u, 60u, 2u, 8u, 40000u))
+
+#define BT_BAP_LC3_UNICAST_PRESET_MIC_24_1_1(_loc, _stream_context)                                    \
+	BT_BAP_LC3_PRESET(BT_AUDIO_CODEC_LC3_CONFIG(BT_AUDIO_CODEC_CFG_FREQ_24KHZ,                 \
+							BT_AUDIO_CODEC_CFG_DURATION_7_5, _loc, 30U, 1, \
+							_stream_context),                              \
+			BT_BAP_QOS_CFG_UNFRAMED(7500u, 30u, 1u, 8u, 40000u))
 
 
 static struct bt_bap_lc3_preset lc3_preset_sink = BT_BAP_LC3_UNICAST_PRESET_NRF5340_AUDIO_SINK;
@@ -124,7 +130,7 @@ static struct bt_bap_lc3_preset lc3_preset_source = BT_BAP_LC3_UNICAST_PRESET_NR
 static struct bt_bap_lc3_preset lc3_preset_source_48_1_1 =
 	BT_BAP_LC3_UNICAST_PRESET_48_1_1(BT_AUDIO_LOCATION_ANY, BT_AUDIO_CONTEXT_TYPE_UNSPECIFIED);
 static struct bt_bap_lc3_preset lc3_preset_source_24_1_1 =
-	BT_BAP_LC3_UNICAST_PRESET_24_1_1(BT_AUDIO_LOCATION_ANY, BT_AUDIO_CONTEXT_TYPE_UNSPECIFIED);
+	BT_BAP_LC3_UNICAST_PRESET_MIC_24_1_1(BT_AUDIO_LOCATION_ANY, BT_AUDIO_CONTEXT_TYPE_UNSPECIFIED);
 static struct bt_bap_lc3_preset lc3_preset_source_16_1_1 =
 	BT_BAP_LC3_UNICAST_PRESET_16_1_1(BT_AUDIO_LOCATION_ANY, BT_AUDIO_CONTEXT_TYPE_UNSPECIFIED);
 static struct bt_bap_lc3_preset lc3_preset_source_48_4_1 =

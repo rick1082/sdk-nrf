@@ -13,13 +13,13 @@ config BT_HIDS_SECURITY_ENABLED
 	default y
 	imply BT_PRIVACY
 	select BT_SMP
-	select BT_SETTINGS
-	select FLASH
-	select FLASH_PAGE_LAYOUT
-	select FLASH_MAP
-	select SETTINGS
-	imply ZMS if (SOC_FLASH_NRF_RRAM || SOC_FLASH_NRF_MRAM)
-	imply NVS if !(SOC_FLASH_NRF_RRAM || SOC_FLASH_NRF_MRAM)
+#	select BT_SETTINGS
+#	select FLASH
+#	select FLASH_PAGE_LAYOUT
+#	select FLASH_MAP
+#	select SETTINGS
+#	imply ZMS if (SOC_FLASH_NRF_RRAM || SOC_FLASH_NRF_MRAM)
+#	imply NVS if !(SOC_FLASH_NRF_RRAM || SOC_FLASH_NRF_MRAM)
 	help
 	  "Enable BLE security for the HIDS service"
 

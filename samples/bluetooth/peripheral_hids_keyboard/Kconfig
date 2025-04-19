@@ -19,7 +19,7 @@ config NFC_OOB_PAIRING
 	select NFC_NDEF_LE_OOB_REC
 
 config SETTINGS
-	default y
+	default n
 
 config ZMS
 	default y if (SOC_FLASH_NRF_RRAM || SOC_FLASH_NRF_MRAM)
