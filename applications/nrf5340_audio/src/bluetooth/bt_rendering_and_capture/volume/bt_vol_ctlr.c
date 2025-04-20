@@ -10,9 +10,14 @@
 #include <zephyr/types.h>
 #include <zephyr/bluetooth/conn.h>
 #include <zephyr/bluetooth/audio/vcp.h>
+#include <zephyr/zbus/zbus.h>
+#include "zbus_common.h"
+#include "macros_common.h"
 
 #include <zephyr/logging/log.h>
 LOG_MODULE_REGISTER(bt_vol_ctlr, CONFIG_BT_VOL_LOG_LEVEL);
+
+ZBUS_CHAN_DECLARE(bt_mgmt_chan);
 
 static struct bt_vcp_vol_ctlr *vcs_client_peer[CONFIG_BT_MAX_CONN];
 
@@ -123,13 +128,24 @@ static void vcs_flags_ctlr_cb_handler(struct bt_vcp_vol_ctlr *vcs, int err, uint
  *
  * @note	This callback handler will be triggered when the VCS discovery has finished.
  */
-static void vcs_discover_cb_handler(struct bt_vcp_vol_ctlr *vcs, int err, uint8_t vocs_count,
+static void vcs_discover_cb_handler(struct bt_vcp_vol_ctlr *vol_ctlr, int err, uint8_t vocs_count,
 				    uint8_t aics_count)
 {
+	int ret;
+	struct bt_mgmt_msg msg;
+
+	bt_vcp_vol_ctlr_conn_get(vol_ctlr, &msg.conn);
+
 	if (err) {
 		LOG_WRN("VCS discover finished callback error: %d", err);
+		msg.event = BT_MGMT_HID_DEVICE_CONNECTED;
+		ret = zbus_chan_pub(&bt_mgmt_chan, &msg, K_NO_WAIT);
+		ERR_CHK(ret);
 	} else {
 		LOG_INF("VCS discover finished");
+		msg.event = BT_MGMT_AUDIO_DEVICE_CONNECTED;
+		ret = zbus_chan_pub(&bt_mgmt_chan, &msg, K_NO_WAIT);
+		ERR_CHK(ret);
 	}
 }
 

@@ -386,30 +386,16 @@ static void bt_mgmt_evt_handler(const struct zbus_channel *chan)
 	case BT_MGMT_CONNECTED:
 		/* NOTE: The string below is used by the Nordic CI system */
 		LOG_INF("Connection event. Num connections: %u", num_conn);
-
 		break;
 
 	case BT_MGMT_SECURITY_CHANGED:
 		LOG_INF("Security changed");
 
 		ret = bt_r_and_c_discover(msg->conn);
+		LOG_WRN("msg->conn %p", (void *)msg->conn);
 		if (ret) {
 			LOG_WRN("Failed to discover rendering services");
-			LOG_WRN("HID device found?");
-		} else {
-			if (IS_ENABLED(CONFIG_STREAM_BIDIRECTIONAL)) {
-				ret = unicast_client_discover(msg->conn, UNICAST_SERVER_BIDIR);
-			} else {
-				ret = unicast_client_discover(msg->conn, UNICAST_SERVER_SINK);
-			}
-
-			if (ret) {
-				LOG_ERR("Failed to handle unicast client discover: %d", ret);
-			}
 		}
-		uint8_t num_conn = 0;
-
-		bt_mgmt_num_conn_get(&num_conn);
 
 		if (num_conn < CONFIG_BT_MAX_CONN) {
 			/* Room for more connections, start scanning again */
@@ -420,6 +406,26 @@ static void bt_mgmt_evt_handler(const struct zbus_channel *chan)
 				LOG_ERR("Failed to resume scanning: %d", ret);
 			}
 		}
+		break;
+
+	case BT_MGMT_AUDIO_DEVICE_CONNECTED:
+		/* NOTE: The string below is used by the Nordic CI system */
+		LOG_WRN("BT_MGMT_AUDIO_DEVICE_CONNECTED msg->conn %p", (void *)msg->conn);
+
+		if (IS_ENABLED(CONFIG_STREAM_BIDIRECTIONAL)) {
+			ret = unicast_client_discover(msg->conn, UNICAST_SERVER_BIDIR);
+		} else {
+			ret = unicast_client_discover(msg->conn, UNICAST_SERVER_SINK);
+		}
+
+		if (ret) {
+			LOG_ERR("Failed to handle unicast client discover: %d", ret);
+		}
+
+		break;
+
+	case BT_MGMT_HID_DEVICE_CONNECTED:
+		LOG_WRN("BT_MGMT_HID_DEVICE_CONNECTED msg->conn %p", (void *)msg->conn);
 
 		break;
 
