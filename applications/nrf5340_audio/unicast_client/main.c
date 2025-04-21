@@ -43,7 +43,7 @@ ZBUS_OBS_DECLARE(sdu_ref_msg_listen);
 
 #include <bluetooth/services/hogp.h>
 #include <bluetooth/gatt_dm.h>
-static struct bt_hogp hogp[2];
+static struct bt_hogp hid_hog[2];
 
 static struct k_thread button_msg_sub_thread_data;
 static struct k_thread le_audio_msg_sub_thread_data;
@@ -387,7 +387,7 @@ static void discovery_completed_cb(struct bt_gatt_dm *dm, void *context)
 	hid_index = hid_get_index(bt_gatt_dm_conn_get(dm));
 	bt_gatt_dm_data_print(dm);
 	LOG_INF("The discovery procedure succeeded for hid index %d", hid_index);
-	err = bt_hogp_handles_assign(dm, &hogp[hid_index]);
+	err = bt_hogp_handles_assign(dm, &hid_hog[hid_index]);
 	if (err) {
 		printk("Could not init HIDS client object, error: %d\n", err);
 	}
@@ -428,10 +428,62 @@ static void hid_gatt_discover(struct bt_conn *conn)
 	}
 }
 
+static uint8_t hogp_notify_cb(struct bt_hogp *hogp, struct bt_hogp_rep_info *rep, uint8_t err,
+			      const uint8_t *data)
+{
+	uint8_t size = bt_hogp_rep_size(rep);
+	uint8_t i;
+
+	if (!data) {
+		return BT_GATT_ITER_STOP;
+	}
+	printk("Notification, id: %u, size: %u, data:", bt_hogp_rep_id(rep), size);
+	for (i = 0; i < size; ++i) {
+		printk(" 0x%x", data[i]);
+	}
+	printk("\n");
+	return BT_GATT_ITER_CONTINUE;
+}
+
 static void hogp_ready_cb(struct bt_hogp *hogp)
 {
+	int err;
+	struct bt_hogp_rep_info *rep = NULL;
+
 	LOG_INF("HIDS[%d] is ready to work", hid_get_index(hogp->conn));
 	//k_work_submit(&hids_ready_work);
+	while (NULL != (rep = bt_hogp_rep_next(hogp, rep))) {
+		if (bt_hogp_rep_type(rep) ==
+		    BT_HIDS_REPORT_TYPE_INPUT) {
+			LOG_INF("Subscribe to report id: %u",
+			       bt_hogp_rep_id(rep));
+			err = bt_hogp_rep_subscribe(hogp, rep,
+							   hogp_notify_cb);
+			if (err) {
+				LOG_INF("Subscribe error (%d)", err);
+			}
+		}
+	}
+	/*
+	if (hogp.rep_boot.kbd_inp) {
+		printk("Subscribe to boot keyboard report\n");
+		err = bt_hogp_rep_subscribe(&hogp,
+						   hogp.rep_boot.kbd_inp,
+						   hogp_boot_kbd_report);
+		if (err) {
+			LOG_INF("Subscribe error (%d)", err);
+		}
+	}
+	if (hogp.rep_boot.mouse_inp) {
+		LOG_INF("Subscribe to boot mouse report");
+		err = bt_hogp_rep_subscribe(&hogp,
+						   hogp.rep_boot.mouse_inp,
+						   hogp_boot_mouse_report);
+		if (err) {
+			LOG_INF("Subscribe error (%d)", err);
+		}
+	}
+	*/
 }
 
 static void hogp_prep_fail_cb(struct bt_hogp *hogp, int err)
@@ -455,8 +507,8 @@ static const struct bt_hogp_init_params hogp_init_params = {
 
 static void hop_init()
 {
-	for (int i = 0; i < ARRAY_SIZE(hogp); i++) {
-		bt_hogp_init(&hogp[i], &hogp_init_params);
+	for (int i = 0; i < ARRAY_SIZE(hid_hog); i++) {
+		bt_hogp_init(&hid_hog[i], &hogp_init_params);
 	}
 }
 /**
