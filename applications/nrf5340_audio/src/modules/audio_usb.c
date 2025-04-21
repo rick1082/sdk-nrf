@@ -43,6 +43,9 @@ static struct data_fifo *fifo_rx;
 NET_BUF_POOL_FIXED_DEFINE(pool_out, CONFIG_FIFO_FRAME_SPLIT_NUM, USB_FRAME_SIZE_STEREO, 8,
 			  net_buf_destroy);
 
+const struct device *headset = DEVICE_DT_GET(DT_NODELABEL(uac2_headset));
+const struct device *hid_dev_keyboard;
+const struct device *hid_dev_mouse;
 static uint32_t rx_num_overruns;
 static bool rx_first_data;
 static bool tx_first_data;
@@ -114,7 +117,6 @@ static void uac2_data_recv_cb(const struct device *dev, uint8_t terminal, void *
 	struct usb_i2s_ctx *ctx = user_data;
 	int ret;
 	void *data_in;
-	static bool led_state = true;
 
 	if (!ctx->headphones_enabled && !ctx->microphone_enabled) {
 		k_mem_slab_free(&i2s_tx_slab, buf);
@@ -262,8 +264,8 @@ void audio_usb_stop(void)
 	LOG_WRN("USB audio stop");
 	rx_first_data = false;
 	tx_first_data = false;
-	//fifo_tx = NULL;
-	//fifo_rx = NULL;
+	fifo_tx = NULL;
+	fifo_rx = NULL;
 }
 
 int audio_usb_disable(void)
@@ -435,19 +437,67 @@ enum mouse_report_idx {
 	MOUSE_WHEEL_REPORT_IDX = 3,
 	MOUSE_REPORT_COUNT = 4,
 };
-K_MSGQ_DEFINE(mouse_msgq, MOUSE_REPORT_COUNT, 2, 1);
+
+struct k_msgq mouse_msgq;
+
+//K_MSGQ_DEFINE(mouse_msgq, MOUSE_REPORT_COUNT, 2, 1);
 
 /* doc device msg-cb end */
 static const uint8_t hid_report_desc_mouse[] = HID_MOUSE_REPORT_DESC(2);
+
+
+
+#define HID_THREAD_STACK_SIZE 1024
+#define HID_THREAD_PRIORITY 7
+static void hid_keyboard_thread_fn(void)
+{
+	while(1) {
+		printk("hid_keyboard_thread_fn\n");
+		k_sleep(K_MSEC(1000));
+	}
+}
+static char hid_mouse_msgq_buffer[10*MOUSE_REPORT_COUNT]; 
+static void hid_mouse_thread_fn(void)
+{
+	int ret;
+	uint8_t tmp[MOUSE_REPORT_COUNT];
+
+	k_msgq_init(&mouse_msgq, hid_mouse_msgq_buffer, 4, 10);
+	while(1) {
+		printk("hid_mouse_thread_fn\n");
+		UDC_STATIC_BUF_DEFINE(report, MOUSE_REPORT_COUNT);
+
+		k_msgq_get(&mouse_msgq, &tmp, K_FOREVER);
+		for (int i = 0; i < ARRAY_SIZE(tmp); ++i) {
+			printk(" 0x%x", tmp[i]);
+		}
+		printk("\n");
+		report[0] = tmp[0];
+		report[1] = tmp[1];
+		report[2] = tmp[2];
+		report[3] = tmp[3];
+
+		ret = hid_int_ep_write(hid_dev_mouse, report, MOUSE_REPORT_COUNT, NULL);
+		if (ret) {
+			LOG_ERR("HID write error, %d", ret);
+		} else {
+			k_sem_take(&ep_write_sem, K_FOREVER);
+		}
+
+	}
+}
+K_THREAD_DEFINE(hid_keyboard_thread, HID_THREAD_STACK_SIZE,
+		(k_thread_entry_t)hid_keyboard_thread_fn, NULL, NULL, NULL,
+		HID_THREAD_PRIORITY, 0, 0);
+K_THREAD_DEFINE(hid_mouse_thread, HID_THREAD_STACK_SIZE,
+		(k_thread_entry_t)hid_mouse_thread_fn, NULL, NULL, NULL,
+		HID_THREAD_PRIORITY, 0, 0);
 
 int audio_usb_init(void)
 {
 	int ret;
 	LOG_INF("USB audio init");
 
-	const struct device *headset = DEVICE_DT_GET(DT_NODELABEL(uac2_headset));
-	const struct device *hid_dev_keyboard;
-	const struct device *hid_dev_mouse;
 	struct usbd_context *sample_usbd;
 
 	usbd_uac2_set_ops(headset, &usb_audio_ops, &main_ctx);

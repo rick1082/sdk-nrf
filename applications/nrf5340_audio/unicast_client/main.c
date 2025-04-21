@@ -427,7 +427,7 @@ static void hid_gatt_discover(struct bt_conn *conn)
 		       err);
 	}
 }
-
+extern struct k_msgq mouse_msgq;
 static uint8_t hogp_notify_cb(struct bt_hogp *hogp, struct bt_hogp_rep_info *rep, uint8_t err,
 			      const uint8_t *data)
 {
@@ -442,6 +442,44 @@ static uint8_t hogp_notify_cb(struct bt_hogp *hogp, struct bt_hogp_rep_info *rep
 		printk(" 0x%x", data[i]);
 	}
 	printk("\n");
+	if (bt_hogp_rep_id(rep) == 2){
+		k_msgq_put(&mouse_msgq, data, K_NO_WAIT);
+	}
+	return BT_GATT_ITER_CONTINUE;
+}
+
+static uint8_t hogp_boot_mouse_report(struct bt_hogp *hogp, struct bt_hogp_rep_info *rep,
+				      uint8_t err, const uint8_t *data)
+{
+	uint8_t size = bt_hogp_rep_size(rep);
+	uint8_t i;
+
+	if (!data) {
+		return BT_GATT_ITER_STOP;
+	}
+	printk("Notification, mouse boot, size: %u, data:", size);
+	for (i = 0; i < size; ++i) {
+		printk(" 0x%x", data[i]);
+	}
+	printk("\n");
+	k_msgq_put(&mouse_msgq, data, K_NO_WAIT);
+	return BT_GATT_ITER_CONTINUE;
+}
+
+static uint8_t hogp_boot_kbd_report(struct bt_hogp *hogp, struct bt_hogp_rep_info *rep, uint8_t err,
+				    const uint8_t *data)
+{
+	uint8_t size = bt_hogp_rep_size(rep);
+	uint8_t i;
+
+	if (!data) {
+		return BT_GATT_ITER_STOP;
+	}
+	printk("Notification, keyboard boot, size: %u, data:", size);
+	for (i = 0; i < size; ++i) {
+		printk(" 0x%x", data[i]);
+	}
+	printk("\n");
 	return BT_GATT_ITER_CONTINUE;
 }
 
@@ -452,6 +490,10 @@ static void hogp_ready_cb(struct bt_hogp *hogp)
 
 	LOG_INF("HIDS[%d] is ready to work", hid_get_index(hogp->conn));
 	//k_work_submit(&hids_ready_work);
+	err = bt_hogp_pm_write(hogp, BT_HIDS_PM_BOOT);
+	if (err) {
+		printk("Cannot change protocol mode (err %d)\n", err);
+	}
 	while (NULL != (rep = bt_hogp_rep_next(hogp, rep))) {
 		if (bt_hogp_rep_type(rep) ==
 		    BT_HIDS_REPORT_TYPE_INPUT) {
@@ -464,26 +506,26 @@ static void hogp_ready_cb(struct bt_hogp *hogp)
 			}
 		}
 	}
-	/*
-	if (hogp.rep_boot.kbd_inp) {
+
+	if (hogp->rep_boot.kbd_inp) {
 		printk("Subscribe to boot keyboard report\n");
-		err = bt_hogp_rep_subscribe(&hogp,
-						   hogp.rep_boot.kbd_inp,
+		err = bt_hogp_rep_subscribe(hogp,
+						   hogp->rep_boot.kbd_inp,
 						   hogp_boot_kbd_report);
 		if (err) {
 			LOG_INF("Subscribe error (%d)", err);
 		}
 	}
-	if (hogp.rep_boot.mouse_inp) {
+	if (hogp->rep_boot.mouse_inp) {
 		LOG_INF("Subscribe to boot mouse report");
-		err = bt_hogp_rep_subscribe(&hogp,
-						   hogp.rep_boot.mouse_inp,
+		err = bt_hogp_rep_subscribe(hogp,
+						   hogp->rep_boot.mouse_inp,
 						   hogp_boot_mouse_report);
 		if (err) {
 			LOG_INF("Subscribe error (%d)", err);
 		}
 	}
-	*/
+
 }
 
 static void hogp_prep_fail_cb(struct bt_hogp *hogp, int err)
