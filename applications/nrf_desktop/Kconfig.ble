@@ -285,7 +285,7 @@ config BT_CTLR_CONN_PARAM_REQ
 endif # BT_CTLR
 
 config BT_DEVICE_NAME
-	default DESKTOP_DEVICE_PRODUCT
+	default NRF5340_AUDIO
 	help
 	  By default, nRF Desktop devices use their product name as Bluetooth
 	  device name.

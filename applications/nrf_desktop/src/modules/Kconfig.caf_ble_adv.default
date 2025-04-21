@@ -59,7 +59,7 @@ config BT_ADV_PROV_DEVICE_NAME_PAIRING_MODE_ONLY
 	  done for backwards compatibility.
 
 config BT_ADV_PROV_SWIFT_PAIR
-	default y
+	default n
 
 config BT_ADV_PROV_FAST_PAIR
 	default y if BT_FAST_PAIR
@@ -73,10 +73,10 @@ config BT_ADV_PROV_FAST_PAIR_SHOW_UI_PAIRING
 	  prevent bonding failures.
 
 config BT_ADV_PROV_TX_POWER
-	default y
+	default n
 
 config DESKTOP_ADV_PROV_UUID16_ALL
 	depends on (DESKTOP_HIDS_ENABLE || DESKTOP_BAS_ENABLE)
-	default y
+	default n
 
 endif # DESKTOP_BLE_ADV
