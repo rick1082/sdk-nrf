@@ -41,6 +41,10 @@ ZBUS_CHAN_DECLARE(sdu_ref_chan);
 
 ZBUS_OBS_DECLARE(sdu_ref_msg_listen);
 
+#include <bluetooth/services/hogp.h>
+#include <bluetooth/gatt_dm.h>
+static struct bt_hogp hogp[2];
+
 static struct k_thread button_msg_sub_thread_data;
 static struct k_thread le_audio_msg_sub_thread_data;
 static struct k_thread content_control_msg_sub_thread_data;
@@ -364,7 +368,97 @@ static void le_audio_msg_sub_thread(void)
 		STACK_USAGE_PRINT("le_audio_msg_thread", &le_audio_msg_sub_thread_data);
 	}
 }
+static struct bt_conn *hid_conn[2];
+static int hid_get_index(struct bt_conn *conn)
+{
+	for (int i = 0; i < ARRAY_SIZE(hid_conn); i++) {
+		if (hid_conn[i] == conn) {
+			return i;
+		}
+	}
+	return -1;
+}
 
+static void discovery_completed_cb(struct bt_gatt_dm *dm, void *context)
+{
+	int err;
+	uint8_t hid_index = 0;
+	//TODO: check if the index is correct
+	hid_index = hid_get_index(bt_gatt_dm_conn_get(dm));
+	bt_gatt_dm_data_print(dm);
+	LOG_INF("The discovery procedure succeeded for hid index %d", hid_index);
+	err = bt_hogp_handles_assign(dm, &hogp[hid_index]);
+	if (err) {
+		printk("Could not init HIDS client object, error: %d\n", err);
+	}
+
+	err = bt_gatt_dm_data_release(dm);
+	if (err) {
+		printk("Could not release the discovery data, error "
+		       "code: %d\n",
+		       err);
+	}
+}
+
+static void discovery_service_not_found_cb(struct bt_conn *conn, void *context)
+{
+	LOG_INF("The service could not be found during the discovery");
+}
+
+static void discovery_error_found_cb(struct bt_conn *conn, int err, void *context)
+{
+	LOG_INF("The discovery procedure failed with %d", err);
+}
+
+static const struct bt_gatt_dm_cb discovery_cb = {
+	.completed = discovery_completed_cb,
+	.service_not_found = discovery_service_not_found_cb,
+	.error_found = discovery_error_found_cb,
+};
+
+static void hid_gatt_discover(struct bt_conn *conn)
+{
+	int err;
+
+	err = bt_gatt_dm_start(conn, BT_UUID_HIDS, &discovery_cb, NULL);
+	if (err) {
+		printk("could not start the discovery procedure, error "
+		       "code: %d\n",
+		       err);
+	}
+}
+
+static void hogp_ready_cb(struct bt_hogp *hogp)
+{
+	LOG_INF("HIDS[%d] is ready to work", hid_get_index(hogp->conn));
+	//k_work_submit(&hids_ready_work);
+}
+
+static void hogp_prep_fail_cb(struct bt_hogp *hogp, int err)
+{
+	LOG_INF("ERROR: HIDS client preparation failed!");
+}
+
+static void hogp_pm_update_cb(struct bt_hogp *hogp)
+{
+	LOG_INF("Protocol mode updated: %s",
+	      bt_hogp_pm_get(hogp) == BT_HIDS_PM_BOOT ?
+	      "BOOT" : "REPORT");
+}
+
+/* HIDS client initialization parameters */
+static const struct bt_hogp_init_params hogp_init_params = {
+	.ready_cb      = hogp_ready_cb,
+	.prep_error_cb = hogp_prep_fail_cb,
+	.pm_update_cb  = hogp_pm_update_cb
+};
+
+static void hop_init()
+{
+	for (int i = 0; i < ARRAY_SIZE(hogp); i++) {
+		bt_hogp_init(&hogp[i], &hogp_init_params);
+	}
+}
 /**
  * @brief	Zbus listener to receive events from bt_mgmt.
  *
@@ -426,6 +520,14 @@ static void bt_mgmt_evt_handler(const struct zbus_channel *chan)
 
 	case BT_MGMT_HID_DEVICE_CONNECTED:
 		LOG_WRN("BT_MGMT_HID_DEVICE_CONNECTED msg->conn %p", (void *)msg->conn);
+		for (int i = 0; i < ARRAY_SIZE(hid_conn); i++) {
+			if (hid_conn[i] == NULL) {
+				hid_conn[i] = msg->conn;
+				LOG_INF("HID device connected, index %d", i);
+				break;
+			}
+		}
+		hid_gatt_discover(msg->conn);
 
 		break;
 
@@ -433,6 +535,13 @@ static void bt_mgmt_evt_handler(const struct zbus_channel *chan)
 		/* NOTE: The string below is used by the Nordic CI system */
 		LOG_INF("Disconnection event. Num connections: %u", num_conn);
 
+		int i = hid_get_index(msg->conn);
+		if (i >= 0) {
+			hid_conn[hid_get_index(msg->conn)] = NULL;
+			LOG_INF("HID device disconnected, index %d", i);
+			break;
+		}
+		
 		unicast_client_conn_disconnected(msg->conn);
 		break;
 
@@ -591,6 +700,8 @@ int main(void)
 
 	ret = unicast_client_enable(0, le_audio_rx_data_handler);
 	ERR_CHK(ret);
+
+	hop_init();
 
 	ret = bt_mgmt_scan_start(0, 0, BT_MGMT_SCAN_TYPE_CONN, CONFIG_BT_DEVICE_NAME,
 				 BRDCAST_ID_NOT_USED);
