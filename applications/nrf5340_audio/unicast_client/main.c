@@ -428,6 +428,7 @@ static void hid_gatt_discover(struct bt_conn *conn)
 	}
 }
 extern struct k_msgq mouse_msgq;
+extern struct k_msgq keyboard_msgq;
 static uint8_t hogp_notify_cb(struct bt_hogp *hogp, struct bt_hogp_rep_info *rep, uint8_t err,
 			      const uint8_t *data)
 {
@@ -437,11 +438,11 @@ static uint8_t hogp_notify_cb(struct bt_hogp *hogp, struct bt_hogp_rep_info *rep
 	if (!data) {
 		return BT_GATT_ITER_STOP;
 	}
-	printk("Notification, id: %u, size: %u, data:", bt_hogp_rep_id(rep), size);
+	//printk("Notification, id: %u, size: %u, data:", bt_hogp_rep_id(rep), size);
 	for (i = 0; i < size; ++i) {
-		printk(" 0x%x", data[i]);
+		//printk(" 0x%x", data[i]);
 	}
-	printk("\n");
+	//printk("\n");
 	if (bt_hogp_rep_id(rep) == 2){
 		k_msgq_put(&mouse_msgq, data, K_NO_WAIT);
 	}
@@ -457,11 +458,11 @@ static uint8_t hogp_boot_mouse_report(struct bt_hogp *hogp, struct bt_hogp_rep_i
 	if (!data) {
 		return BT_GATT_ITER_STOP;
 	}
-	printk("Notification, mouse boot, size: %u, data:", size);
+	//printk("Notification, mouse boot, size: %u, data:", size);
 	for (i = 0; i < size; ++i) {
-		printk(" 0x%x", data[i]);
+		//printk(" 0x%x", data[i]);
 	}
-	printk("\n");
+	//printk("\n");
 	k_msgq_put(&mouse_msgq, data, K_NO_WAIT);
 	return BT_GATT_ITER_CONTINUE;
 }
@@ -475,11 +476,12 @@ static uint8_t hogp_boot_kbd_report(struct bt_hogp *hogp, struct bt_hogp_rep_inf
 	if (!data) {
 		return BT_GATT_ITER_STOP;
 	}
-	printk("Notification, keyboard boot, size: %u, data:", size);
+	//printk("Notification, keyboard boot, size: %u, data:", size);
 	for (i = 0; i < size; ++i) {
-		printk(" 0x%x", data[i]);
+		//printk(" 0x%x", data[i]);
 	}
-	printk("\n");
+	k_msgq_put(&keyboard_msgq, data, K_NO_WAIT);
+	//printk("\n");
 	return BT_GATT_ITER_CONTINUE;
 }
 

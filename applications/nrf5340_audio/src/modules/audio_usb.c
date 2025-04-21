@@ -232,7 +232,7 @@ static void uac2_sof(const struct device *dev, void *user_data)
 	pscm_one_channel_split(frame_data, data_out_size, 0, 16, data_buffer, &data_out_size);
 
 	if (usbd_uac2_send(dev, MICROPHONE_IN_TERMINAL_ID, data_buffer, 96) < 0) {
-		printk("Failed to send data to USB\n");
+		//printk("Failed to send data to USB\n");
 	}
 }
 
@@ -315,7 +315,7 @@ struct kb_event {
 
 K_MSGQ_DEFINE(kb_msgq, sizeof(struct kb_event), 2, 1);
 
-UDC_STATIC_BUF_DEFINE(report, KB_REPORT_COUNT);
+
 static uint32_t kb_duration;
 static bool kb_ready;
 
@@ -439,6 +439,7 @@ enum mouse_report_idx {
 };
 
 struct k_msgq mouse_msgq;
+struct k_msgq keyboard_msgq;
 
 //K_MSGQ_DEFINE(mouse_msgq, MOUSE_REPORT_COUNT, 2, 1);
 
@@ -449,14 +450,27 @@ static const uint8_t hid_report_desc_mouse[] = HID_MOUSE_REPORT_DESC(2);
 
 #define HID_THREAD_STACK_SIZE 1024
 #define HID_THREAD_PRIORITY 7
+static char hid_mouse_msgq_buffer[10*MOUSE_REPORT_COUNT]; 
+static char hid_keyboard_msgq_buffer[10*KB_REPORT_COUNT]; 
 static void hid_keyboard_thread_fn(void)
 {
+	int ret;
+	uint8_t tmp[KB_REPORT_COUNT];
+	UDC_STATIC_BUF_DEFINE(report, KB_REPORT_COUNT);
+	k_msgq_init(&keyboard_msgq, hid_keyboard_msgq_buffer, 8, 10);
 	while(1) {
-		printk("hid_keyboard_thread_fn\n");
-		k_sleep(K_MSEC(1000));
+		UDC_STATIC_BUF_DEFINE(report, MOUSE_REPORT_COUNT);
+
+		k_msgq_get(&keyboard_msgq, &tmp, K_FOREVER);
+		for (int i = 0; i < ARRAY_SIZE(tmp); ++i) {
+			//printk(" 0x%x", tmp[i]);
+			report[i] = tmp[i];
+		}
+		//printk("\n");
+		hid_device_submit_report(hid_dev_keyboard, KB_REPORT_COUNT, report);
 	}
 }
-static char hid_mouse_msgq_buffer[10*MOUSE_REPORT_COUNT]; 
+
 static void hid_mouse_thread_fn(void)
 {
 	int ret;
@@ -464,14 +478,14 @@ static void hid_mouse_thread_fn(void)
 
 	k_msgq_init(&mouse_msgq, hid_mouse_msgq_buffer, 4, 10);
 	while(1) {
-		printk("hid_mouse_thread_fn\n");
+		//printk("hid_mouse_thread_fn\n");
 		UDC_STATIC_BUF_DEFINE(report, MOUSE_REPORT_COUNT);
 
 		k_msgq_get(&mouse_msgq, &tmp, K_FOREVER);
 		for (int i = 0; i < ARRAY_SIZE(tmp); ++i) {
-			printk(" 0x%x", tmp[i]);
+			//printk(" 0x%x", tmp[i]);
 		}
-		printk("\n");
+		//printk("\n");
 		report[0] = tmp[0];
 		report[1] = tmp[1];
 		report[2] = tmp[2];
