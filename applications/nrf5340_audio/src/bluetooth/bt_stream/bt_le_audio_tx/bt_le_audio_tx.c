@@ -259,16 +259,25 @@ int bt_le_audio_tx_send(struct le_audio_tx_info *tx, uint8_t num_tx,
 		common_interval = tx[i].cap_stream->bap_stream.qos->interval;
 
 		/* Check if same audio is sent to all channels */
-		if (enc_audio.num_ch == 1) {
-			ret = iso_stream_send(enc_audio.data, data_size_pr_stream, tx[i].cap_stream,
-					      tx_info, common_tx_sync_ts_us);
-		} else {
+		if ((CONFIG_AUDIO_DEV == GATEWAY) && CONFIG_MONO_TO_ALL_RECEIVERS) {
+			static uint8_t dummy_data[500];
+			memcpy(&dummy_data[0], &enc_audio.data[0], data_size_pr_stream);
+			memcpy(&dummy_data[data_size_pr_stream], &enc_audio.data[0], data_size_pr_stream);
 			ret = iso_stream_send(
-				&enc_audio.data[(data_size_pr_stream * tx[i].audio_channel)],
+				dummy_data,
 				data_size_pr_stream*2, tx[i].cap_stream, tx_info,
 				common_tx_sync_ts_us);
+		} else {
+			if (enc_audio.num_ch == 1) {
+				ret = iso_stream_send(enc_audio.data, data_size_pr_stream, tx[i].cap_stream,
+							tx_info, common_tx_sync_ts_us);
+			} else {
+				ret = iso_stream_send(
+					&enc_audio.data[(data_size_pr_stream * tx[i].audio_channel)],
+					data_size_pr_stream*2, tx[i].cap_stream, tx_info,
+					common_tx_sync_ts_us);
+			}
 		}
-
 		if (ret) {
 			/* DBG used here as prints are handled within iso_stream_send */
 			LOG_DBG("Failed to send to idx: %d stream: %p, ret: %d ", i,
