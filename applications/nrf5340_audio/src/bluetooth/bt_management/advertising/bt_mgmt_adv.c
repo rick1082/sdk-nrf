@@ -145,42 +145,6 @@ static const struct bt_le_ext_adv_cb adv_cb = {
 #endif /* CONFIG_BT_PRIVACY */
 };
 
-static int direct_adv_create(uint8_t ext_adv_index, bt_addr_le_t addr)
-{
-	int ret;
-	struct bt_le_ext_adv_info ext_adv_info;
-
-	ext_adv_param = *BT_LE_ADV_CONN_DIR(&addr);
-	ext_adv_param.id = BT_ID_DEFAULT;
-	ext_adv_param.options |= BT_LE_ADV_OPT_DIR_ADDR_RPA;
-
-	/* Clear ADV data set before update to direct advertising */
-	ret = bt_le_ext_adv_set_data(ext_adv[ext_adv_index], NULL, 0, NULL, 0);
-	if (ret) {
-		LOG_ERR("Failed to clear advertising data for set %d. Err: %d", ext_adv_index, ret);
-		return ret;
-	}
-
-	ret = bt_le_ext_adv_update_param(ext_adv[ext_adv_index], &ext_adv_param);
-	if (ret) {
-		LOG_ERR("Failed to update ext_adv set %d to directed advertising. Err = %d",
-			ext_adv_index, ret);
-		return ret;
-	}
-
-	ret = bt_le_ext_adv_get_info(ext_adv[ext_adv_index], &ext_adv_info);
-	if (ret) {
-		return ret;
-	}
-
-	ret = addr_print(ext_adv_info.addr, &addr);
-	if (ret) {
-		return ret;
-	}
-
-	return 0;
-}
-
 static int extended_adv_create(uint8_t ext_adv_index)
 {
 	int ret;
@@ -255,28 +219,14 @@ static void advertising_process(struct k_work *work)
 		}
 	}
 
-	bt_addr_le_t addr;
-
-	if (!k_msgq_get(&bonds_queue, &addr, K_NO_WAIT) && !dir_adv_timed_out) {
-		ret = direct_adv_create(ext_adv_index, addr);
-		if (ret) {
-			LOG_WRN("Failed to create direct advertisement: %d", ret);
-			return;
-		}
-
-		ret = bt_le_ext_adv_start(
-			ext_adv[ext_adv_index],
-			BT_LE_EXT_ADV_START_PARAM(BT_GAP_ADV_HIGH_DUTY_CYCLE_MAX_TIMEOUT, 0));
-	} else {
-		ret = extended_adv_create(ext_adv_index);
-		if (ret) {
-			LOG_WRN("Failed to create extended advertisement: %d", ret);
-			return;
-		}
-
-		dir_adv_timed_out = false;
-		ret = bt_le_ext_adv_start(ext_adv[ext_adv_index], BT_LE_EXT_ADV_START_DEFAULT);
+	ret = extended_adv_create(ext_adv_index);
+	if (ret) {
+		LOG_WRN("Failed to create extended advertisement: %d", ret);
+		return;
 	}
+
+	dir_adv_timed_out = false;
+	ret = bt_le_ext_adv_start(ext_adv[ext_adv_index], BT_LE_EXT_ADV_START_DEFAULT);
 
 	if (ret) {
 		LOG_ERR("Failed to start advertising set. Err: %d", ret);
