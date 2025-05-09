@@ -24,12 +24,12 @@ static int leds_set(void)
 {
 	int ret;
 
-	/* Blink LED 3 to indicate that APP core is running */
+	/* Blink LED 3 to indicate that APP core is running 
 	ret = led_blink(LED_APP_3_GREEN);
 	if (ret) {
 		return ret;
 	}
-
+	*/
 #if (CONFIG_AUDIO_DEV == HEADSET)
 	enum audio_channel channel;
 

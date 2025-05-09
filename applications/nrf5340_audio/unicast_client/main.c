@@ -485,6 +485,8 @@ static uint8_t hogp_boot_kbd_report(struct bt_hogp *hogp, struct bt_hogp_rep_inf
 	return BT_GATT_ITER_CONTINUE;
 }
 
+static struct bt_conn *mouse_conn;
+static struct bt_conn *keyboard_conn;
 static void hogp_ready_cb(struct bt_hogp *hogp)
 {
 	int err;
@@ -510,6 +512,9 @@ static void hogp_ready_cb(struct bt_hogp *hogp)
 	}
 
 	if (hogp->rep_boot.kbd_inp) {
+		led_blink(LED_APP_2_GREEN);
+		
+		keyboard_conn = hogp->conn;
 		printk("Subscribe to boot keyboard report\n");
 		err = bt_hogp_rep_subscribe(hogp,
 						   hogp->rep_boot.kbd_inp,
@@ -519,6 +524,8 @@ static void hogp_ready_cb(struct bt_hogp *hogp)
 		}
 	}
 	if (hogp->rep_boot.mouse_inp) {
+		mouse_conn = hogp->conn;
+		led_blink(LED_APP_3_GREEN);
 		LOG_INF("Subscribe to boot mouse report");
 		err = bt_hogp_rep_subscribe(hogp,
 						   hogp->rep_boot.mouse_inp,
@@ -631,6 +638,13 @@ static void bt_mgmt_evt_handler(const struct zbus_channel *chan)
 		/* NOTE: The string below is used by the Nordic CI system */
 		LOG_INF("Disconnection event. Num connections: %u", num_conn);
 
+		if (msg->conn == keyboard_conn) {
+			led_off(LED_APP_2_GREEN);
+			LOG_INF("Keyboard disconnected");
+		} else if (msg->conn == mouse_conn) {
+			led_off(LED_APP_3_GREEN);
+			LOG_INF("Mouse disconnected");
+		}
 		int i = hid_get_index(msg->conn);
 		if (i >= 0) {
 			hid_conn[hid_get_index(msg->conn)] = NULL;
