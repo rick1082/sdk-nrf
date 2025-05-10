@@ -187,6 +187,8 @@ static int iso_conn_handle_set(struct bt_bap_stream *bap_stream, uint16_t *iso_c
 	return 0;
 }
 
+
+#include "audio_system.h"
 int bt_le_audio_tx_send(struct le_audio_tx_info *tx, uint8_t num_tx,
 			struct le_audio_encoded_audio enc_audio)
 {
@@ -259,7 +261,7 @@ int bt_le_audio_tx_send(struct le_audio_tx_info *tx, uint8_t num_tx,
 		common_interval = tx[i].cap_stream->bap_stream.qos->interval;
 
 		/* Check if same audio is sent to all channels */
-		if ((CONFIG_AUDIO_DEV == GATEWAY) && CONFIG_MONO_TO_ALL_RECEIVERS) {
+		if ((CONFIG_AUDIO_DEV == GATEWAY) && (audio_system_get_stream_mode() == AUDIO_SYSTEM_STREAM_MODE_CONVERSATION)) {
 			static uint8_t dummy_data[500];
 			memcpy(&dummy_data[0], &enc_audio.data[0], data_size_pr_stream);
 			memcpy(&dummy_data[data_size_pr_stream], &enc_audio.data[0], data_size_pr_stream);

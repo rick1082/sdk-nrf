@@ -33,7 +33,7 @@ LOG_MODULE_REGISTER(unicast_client, CONFIG_UNICAST_CLIENT_LOG_LEVEL);
 ZBUS_CHAN_DEFINE(le_audio_chan, struct le_audio_msg, NULL, NULL, ZBUS_OBSERVERS_EMPTY,
 		 ZBUS_MSG_INIT(0));
 
-#define CAP_PROCED_MUTEX_WAIT_TIME_MS K_MSEC(500)
+#define CAP_PROCED_MUTEX_WAIT_TIME_MS K_MSEC(1000)
 
 struct le_audio_unicast_server {
 	char *ch_name;
@@ -158,6 +158,15 @@ static void le_audio_event_publish(enum le_audio_evt_type event, struct bt_conn 
 
 K_MUTEX_DEFINE(mtx_cap_procedure_proceed);
 
+void cap_group_delete()
+{
+	int ret;
+	ret = bt_bap_unicast_group_delete(unicast_group);
+	unicast_group = NULL;
+	LOG_WRN("Unicast group deleted: %d", ret);
+	unicast_group_created = false;
+}
+
 static void cap_start_worker(struct k_work *work)
 {
 	int ret;
@@ -180,7 +189,7 @@ static void cap_start_worker(struct k_work *work)
 		return;
 	}
 
-	if (unicast_group_created == false) {
+	
 		uint8_t cig_index = idx.lvl1;
 		struct bt_bap_unicast_group_stream_pair_param
 			pair_params[ARRAY_SIZE(unicast_servers[cig_index][0])];
@@ -230,7 +239,18 @@ static void cap_start_worker(struct k_work *work)
 		} else {
 			group_param.packing = BT_ISO_PACKING_SEQUENTIAL;
 		}
-
+	if (unicast_group_created == false) {
+		LOG_WRN("bt_bap_unicast_group_create");
+		ret = bt_bap_unicast_group_create(&group_param, &unicast_group);
+		if (ret) {
+			LOG_ERR("Failed to create unicast group: %d", ret);
+		} else {
+			unicast_group_created = true;
+		}
+	} else {
+		cap_group_delete();
+		k_sleep(K_MSEC(100));
+		LOG_WRN("bt_bap_unicast_group_create");
 		ret = bt_bap_unicast_group_create(&group_param, &unicast_group);
 		if (ret) {
 			LOG_ERR("Failed to create unicast group: %d", ret);
@@ -468,16 +488,21 @@ static void supported_sample_rates_print(uint16_t supported_sample_rates, enum b
 		LOG_DBG("Unicast_server supports: %s kHz in source direction", supported_str);
 	}
 }
-
+#include "audio_system.h"
 static bool sink_parse_cb(struct bt_data *data, void *user_data)
 {
 	if (data->type == BT_AUDIO_CODEC_CAP_TYPE_FREQ) {
 		uint16_t lc3_freq_bit = sys_get_le16(data->data);
 
 		supported_sample_rates_print(lc3_freq_bit, BT_AUDIO_DIR_SINK);
-
+		uint8_t pref_sampling_rate;
+		if (audio_system_get_stream_mode() == AUDIO_SYSTEM_STREAM_MODE_CONVERSATION) {
+			pref_sampling_rate = 0x05;
+		} else {
+			pref_sampling_rate = 0x08;
+		}
 		/* Try with the preferred sample rate first */
-		switch (CONFIG_BT_AUDIO_PREF_SAMPLE_RATE_VALUE) {
+		switch (pref_sampling_rate) {
 		case BT_AUDIO_CODEC_CFG_FREQ_48KHZ:
 			if (lc3_freq_bit & BT_AUDIO_CODEC_CAP_FREQ_48KHZ) {
 				lc3_preset_sink = lc3_preset_sink_48_1_1;
@@ -634,8 +659,13 @@ static bool source_parse_cb(struct bt_data *data, void *user_data)
 
 		supported_sample_rates_print(lc3_freq_bit, BT_AUDIO_DIR_SOURCE);
 
-		/* Try with the preferred sample rate first */
-		switch (CONFIG_BT_AUDIO_PREF_SAMPLE_RATE_VALUE) {
+		uint8_t pref_sampling_rate;
+		if (audio_system_get_stream_mode() == AUDIO_SYSTEM_STREAM_MODE_CONVERSATION) {
+			pref_sampling_rate = 0x05;
+		} else {
+			pref_sampling_rate = 0x08;
+		}
+		switch (pref_sampling_rate) {
 		case BT_AUDIO_CODEC_CFG_FREQ_48KHZ:
 			if (lc3_freq_bit & BT_AUDIO_CODEC_CAP_FREQ_48KHZ) {
 				lc3_preset_source = lc3_preset_source_48_1_1;
@@ -1277,7 +1307,7 @@ static void stream_metadata_updated_cb(struct bt_bap_stream *stream)
 
 static void stream_disabled_cb(struct bt_bap_stream *stream)
 {
-	LOG_DBG("Audio Stream %p disabled", (void *)stream);
+	LOG_INF("Audio Stream %p disabled", (void *)stream);
 }
 
 static void stream_stopped_cb(struct bt_bap_stream *stream, uint8_t reason)
@@ -1304,7 +1334,7 @@ static void stream_stopped_cb(struct bt_bap_stream *stream, uint8_t reason)
 
 static void stream_released_cb(struct bt_bap_stream *stream)
 {
-	LOG_DBG("Audio Stream %p released", (void *)stream);
+	LOG_INF("Audio Stream %p released", (void *)stream);
 
 	/* Check if the other streams are streaming, send event if not */
 	for (int i = 0; i < CONFIG_BT_ISO_MAX_CIG; i++) {
@@ -1389,6 +1419,7 @@ static void disconnected_cleanup(struct stream_index idx)
 
 	unicast_server->num_sink_eps = 0;
 	unicast_server->num_source_eps = 0;
+	
 }
 
 static void unicast_discovery_complete_cb(struct bt_conn *conn, int err,
@@ -1577,13 +1608,16 @@ void unicast_client_conn_disconnected(struct bt_conn *conn)
 {
 	int ret;
 	struct stream_index idx;
-
 	ret = device_index_get(conn, &idx);
 	if (ret) {
 		LOG_WRN("Unknown connection disconnected");
 	} else {
 		disconnected_cleanup(idx);
 	}
+	//k_sleep(K_MSEC(1000));
+
+	//cap_group_delete();
+
 }
 
 int unicast_client_discover(struct bt_conn *conn, enum unicast_discover_dir dir)

@@ -96,6 +96,9 @@ static void content_control_msg_sub_thread(void)
 	}
 }
 
+
+#include "audio_system.h"
+static struct bt_conn *headset_conn;
 /**
  * @brief	Handle button activity.
  */
@@ -163,25 +166,14 @@ static void button_msg_sub_thread(void)
 			break;
 
 		case BUTTON_4:
-			if (IS_ENABLED(CONFIG_AUDIO_TEST_TONE)) {
-				if (IS_ENABLED(CONFIG_WALKIE_TALKIE_DEMO)) {
-					LOG_DBG("Test tone is disabled in walkie-talkie mode");
-					break;
-				}
-
-				if (strm_state != STATE_STREAMING) {
-					LOG_WRN("Not in streaming state");
-					break;
-				}
-
-				ret = audio_system_encode_test_tone_step();
-				if (ret) {
-					LOG_WRN("Failed to play test tone, ret: %d", ret);
-				}
-
-				break;
+			if (audio_system_get_stream_mode() == AUDIO_SYSTEM_STREAM_MODE_MEDIA) {
+				audio_system_set_stream_mode(AUDIO_SYSTEM_STREAM_MODE_CONVERSATION);
+				LOG_WRN("Now is media, Set stream mode to conversation");
+			} else {
+				audio_system_set_stream_mode(AUDIO_SYSTEM_STREAM_MODE_MEDIA);
+				LOG_WRN("Now is conversation, Set stream mode to media");
 			}
-
+			bt_conn_disconnect(headset_conn, BT_HCI_ERR_REMOTE_USER_TERM_CONN);
 			break;
 
 		case BUTTON_5:
@@ -256,7 +248,7 @@ static void le_audio_msg_sub_thread(void)
 
 			stream_state_set(STATE_PAUSED);
 			audio_system_stop();
-
+			
 			ret = led_on(LED_APP_1_BLUE);
 			ERR_CHK(ret);
 			break;
@@ -570,6 +562,7 @@ static void hop_init()
  * @note	Will in most cases be called from BT_RX context,
  *		so there should not be too much processing done here.
  */
+
 static void bt_mgmt_evt_handler(const struct zbus_channel *chan)
 {
 	int ret;
@@ -608,8 +601,8 @@ static void bt_mgmt_evt_handler(const struct zbus_channel *chan)
 	case BT_MGMT_AUDIO_DEVICE_CONNECTED:
 		/* NOTE: The string below is used by the Nordic CI system */
 		LOG_WRN("BT_MGMT_AUDIO_DEVICE_CONNECTED msg->conn %p", (void *)msg->conn);
-
-		if (IS_ENABLED(CONFIG_STREAM_BIDIRECTIONAL)) {
+		headset_conn = msg->conn;
+		if (audio_system_get_stream_mode() == AUDIO_SYSTEM_STREAM_MODE_CONVERSATION) {
 			ret = unicast_client_discover(msg->conn, UNICAST_SERVER_BIDIR);
 		} else {
 			ret = unicast_client_discover(msg->conn, UNICAST_SERVER_SINK);
@@ -653,6 +646,7 @@ static void bt_mgmt_evt_handler(const struct zbus_channel *chan)
 		}
 		
 		unicast_client_conn_disconnected(msg->conn);
+		
 		break;
 
 	default:

@@ -13,6 +13,14 @@
 
 #define VALUE_NOT_SET 0
 
+enum audio_system_stream_mode {
+	AUDIO_SYSTEM_STREAM_MODE_MEDIA,
+	AUDIO_SYSTEM_STREAM_MODE_CONVERSATION,
+};
+
+void audio_system_set_stream_mode(uint8_t stream_mode);
+
+uint8_t audio_system_get_stream_mode(void);
 /**
  * @brief	Start the execution of the encoder thread.
  */

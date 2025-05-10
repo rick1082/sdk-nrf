@@ -50,6 +50,19 @@ static struct sw_codec_config sw_codec_cfg;
 static int16_t test_tone_buf[CONFIG_AUDIO_SAMPLE_RATE_HZ / 1000];
 static size_t test_tone_size;
 
+
+static uint8_t stream_mode = AUDIO_SYSTEM_STREAM_MODE_CONVERSATION;
+
+uint8_t audio_system_get_stream_mode(void)
+{
+	return stream_mode;
+}
+
+void audio_system_set_stream_mode(uint8_t stream_mode_in)
+{
+	stream_mode = stream_mode_in;
+}
+
 static bool sample_rate_valid(uint32_t sample_rate_hz)
 {
 	if (sample_rate_hz == 16000 || sample_rate_hz == 24000 || sample_rate_hz == 48000) {
@@ -67,17 +80,15 @@ static void audio_gateway_configure(void)
 		ERR_CHK_MSG(-EINVAL, "No codec selected");
 	}
 
-#if (CONFIG_STREAM_BIDIRECTIONAL)
-	sw_codec_cfg.decoder.audio_ch = AUDIO_CHANNEL_DEFAULT;
-	sw_codec_cfg.decoder.num_ch = 1;
-	sw_codec_cfg.decoder.channel_mode = SW_CODEC_MONO;
-#endif /* (CONFIG_STREAM_BIDIRECTIONAL) */
-
-	if (IS_ENABLED(CONFIG_MONO_TO_ALL_RECEIVERS)) {
+	if (audio_system_get_stream_mode() == AUDIO_SYSTEM_STREAM_MODE_CONVERSATION) {
+		sw_codec_cfg.decoder.audio_ch = AUDIO_CHANNEL_DEFAULT;
+		sw_codec_cfg.decoder.num_ch = 1;
+		sw_codec_cfg.decoder.channel_mode = SW_CODEC_MONO;
 		sw_codec_cfg.encoder.num_ch = 1;
 	} else {
 		sw_codec_cfg.encoder.num_ch = 2;
 	}
+
 
 	sw_codec_cfg.encoder.channel_mode =
 		(sw_codec_cfg.encoder.num_ch == 1) ? SW_CODEC_MONO : SW_CODEC_STEREO;
