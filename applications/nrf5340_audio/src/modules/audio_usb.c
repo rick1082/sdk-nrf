@@ -456,10 +456,10 @@ static void hid_keyboard_thread_fn(void)
 {
 	int ret;
 	uint8_t tmp[KB_REPORT_COUNT];
-	UDC_STATIC_BUF_DEFINE(report, KB_REPORT_COUNT);
+
 	k_msgq_init(&keyboard_msgq, hid_keyboard_msgq_buffer, 8, 10);
 	while(1) {
-		UDC_STATIC_BUF_DEFINE(report, MOUSE_REPORT_COUNT);
+		UDC_STATIC_BUF_DEFINE(report, KB_REPORT_COUNT);
 
 		k_msgq_get(&keyboard_msgq, &tmp, K_FOREVER);
 		for (int i = 0; i < ARRAY_SIZE(tmp); ++i) {

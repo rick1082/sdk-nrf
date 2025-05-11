@@ -435,7 +435,7 @@ static uint8_t hogp_notify_cb(struct bt_hogp *hogp, struct bt_hogp_rep_info *rep
 		//printk(" 0x%x", data[i]);
 	}
 	//printk("\n");
-	if (bt_hogp_rep_id(rep) == 2){
+	if (bt_hogp_rep_id(rep) == 1){
 		k_msgq_put(&mouse_msgq, data, K_NO_WAIT);
 	}
 	return BT_GATT_ITER_CONTINUE;
