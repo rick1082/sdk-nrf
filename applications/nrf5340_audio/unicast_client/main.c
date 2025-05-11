@@ -604,8 +604,10 @@ static void bt_mgmt_evt_handler(const struct zbus_channel *chan)
 		headset_conn = msg->conn;
 		if (audio_system_get_stream_mode() == AUDIO_SYSTEM_STREAM_MODE_CONVERSATION) {
 			ret = unicast_client_discover(msg->conn, UNICAST_SERVER_BIDIR);
+			led_blink(LED_APP_RGB, LED_COLOR_GREEN);
 		} else {
 			ret = unicast_client_discover(msg->conn, UNICAST_SERVER_SINK);
+			led_on(LED_APP_RGB, LED_COLOR_GREEN);
 		}
 
 		if (ret) {
