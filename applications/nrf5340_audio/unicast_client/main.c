@@ -421,6 +421,11 @@ static void hid_gatt_discover(struct bt_conn *conn)
 }
 extern struct k_msgq mouse_msgq;
 extern struct k_msgq keyboard_msgq;
+static struct bt_conn *mouse_conn;
+static struct bt_conn *keyboard_conn;
+static bool keyboard_led_set = false;
+static bool mouse_led_set = false;
+
 static uint8_t hogp_notify_cb(struct bt_hogp *hogp, struct bt_hogp_rep_info *rep, uint8_t err,
 			      const uint8_t *data)
 {
@@ -436,8 +441,21 @@ static uint8_t hogp_notify_cb(struct bt_hogp *hogp, struct bt_hogp_rep_info *rep
 	}
 	//printk("\n");
 	if (bt_hogp_rep_id(rep) == 1){
+		if (keyboard_led_set == false) {
+			led_blink(LED_APP_2_GREEN);
+			keyboard_conn = hogp->conn;
+			keyboard_led_set = true;
+		}
 		k_msgq_put(&mouse_msgq, data, K_NO_WAIT);
-	}
+	} 
+	if (bt_hogp_rep_id(rep) == 2){
+		if (mouse_led_set == false) {
+			led_blink(LED_APP_3_GREEN);
+			mouse_conn = hogp->conn;
+			mouse_led_set = true;
+		}
+		k_msgq_put(&keyboard_msgq, data, K_NO_WAIT);
+	} 
 	return BT_GATT_ITER_CONTINUE;
 }
 
@@ -477,8 +495,6 @@ static uint8_t hogp_boot_kbd_report(struct bt_hogp *hogp, struct bt_hogp_rep_inf
 	return BT_GATT_ITER_CONTINUE;
 }
 
-static struct bt_conn *mouse_conn;
-static struct bt_conn *keyboard_conn;
 static void hogp_ready_cb(struct bt_hogp *hogp)
 {
 	int err;
@@ -486,10 +502,12 @@ static void hogp_ready_cb(struct bt_hogp *hogp)
 
 	LOG_INF("HIDS[%d] is ready to work", hid_get_index(hogp->conn));
 	//k_work_submit(&hids_ready_work);
+	/*
 	err = bt_hogp_pm_write(hogp, BT_HIDS_PM_BOOT);
 	if (err) {
 		printk("Cannot change protocol mode (err %d)\n", err);
 	}
+		*/
 	while (NULL != (rep = bt_hogp_rep_next(hogp, rep))) {
 		if (bt_hogp_rep_type(rep) ==
 		    BT_HIDS_REPORT_TYPE_INPUT) {
@@ -502,7 +520,7 @@ static void hogp_ready_cb(struct bt_hogp *hogp)
 			}
 		}
 	}
-
+	/*
 	if (hogp->rep_boot.kbd_inp) {
 		led_blink(LED_APP_2_GREEN);
 		
@@ -515,6 +533,7 @@ static void hogp_ready_cb(struct bt_hogp *hogp)
 			LOG_INF("Subscribe error (%d)", err);
 		}
 	}
+
 	if (hogp->rep_boot.mouse_inp) {
 		mouse_conn = hogp->conn;
 		led_blink(LED_APP_3_GREEN);
@@ -525,7 +544,7 @@ static void hogp_ready_cb(struct bt_hogp *hogp)
 		if (err) {
 			LOG_INF("Subscribe error (%d)", err);
 		}
-	}
+	}*/
 
 }
 
@@ -635,9 +654,11 @@ static void bt_mgmt_evt_handler(const struct zbus_channel *chan)
 
 		if (msg->conn == keyboard_conn) {
 			led_off(LED_APP_2_GREEN);
+			keyboard_led_set = false;
 			LOG_INF("Keyboard disconnected");
 		} else if (msg->conn == mouse_conn) {
 			led_off(LED_APP_3_GREEN);
+			mouse_led_set = false;
 			LOG_INF("Mouse disconnected");
 		}
 		int i = hid_get_index(msg->conn);

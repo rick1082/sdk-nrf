@@ -290,12 +290,6 @@ enum kb_leds_idx {
 	KB_LED_COUNT,
 };
 
-static const struct gpio_dt_spec kb_leds[KB_LED_COUNT] = {
-	GPIO_DT_SPEC_GET_OR(DT_ALIAS(led0), gpios, {0}),
-	GPIO_DT_SPEC_GET_OR(DT_ALIAS(led1), gpios, {0}),
-	GPIO_DT_SPEC_GET_OR(DT_ALIAS(led2), gpios, {0}),
-};
-
 enum kb_report_idx {
 	KB_MOD_KEY = 0,
 	KB_RESERVED,
@@ -343,15 +337,6 @@ static int kb_set_report(const struct device *dev,
 		LOG_WRN("Unsupported report type");
 		return -ENOTSUP;
 	}
-/*
-	for (unsigned int i = 0; i < ARRAY_SIZE(kb_leds); i++) {
-		if (kb_leds[i].port == NULL) {
-			continue;
-		}
-
-		(void)gpio_pin_set_dt(&kb_leds[i], buf[0] & BIT(i));
-	}
-*/
 	return 0;
 }
 
@@ -430,21 +415,55 @@ static const struct hid_ops mouse_ops = {
 #define MOUSE_BTN_LEFT		0
 #define MOUSE_BTN_RIGHT		1
 
-enum mouse_report_idx {
-	MOUSE_BTN_REPORT_IDX = 0,
-	MOUSE_X_REPORT_IDX = 1,
-	MOUSE_Y_REPORT_IDX = 2,
-	MOUSE_WHEEL_REPORT_IDX = 3,
-	MOUSE_REPORT_COUNT = 4,
-};
+
+#define	MOUSE_REPORT_COUNT 5
 
 struct k_msgq mouse_msgq;
 struct k_msgq keyboard_msgq;
 
-//K_MSGQ_DEFINE(mouse_msgq, MOUSE_REPORT_COUNT, 2, 1);
+/**
+ * @brief Simple HID mouse report descriptor for n button mouse.
+ *
+ * @param bcnt Button count. Allowed values from 1 to 8.
+ */
+#define NRFDSK_HID_MOUSE_REPORT_DESC(bcnt) {				\
+	HID_USAGE_PAGE(HID_USAGE_GEN_DESKTOP),			\
+	HID_USAGE(HID_USAGE_GEN_DESKTOP_MOUSE),			\
+	HID_COLLECTION(HID_COLLECTION_APPLICATION),		\
+		HID_USAGE(HID_USAGE_GEN_DESKTOP_POINTER),	\
+		HID_COLLECTION(HID_COLLECTION_PHYSICAL),	\
+		0x05, 0x09,					\
+		0x19, 0x01,         /* Usage Minimum (1) */			\
+		0x29, 0x08,         /* Usage Maximum (8) */			\
+		0x15, 0x00,         /* Logical Minimum (0) */			\
+		0x25, 0x01,         /* Logical Maximum (1) */			\
+		0x75, 0x01,         /* Report Size (1) */			\
+		0x95, 0x08, /* Report Count */		\
+		0x81, 0x02,         /* Input (Data, Variable, Absolute) */	\
+										\
+		0x05, 0x01,					\
+		0x09, 0x38,         /* Usage (Wheel) */				\
+		0x15, 0x81,         /* Logical Minimum (-127) */		\
+		0x25, 0x7F,         /* Logical Maximum (127) */			\
+		0x75, 0x08,         /* Report Size (8) */			\
+		0x95, 0x01,         /* Report Count (1) */			\
+		0x81, 0x06,         /* Input (Data, Variable, Relative) */	\
+										\
+		0x05, 0x01,					\
+		0x09, 0x30,         /* Usage (X) */				\
+		0x09, 0x31,         /* Usage (Y) */				\
+		0x16, 0x01, 0xF8,   /* Logical Maximum (2047) */		\
+		0x26, 0xFF, 0x07,   /* Logical Minimum (-2047) */		\
+		0x75, 0x0C,         /* Report Size (12) */			\
+		0x95, 0x02,         /* Report Count (2) */			\
+		0x81, 0x06,         /* Input (Data, Variable, Relative) */	\
+		HID_END_COLLECTION,				\
+	HID_END_COLLECTION,					\
+}
+
 
 /* doc device msg-cb end */
-static const uint8_t hid_report_desc_mouse[] = HID_MOUSE_REPORT_DESC(2);
+static const uint8_t hid_report_desc_mouse[] = NRFDSK_HID_MOUSE_REPORT_DESC(2);
 
 
 
@@ -467,7 +486,10 @@ static void hid_keyboard_thread_fn(void)
 			report[i] = tmp[i];
 		}
 		//printk("\n");
-		hid_device_submit_report(hid_dev_keyboard, KB_REPORT_COUNT, report);
+		ret = hid_device_submit_report(hid_dev_keyboard, KB_REPORT_COUNT, report);
+		if(ret) {
+			LOG_ERR("HID write error, %d", ret);
+		}
 	}
 }
 
@@ -476,7 +498,7 @@ static void hid_mouse_thread_fn(void)
 	int ret;
 	uint8_t tmp[MOUSE_REPORT_COUNT];
 
-	k_msgq_init(&mouse_msgq, hid_mouse_msgq_buffer, 4, 10);
+	k_msgq_init(&mouse_msgq, hid_mouse_msgq_buffer, 5, 10);
 	while(1) {
 		//printk("hid_mouse_thread_fn\n");
 		UDC_STATIC_BUF_DEFINE(report, MOUSE_REPORT_COUNT);
@@ -484,12 +506,9 @@ static void hid_mouse_thread_fn(void)
 		k_msgq_get(&mouse_msgq, &tmp, K_FOREVER);
 		for (int i = 0; i < ARRAY_SIZE(tmp); ++i) {
 			//printk(" 0x%x", tmp[i]);
+			report[i] = tmp[i];
 		}
 		//printk("\n");
-		report[0] = tmp[0];
-		report[1] = tmp[1];
-		report[2] = tmp[2];
-		report[3] = tmp[3];
 
 		ret = hid_int_ep_write(hid_dev_mouse, report, MOUSE_REPORT_COUNT, NULL);
 		if (ret) {
