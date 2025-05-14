@@ -22,11 +22,73 @@
 #include "sw_codec_lc3.h"
 #include "hal/nrf_pdm.h"
 
+#include <zephyr/bluetooth/bluetooth.h>
+#include <zephyr/bluetooth/hci.h>
+#include <zephyr/bluetooth/conn.h>
+#include <zephyr/bluetooth/uuid.h>
+#include <zephyr/bluetooth/gatt.h>
+
+#include <zephyr/bluetooth/services/bas.h>
+#include <bluetooth/services/hids.h>
+#include <zephyr/bluetooth/services/dis.h>
+
 #if defined(NRF54L15_XXAA)
 #include <hal/nrf_clock.h>
 #endif /* defined(NRF54L15_XXAA) */
 #include <zephyr/logging/log.h>
 LOG_MODULE_REGISTER(app);
+
+#define BASE_USB_HID_SPEC_VERSION 0x0101
+
+/* Number of pixels by which the cursor is moved when a button is pushed. */
+#define MOVEMENT_SPEED		   5
+/* Number of input reports in this application. */
+#define INPUT_REPORT_COUNT	   3
+/* Length of Mouse Input Report containing button data. */
+#define INPUT_REP_BUTTONS_LEN	   3
+/* Length of Mouse Input Report containing movement data. */
+#define INPUT_REP_MOVEMENT_LEN	   3
+/* Length of Mouse Input Report containing media player data. */
+#define INPUT_REP_MEDIA_PLAYER_LEN 1
+/* Index of Mouse Input Report containing button data. */
+#define INPUT_REP_BUTTONS_INDEX	   0
+/* Index of Mouse Input Report containing movement data. */
+#define INPUT_REP_MOVEMENT_INDEX   1
+/* Index of Mouse Input Report containing media player data. */
+#define INPUT_REP_MPLAYER_INDEX	   2
+/* Id of reference to Mouse Input Report containing button data. */
+#define INPUT_REP_REF_BUTTONS_ID   1
+/* Id of reference to Mouse Input Report containing movement data. */
+#define INPUT_REP_REF_MOVEMENT_ID  2
+/* Id of reference to Mouse Input Report containing media player data. */
+#define INPUT_REP_REF_MPLAYER_ID   3
+
+/* HIDs queue size. */
+#define HIDS_QUEUE_SIZE 10
+/* Key used to move cursor left */
+#define KEY_LEFT_MASK	DK_BTN1_MSK
+/* Key used to move cursor up */
+#define KEY_UP_MASK	DK_BTN2_MSK
+/* Key used to move cursor right */
+#define KEY_RIGHT_MASK	DK_BTN3_MSK
+/* Key used to move cursor down */
+#define KEY_DOWN_MASK	DK_BTN4_MSK
+
+/* Key used to accept or reject passkey value */
+#define KEY_PAIRING_ACCEPT DK_BTN1_MSK
+#define KEY_PAIRING_REJECT DK_BTN2_MSK
+
+/* HIDS instance. */
+BT_HIDS_DEF(hids_obj, INPUT_REP_BUTTONS_LEN, INPUT_REP_MOVEMENT_LEN, INPUT_REP_MEDIA_PLAYER_LEN);
+
+static struct k_work hids_work;
+struct mouse_pos {
+	int16_t x_val;
+	int16_t y_val;
+};
+
+/* Mouse movement queue. */
+K_MSGQ_DEFINE(hids_queue, sizeof(struct mouse_pos), HIDS_QUEUE_SIZE, 4);
 
 #define AVAILABLE_SINK_CONTEXT	 BT_AUDIO_CONTEXT_TYPE_ANY
 #define AVAILABLE_SOURCE_CONTEXT BT_AUDIO_CONTEXT_TYPE_ANY
@@ -35,14 +97,17 @@ NET_BUF_POOL_FIXED_DEFINE(tx_pool, CONFIG_BT_ASCS_MAX_ASE_SRC_COUNT,
 			  BT_ISO_SDU_BUF_SIZE(CONFIG_BT_ISO_TX_MTU),
 			  CONFIG_BT_CONN_TX_USER_DATA_SIZE, NULL);
 
-#define GAIN_UP_BTN				DK_BTN3_MSK
-#define GAIN_DOWN_BTN			DK_BTN4_MSK
-#define GAIN_STEP				5
-#define GAIN_DEFAULT			NRF_PDM_GAIN_DEFAULT
-#define MAX_SAMPLE_RATE			16000
-#define MAX_FRAME_DURATION_US	10000
-#define MAX_NUM_SAMPLES			((MAX_FRAME_DURATION_US * MAX_SAMPLE_RATE) / USEC_PER_SEC)
-#define TOTAL_BUF_NEEDED		4
+static struct conn_mode {
+	struct bt_conn *conn;
+	bool in_boot_mode;
+} conn_mode[CONFIG_BT_HIDS_MAX_CLIENT_COUNT];
+
+#define GAIN_STEP	      5
+#define GAIN_DEFAULT	      NRF_PDM_GAIN_DEFAULT
+#define MAX_SAMPLE_RATE	      16000
+#define MAX_FRAME_DURATION_US 10000
+#define MAX_NUM_SAMPLES	      ((MAX_FRAME_DURATION_US * MAX_SAMPLE_RATE) / USEC_PER_SEC)
+#define TOTAL_BUF_NEEDED      4
 static K_SEM_DEFINE(lc3_encoder_sem, 0U, TOTAL_BUF_NEEDED);
 #define SAMPLE_BIT_WIDTH 16
 #define BYTES_PER_SAMPLE sizeof(int16_t)
@@ -501,6 +566,229 @@ static struct bt_bap_stream_ops stream_ops = {
 	.sent = stream_sent_cb,
 };
 
+static void insert_conn_object(struct bt_conn *conn)
+{
+	for (size_t i = 0; i < CONFIG_BT_HIDS_MAX_CLIENT_COUNT; i++) {
+		if (!conn_mode[i].conn) {
+			conn_mode[i].conn = conn;
+			conn_mode[i].in_boot_mode = false;
+
+			return;
+		}
+	}
+
+	printk("Connection object could not be inserted %p\n", conn);
+}
+
+static bool is_conn_slot_free(void)
+{
+	for (size_t i = 0; i < CONFIG_BT_HIDS_MAX_CLIENT_COUNT; i++) {
+		if (!conn_mode[i].conn) {
+			return true;
+		}
+	}
+
+	return false;
+}
+
+static void hids_pm_evt_handler(enum bt_hids_pm_evt evt, struct bt_conn *conn)
+{
+	char addr[BT_ADDR_LE_STR_LEN];
+	size_t i;
+
+	for (i = 0; i < CONFIG_BT_HIDS_MAX_CLIENT_COUNT; i++) {
+		if (conn_mode[i].conn == conn) {
+			break;
+		}
+	}
+
+	if (i >= CONFIG_BT_HIDS_MAX_CLIENT_COUNT) {
+		return;
+	}
+
+	bt_addr_le_to_str(bt_conn_get_dst(conn), addr, sizeof(addr));
+
+	switch (evt) {
+	case BT_HIDS_PM_EVT_BOOT_MODE_ENTERED:
+		printk("Boot mode entered %s\n", addr);
+		conn_mode[i].in_boot_mode = true;
+		break;
+
+	case BT_HIDS_PM_EVT_REPORT_MODE_ENTERED:
+		printk("Report mode entered %s\n", addr);
+		conn_mode[i].in_boot_mode = false;
+		break;
+
+	default:
+		break;
+	}
+}
+
+static void hid_init(void)
+{
+	int err;
+	struct bt_hids_init_param hids_init_param = {0};
+	struct bt_hids_inp_rep *hids_inp_rep;
+	static const uint8_t mouse_movement_mask[DIV_ROUND_UP(INPUT_REP_MOVEMENT_LEN, 8)] = {0};
+
+	static const uint8_t report_map[] = {
+		0x05, 0x01, /* Usage Page (Generic Desktop) */
+		0x09, 0x02, /* Usage (Mouse) */
+
+		0xA1, 0x01, /* Collection (Application) */
+
+		/* Report ID 1: Mouse buttons + scroll/pan */
+		0x85, 0x01,	  /* Report Id 1 */
+		0x09, 0x01,	  /* Usage (Pointer) */
+		0xA1, 0x00,	  /* Collection (Physical) */
+		0x95, 0x05,	  /* Report Count (3) */
+		0x75, 0x01,	  /* Report Size (1) */
+		0x05, 0x09,	  /* Usage Page (Buttons) */
+		0x19, 0x01,	  /* Usage Minimum (01) */
+		0x29, 0x05,	  /* Usage Maximum (05) */
+		0x15, 0x00,	  /* Logical Minimum (0) */
+		0x25, 0x01,	  /* Logical Maximum (1) */
+		0x81, 0x02,	  /* Input (Data, Variable, Absolute) */
+		0x95, 0x01,	  /* Report Count (1) */
+		0x75, 0x03,	  /* Report Size (3) */
+		0x81, 0x01,	  /* Input (Constant) for padding */
+		0x75, 0x08,	  /* Report Size (8) */
+		0x95, 0x01,	  /* Report Count (1) */
+		0x05, 0x01,	  /* Usage Page (Generic Desktop) */
+		0x09, 0x38,	  /* Usage (Wheel) */
+		0x15, 0x81,	  /* Logical Minimum (-127) */
+		0x25, 0x7F,	  /* Logical Maximum (127) */
+		0x81, 0x06,	  /* Input (Data, Variable, Relative) */
+		0x05, 0x0C,	  /* Usage Page (Consumer) */
+		0x0A, 0x38, 0x02, /* Usage (AC Pan) */
+		0x95, 0x01,	  /* Report Count (1) */
+		0x81, 0x06,	  /* Input (Data,Value,Relative,Bit Field) */
+		0xC0,		  /* End Collection (Physical) */
+
+		/* Report ID 2: Mouse motion */
+		0x85, 0x02,	  /* Report Id 2 */
+		0x09, 0x01,	  /* Usage (Pointer) */
+		0xA1, 0x00,	  /* Collection (Physical) */
+		0x75, 0x0C,	  /* Report Size (12) */
+		0x95, 0x02,	  /* Report Count (2) */
+		0x05, 0x01,	  /* Usage Page (Generic Desktop) */
+		0x09, 0x30,	  /* Usage (X) */
+		0x09, 0x31,	  /* Usage (Y) */
+		0x16, 0x01, 0xF8, /* Logical maximum (2047) */
+		0x26, 0xFF, 0x07, /* Logical minimum (-2047) */
+		0x81, 0x06,	  /* Input (Data, Variable, Relative) */
+		0xC0,		  /* End Collection (Physical) */
+		0xC0,		  /* End Collection (Application) */
+
+		/* Report ID 3: Advanced buttons */
+		0x05, 0x0C, /* Usage Page (Consumer) */
+		0x09, 0x01, /* Usage (Consumer Control) */
+		0xA1, 0x01, /* Collection (Application) */
+		0x85, 0x03, /* Report Id (3) */
+		0x15, 0x00, /* Logical minimum (0) */
+		0x25, 0x01, /* Logical maximum (1) */
+		0x75, 0x01, /* Report Size (1) */
+		0x95, 0x01, /* Report Count (1) */
+
+		0x09, 0xCD,	  /* Usage (Play/Pause) */
+		0x81, 0x06,	  /* Input (Data,Value,Relative,Bit Field) */
+		0x0A, 0x83, 0x01, /* Usage (Consumer Control Configuration) */
+		0x81, 0x06,	  /* Input (Data,Value,Relative,Bit Field) */
+		0x09, 0xB5,	  /* Usage (Scan Next Track) */
+		0x81, 0x06,	  /* Input (Data,Value,Relative,Bit Field) */
+		0x09, 0xB6,	  /* Usage (Scan Previous Track) */
+		0x81, 0x06,	  /* Input (Data,Value,Relative,Bit Field) */
+
+		0x09, 0xEA,	  /* Usage (Volume Down) */
+		0x81, 0x06,	  /* Input (Data,Value,Relative,Bit Field) */
+		0x09, 0xE9,	  /* Usage (Volume Up) */
+		0x81, 0x06,	  /* Input (Data,Value,Relative,Bit Field) */
+		0x0A, 0x25, 0x02, /* Usage (AC Forward) */
+		0x81, 0x06,	  /* Input (Data,Value,Relative,Bit Field) */
+		0x0A, 0x24, 0x02, /* Usage (AC Back) */
+		0x81, 0x06,	  /* Input (Data,Value,Relative,Bit Field) */
+		0xC0		  /* End Collection */
+	};
+
+	hids_init_param.rep_map.data = report_map;
+	hids_init_param.rep_map.size = sizeof(report_map);
+
+	hids_init_param.info.bcd_hid = BASE_USB_HID_SPEC_VERSION;
+	hids_init_param.info.b_country_code = 0x00;
+	hids_init_param.info.flags = (BT_HIDS_REMOTE_WAKE | BT_HIDS_NORMALLY_CONNECTABLE);
+
+	hids_inp_rep = &hids_init_param.inp_rep_group_init.reports[0];
+	hids_inp_rep->size = INPUT_REP_BUTTONS_LEN;
+	hids_inp_rep->id = INPUT_REP_REF_BUTTONS_ID;
+	hids_init_param.inp_rep_group_init.cnt++;
+
+	hids_inp_rep++;
+	hids_inp_rep->size = INPUT_REP_MOVEMENT_LEN;
+	hids_inp_rep->id = INPUT_REP_REF_MOVEMENT_ID;
+	hids_inp_rep->rep_mask = mouse_movement_mask;
+	hids_init_param.inp_rep_group_init.cnt++;
+
+	hids_inp_rep++;
+	hids_inp_rep->size = INPUT_REP_MEDIA_PLAYER_LEN;
+	hids_inp_rep->id = INPUT_REP_REF_MPLAYER_ID;
+	hids_init_param.inp_rep_group_init.cnt++;
+
+	hids_init_param.is_mouse = true;
+	hids_init_param.pm_evt_handler = hids_pm_evt_handler;
+
+	err = bt_hids_init(&hids_obj, &hids_init_param);
+	__ASSERT(err == 0, "HIDS initialization failed\n");
+}
+
+static void mouse_movement_send(int16_t x_delta, int16_t y_delta)
+{
+	for (size_t i = 0; i < CONFIG_BT_HIDS_MAX_CLIENT_COUNT; i++) {
+
+		if (!conn_mode[i].conn) {
+			continue;
+		}
+
+		if (conn_mode[i].in_boot_mode) {
+			x_delta = MAX(MIN(x_delta, SCHAR_MAX), SCHAR_MIN);
+			y_delta = MAX(MIN(y_delta, SCHAR_MAX), SCHAR_MIN);
+
+			bt_hids_boot_mouse_inp_rep_send(&hids_obj, conn_mode[i].conn, NULL,
+							(int8_t)x_delta, (int8_t)y_delta, NULL);
+		} else {
+			uint8_t x_buff[2];
+			uint8_t y_buff[2];
+			uint8_t buffer[INPUT_REP_MOVEMENT_LEN];
+
+			int16_t x = MAX(MIN(x_delta, 0x07ff), -0x07ff);
+			int16_t y = MAX(MIN(y_delta, 0x07ff), -0x07ff);
+
+			/* Convert to little-endian. */
+			sys_put_le16(x, x_buff);
+			sys_put_le16(y, y_buff);
+
+			/* Encode report. */
+			BUILD_ASSERT(sizeof(buffer) == 3,
+				     "Only 2 axis, 12-bit each, are supported");
+
+			buffer[0] = x_buff[0];
+			buffer[1] = (y_buff[0] << 4) | (x_buff[1] & 0x0f);
+			buffer[2] = (y_buff[1] << 4) | (y_buff[0] >> 4);
+
+			bt_hids_inp_rep_send(&hids_obj, conn_mode[i].conn, INPUT_REP_MOVEMENT_INDEX,
+					     buffer, sizeof(buffer), NULL);
+		}
+	}
+}
+
+static void mouse_handler(struct k_work *work)
+{
+	struct mouse_pos pos;
+
+	while (!k_msgq_get(&hids_queue, &pos, K_NO_WAIT)) {
+		mouse_movement_send(pos.x_val, pos.y_val);
+	}
+}
+
 static void connected(struct bt_conn *conn, uint8_t err)
 {
 	char addr[BT_ADDR_LE_STR_LEN];
@@ -513,7 +801,14 @@ static void connected(struct bt_conn *conn, uint8_t err)
 		default_conn = NULL;
 		return;
 	}
+	err = bt_hids_connected(&hids_obj, conn);
 
+	if (err) {
+		printk("Failed to notify HID service about connection\n");
+		return;
+	}
+
+	insert_conn_object(conn);
 	LOG_INF("Connected: %s", addr);
 	default_conn = bt_conn_ref(conn);
 	dk_set_led_on(ACL_LINK_STATUS);
@@ -522,7 +817,7 @@ static void connected(struct bt_conn *conn, uint8_t err)
 static void disconnected(struct bt_conn *conn, uint8_t reason)
 {
 	char addr[BT_ADDR_LE_STR_LEN];
-
+	int err;
 	if (conn != default_conn) {
 		return;
 	}
@@ -534,6 +829,19 @@ static void disconnected(struct bt_conn *conn, uint8_t reason)
 	bt_conn_unref(default_conn);
 	default_conn = NULL;
 	dk_set_led_off(ACL_LINK_STATUS);
+
+	err = bt_hids_disconnected(&hids_obj, conn);
+
+	if (err) {
+		printk("Failed to notify HID service about disconnection\n");
+	}
+
+	for (size_t i = 0; i < CONFIG_BT_HIDS_MAX_CLIENT_COUNT; i++) {
+		if (conn_mode[i].conn == conn) {
+			conn_mode[i].conn = NULL;
+			break;
+		}
+	}
 
 	k_sem_give(&sem_disconnected);
 }
@@ -751,6 +1059,46 @@ static int pdm_mic_init()
 /* Handles button state changes and adjusts PDM gain accordingly */
 static void button_changed(uint32_t button_state, uint32_t has_changed)
 {
+	bool data_to_send = false;
+	struct mouse_pos pos;
+	uint32_t buttons = button_state & has_changed;
+
+	memset(&pos, 0, sizeof(struct mouse_pos));
+
+	if (buttons & KEY_LEFT_MASK) {
+		pos.x_val -= MOVEMENT_SPEED;
+		printk("%s(): left\n", __func__);
+		data_to_send = true;
+	}
+	if (buttons & KEY_UP_MASK) {
+		pos.y_val -= MOVEMENT_SPEED;
+		printk("%s(): up\n", __func__);
+		data_to_send = true;
+	}
+	if (buttons & KEY_RIGHT_MASK) {
+		pos.x_val += MOVEMENT_SPEED;
+		printk("%s(): right\n", __func__);
+		data_to_send = true;
+	}
+	if (buttons & KEY_DOWN_MASK) {
+		pos.y_val += MOVEMENT_SPEED;
+		printk("%s(): down\n", __func__);
+		data_to_send = true;
+	}
+
+	if (data_to_send) {
+		int err;
+
+		err = k_msgq_put(&hids_queue, &pos, K_NO_WAIT);
+		if (err) {
+			printk("No space in the queue for button pressed\n");
+			return;
+		}
+		if (k_msgq_num_used_get(&hids_queue) == 1) {
+			k_work_submit(&hids_work);
+		}
+	}
+	/*
 	static uint8_t pdm_gain = NRF_PDM_GAIN_DEFAULT;
 	if ((button_state & has_changed) & GAIN_UP_BTN) {
 		if (pdm_gain + GAIN_STEP < NRF_PDM_GAIN_MAXIMUM) {
@@ -771,6 +1119,20 @@ static void button_changed(uint32_t button_state, uint32_t has_changed)
 			LOG_INF("Gain is already at minimum");
 		}
 	}
+	*/
+}
+
+static void bas_notify(void)
+{
+	uint8_t battery_level = bt_bas_get_battery_level();
+
+	battery_level--;
+
+	if (!battery_level) {
+		battery_level = 100U;
+	}
+
+	bt_bas_set_battery_level(battery_level);
 }
 
 int main(void)
@@ -799,6 +1161,9 @@ int main(void)
 		LOG_ERR("Cannot init PDM mic (err: %d)", err);
 	}
 
+	/* DIS initialized at system boot with SYS_INIT macro. */
+	hid_init();
+
 	err = bt_enable(NULL);
 	if (err != 0) {
 		LOG_INF("Bluetooth init failed (err %d)", err);
@@ -806,7 +1171,7 @@ int main(void)
 	}
 
 	LOG_INF("Bluetooth initialized");
-
+	k_work_init(&hids_work, mouse_handler);
 	err = sw_codec_lc3_init(NULL, NULL, MAX_FRAME_DURATION_US);
 	if (err) {
 		LOG_INF("sw_codec_lc3_init failed (err %d)", err);
