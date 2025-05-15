@@ -21,6 +21,7 @@
 #include <dk_buttons_and_leds.h>
 #include "sw_codec_lc3.h"
 #include "hal/nrf_pdm.h"
+#include <zephyr/drivers/gpio.h>
 
 #include <zephyr/bluetooth/bluetooth.h>
 #include <zephyr/bluetooth/hci.h>
@@ -31,6 +32,7 @@
 #include <zephyr/bluetooth/services/bas.h>
 #include <bluetooth/services/hids.h>
 #include <zephyr/bluetooth/services/dis.h>
+#include <zephyr/settings/settings.h>
 
 #if defined(NRF54L15_XXAA)
 #include <hal/nrf_clock.h>
@@ -41,7 +43,7 @@ LOG_MODULE_REGISTER(app);
 #define BASE_USB_HID_SPEC_VERSION 0x0101
 
 /* Number of pixels by which the cursor is moved when a button is pushed. */
-#define MOVEMENT_SPEED		   5
+#define MOVEMENT_SPEED		   10
 /* Number of input reports in this application. */
 #define INPUT_REPORT_COUNT	   3
 /* Length of Mouse Input Report containing button data. */
@@ -81,6 +83,7 @@ LOG_MODULE_REGISTER(app);
 /* HIDS instance. */
 BT_HIDS_DEF(hids_obj, INPUT_REP_BUTTONS_LEN, INPUT_REP_MOVEMENT_LEN, INPUT_REP_MEDIA_PLAYER_LEN);
 
+static const struct device *gpio;
 static struct k_work hids_work;
 struct mouse_pos {
 	int16_t x_val;
@@ -103,7 +106,7 @@ static struct conn_mode {
 } conn_mode[CONFIG_BT_HIDS_MAX_CLIENT_COUNT];
 
 #define GAIN_STEP	      5
-#define GAIN_DEFAULT	      NRF_PDM_GAIN_DEFAULT
+#define GAIN_DEFAULT	      100
 #define MAX_SAMPLE_RATE	      16000
 #define MAX_FRAME_DURATION_US 10000
 #define MAX_NUM_SAMPLES	      ((MAX_FRAME_DURATION_US * MAX_SAMPLE_RATE) / USEC_PER_SEC)
@@ -1098,28 +1101,6 @@ static void button_changed(uint32_t button_state, uint32_t has_changed)
 			k_work_submit(&hids_work);
 		}
 	}
-	/*
-	static uint8_t pdm_gain = NRF_PDM_GAIN_DEFAULT;
-	if ((button_state & has_changed) & GAIN_UP_BTN) {
-		if (pdm_gain + GAIN_STEP < NRF_PDM_GAIN_MAXIMUM) {
-			pdm_gain += GAIN_STEP;
-			nrf_pdm_gain_set(NRF_PDM20_S, pdm_gain, pdm_gain);
-			LOG_INF("Gain set to %d", pdm_gain);
-		} else {
-			nrf_pdm_gain_set(NRF_PDM20_S, NRF_PDM_GAIN_MAXIMUM, NRF_PDM_GAIN_MAXIMUM);
-			LOG_INF("Gain is already at maximum");
-		}
-	} else if ((button_state & has_changed) & GAIN_DOWN_BTN) {
-		if (pdm_gain - GAIN_STEP > 0) {
-			pdm_gain -= GAIN_STEP;
-			nrf_pdm_gain_set(NRF_PDM20_S, pdm_gain, pdm_gain);
-			LOG_INF("Gain set to %d", pdm_gain);
-		} else {
-			nrf_pdm_gain_set(NRF_PDM20_S, NRF_PDM_GAIN_MINIMUM, NRF_PDM_GAIN_MINIMUM);
-			LOG_INF("Gain is already at minimum");
-		}
-	}
-	*/
 }
 
 static void bas_notify(void)
@@ -1134,11 +1115,11 @@ static void bas_notify(void)
 
 	bt_bas_set_battery_level(battery_level);
 }
-
+#define erase_bond_btn 4 //P0.04
 int main(void)
 {
 	struct bt_le_ext_adv *adv;
-	int err;
+	int err, ret;
 
 	err = clocks_start();
 	if (err) {
@@ -1169,8 +1150,26 @@ int main(void)
 		LOG_INF("Bluetooth init failed (err %d)", err);
 		return 0;
 	}
-
 	LOG_INF("Bluetooth initialized");
+
+	if (IS_ENABLED(CONFIG_SETTINGS)) {
+		settings_load();
+	}
+
+	gpio = DEVICE_DT_GET(DT_NODELABEL(gpio0));
+	ret = gpio_pin_get(gpio, erase_bond_btn);
+	if (ret == 1) {
+		if (IS_ENABLED(CONFIG_SETTINGS)) {
+			LOG_INF("Clearing all bonds");
+
+			ret = bt_unpair(BT_ID_DEFAULT, NULL);
+			if (ret) {
+				LOG_ERR("Failed to clear bonding: %d", ret);
+				return ret;
+			}
+		}
+	}
+
 	k_work_init(&hids_work, mouse_handler);
 	err = sw_codec_lc3_init(NULL, NULL, MAX_FRAME_DURATION_US);
 	if (err) {
