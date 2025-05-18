@@ -85,6 +85,10 @@ BT_HIDS_DEF(hids_obj, INPUT_REP_BUTTONS_LEN, INPUT_REP_MOVEMENT_LEN, INPUT_REP_M
 
 static const struct device *gpio;
 static struct k_work hids_work;
+#define erase_bond_btn 4 //P0.04
+
+static struct bt_le_ext_adv *adv;
+static struct k_work adv_work;
 struct mouse_pos {
 	int16_t x_val;
 	int16_t y_val;
@@ -105,7 +109,7 @@ static struct conn_mode {
 	bool in_boot_mode;
 } conn_mode[CONFIG_BT_HIDS_MAX_CLIENT_COUNT];
 
-#define GAIN_STEP	      5
+
 #define GAIN_DEFAULT	      100
 #define MAX_SAMPLE_RATE	      16000
 #define MAX_FRAME_DURATION_US 10000
@@ -147,8 +151,6 @@ static size_t configured_source_stream_count;
 
 static const struct bt_bap_qos_cfg_pref qos_pref =
 	BT_BAP_QOS_CFG_PREF(true, BT_GAP_LE_PHY_2M, 0x02, 10, 10000, 40000, 10000, 40000);
-
-static K_SEM_DEFINE(sem_disconnected, 0, 1);
 
 static uint8_t unicast_server_addata[] = {
 	BT_UUID_16_ENCODE(BT_UUID_ASCS_VAL),	/* ASCS UUID */
@@ -583,17 +585,6 @@ static void insert_conn_object(struct bt_conn *conn)
 	printk("Connection object could not be inserted %p\n", conn);
 }
 
-static bool is_conn_slot_free(void)
-{
-	for (size_t i = 0; i < CONFIG_BT_HIDS_MAX_CLIENT_COUNT; i++) {
-		if (!conn_mode[i].conn) {
-			return true;
-		}
-	}
-
-	return false;
-}
-
 static void hids_pm_evt_handler(enum bt_hids_pm_evt evt, struct bt_conn *conn)
 {
 	char addr[BT_ADDR_LE_STR_LEN];
@@ -827,6 +818,8 @@ static void disconnected(struct bt_conn *conn, uint8_t reason)
 
 	bt_addr_le_to_str(bt_conn_get_dst(conn), addr, sizeof(addr));
 
+	configured_source_stream_count = 0U;
+
 	LOG_INF("Disconnected: %s, reason 0x%02x %s", addr, reason, bt_hci_err_to_str(reason));
 
 	bt_conn_unref(default_conn);
@@ -845,8 +838,7 @@ static void disconnected(struct bt_conn *conn, uint8_t reason)
 			break;
 		}
 	}
-
-	k_sem_give(&sem_disconnected);
+	k_work_submit(&adv_work);
 }
 
 static void security_level_changed(struct bt_conn *conn, bt_security_t level,
@@ -1115,10 +1107,19 @@ static void bas_notify(void)
 
 	bt_bas_set_battery_level(battery_level);
 }
-#define erase_bond_btn 4 //P0.04
+
+static void advertising_process(struct k_work *work)
+{
+	int err;
+	err = bt_le_ext_adv_start(adv, BT_LE_EXT_ADV_START_DEFAULT);
+	if (err) {
+		LOG_INF("Failed to start advertising set (err %d)", err);
+	}
+	LOG_INF("Advertising successfully started");
+}
+
 int main(void)
 {
-	struct bt_le_ext_adv *adv;
 	int err, ret;
 
 	err = clocks_start();
@@ -1219,24 +1220,13 @@ int main(void)
 	}
 
 	k_thread_start(dmic_fetch);
+	
+	k_work_init(&adv_work, advertising_process);
+	k_work_submit(&adv_work);
 
 	while (true) {
-		err = bt_le_ext_adv_start(adv, BT_LE_EXT_ADV_START_DEFAULT);
-		if (err) {
-			LOG_INF("Failed to start advertising set (err %d)", err);
-			return 0;
-		}
-
-		LOG_INF("Advertising successfully started");
-
-		err = k_sem_take(&sem_disconnected, K_FOREVER);
-		if (err != 0) {
-			LOG_INF("failed to take sem_disconnected (err %d)", err);
-			return 0;
-		}
-
-		/* reset data */
-		configured_source_stream_count = 0U;
+		k_sleep(K_SECONDS(1));
+		bas_notify();		
 	}
 	return 0;
 }
