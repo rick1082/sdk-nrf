@@ -110,7 +110,7 @@ static struct conn_mode {
 } conn_mode[CONFIG_BT_HIDS_MAX_CLIENT_COUNT];
 
 
-#define GAIN_DEFAULT	      100
+#define GAIN_DEFAULT	      0x50
 #define MAX_SAMPLE_RATE	      16000
 #define MAX_FRAME_DURATION_US 10000
 #define MAX_NUM_SAMPLES	      ((MAX_FRAME_DURATION_US * MAX_SAMPLE_RATE) / USEC_PER_SEC)
@@ -174,6 +174,7 @@ static const struct bt_data ad[] = {
 
 #define ACL_LINK_STATUS	  DK_LED1
 #define ISO_STREAM_STATUS DK_LED2
+#define ADV_STATUS	  	  DK_LED3
 
 #define LC3_ENCODER_STACK_SIZE 8192
 #define LC3_ENCODER_PRIORITY   5
@@ -806,6 +807,7 @@ static void connected(struct bt_conn *conn, uint8_t err)
 	LOG_INF("Connected: %s", addr);
 	default_conn = bt_conn_ref(conn);
 	dk_set_led_on(ACL_LINK_STATUS);
+	dk_set_led_off(ADV_STATUS);
 }
 
 static void disconnected(struct bt_conn *conn, uint8_t reason)
@@ -1116,6 +1118,7 @@ static void advertising_process(struct k_work *work)
 		LOG_INF("Failed to start advertising set (err %d)", err);
 	}
 	LOG_INF("Advertising successfully started");
+	dk_set_led_on(ADV_STATUS);
 }
 
 int main(void)
