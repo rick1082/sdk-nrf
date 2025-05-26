@@ -73,14 +73,20 @@ static struct bt_pacs_cap capabilities = {
 	.codec_cap = &codec_cap,
 };
 
+static const uint8_t ascs_adv_data[] = {
+    BT_UUID_16_ENCODE(BT_UUID_ASCS_VAL),
+    BT_AUDIO_UNICAST_ANNOUNCEMENT_TARGETED,
+    BT_BYTES_LIST_LE16(BT_AUDIO_CONTEXT_TYPE_ANY),
+    BT_BYTES_LIST_LE16(BT_AUDIO_CONTEXT_TYPE_PROHIBITED),
+    0x00, /* Metadata length */
+};
+
 #define AVAILABLE_SINK_CONTEXT (BT_AUDIO_CONTEXT_TYPE_ANY)
 
 static le_audio_receive_cb receive_cb;
 
 static bool init_routine_completed;
 static bool paused;
-
-static struct bt_csip_set_member_svc_inst *csip;
 
 static uint8_t flags_adv_data;
 static uint8_t bass_service_uuid[BT_UUID_SIZE_16];
@@ -104,6 +110,12 @@ int broadcast_sink_adv_populate(struct bt_data *adv_buf, uint8_t adv_buf_vacant)
 	int ret;
 	uint32_t adv_buf_cnt = 0;
 
+    ret = bt_mgmt_adv_buffer_put(adv_buf, &adv_buf_cnt, adv_buf_vacant,
+                     sizeof(ascs_adv_data), BT_DATA_SVC_DATA16,
+                     (void *)ascs_adv_data);
+    if (ret) {
+        return ret;
+    }
 	/*
 	 * AD format required for broadcast sink with scan delegator.
 	 * Details can be found in Basic Audio Profile Section 3.9.2.

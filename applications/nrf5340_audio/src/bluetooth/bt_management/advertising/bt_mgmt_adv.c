@@ -257,7 +257,7 @@ static void advertising_process(struct k_work *work)
 
 	bt_addr_le_t addr;
 
-	if (!k_msgq_get(&bonds_queue, &addr, K_NO_WAIT) && !dir_adv_timed_out) {
+	if (!k_msgq_get(&bonds_queue, &addr, K_NO_WAIT) && !dir_adv_timed_out && !IS_ENABLED(CONFIG_TRANSPORT_BIS)) {
 		ret = direct_adv_create(ext_adv_index, addr);
 		if (ret) {
 			LOG_WRN("Failed to create direct advertisement: %d", ret);
