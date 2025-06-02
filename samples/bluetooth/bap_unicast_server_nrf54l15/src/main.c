@@ -40,17 +40,16 @@ NET_BUF_POOL_FIXED_DEFINE(tx_pool, CONFIG_BT_ASCS_MAX_ASE_SRC_COUNT,
 #define GAIN_STEP				5
 #define GAIN_DEFAULT			NRF_PDM_GAIN_DEFAULT
 #define MAX_SAMPLE_RATE			16000
-#define MAX_FRAME_DURATION_US	10000
+#define MAX_FRAME_DURATION_US	7500
 #define MAX_NUM_SAMPLES			((MAX_FRAME_DURATION_US * MAX_SAMPLE_RATE) / USEC_PER_SEC)
 #define TOTAL_BUF_NEEDED		4
 static K_SEM_DEFINE(lc3_encoder_sem, 0U, TOTAL_BUF_NEEDED);
 #define SAMPLE_BIT_WIDTH 16
 #define BYTES_PER_SAMPLE sizeof(int16_t)
-/* Milliseconds to wait for a block to be read. */
-#define READ_TIMEOUT	 1000
+
 /* Size of a block for 10 ms of audio data. */
 #define BLOCK_SIZE(_sample_rate, _number_of_channels)                                              \
-	(BYTES_PER_SAMPLE * (_sample_rate / 100) * _number_of_channels)
+	((BYTES_PER_SAMPLE * (_sample_rate / 100) * _number_of_channels) * 75 / 100)
 
 /* Driver will allocate blocks from this slab to receive audio data into them.
  * Application, after getting a given block from the driver and processing its
@@ -63,8 +62,8 @@ static const struct device *const dmic_dev = DEVICE_DT_GET(DT_NODELABEL(dmic_dev
 
 static int16_t send_pcm_data[MAX_NUM_SAMPLES];
 static const struct bt_audio_codec_cap lc3_codec_cap = BT_AUDIO_CODEC_CAP_LC3(
-	BT_AUDIO_CODEC_CAP_FREQ_16KHZ, BT_AUDIO_CODEC_CAP_DURATION_10,
-	BT_AUDIO_CODEC_CAP_CHAN_COUNT_SUPPORT(1), 40u, 120u, 1u, BT_AUDIO_CONTEXT_TYPE_ANY);
+	BT_AUDIO_CODEC_CAP_FREQ_16KHZ, BT_AUDIO_CODEC_CAP_DURATION_7_5,
+	BT_AUDIO_CODEC_CAP_CHAN_COUNT_SUPPORT(1), 30u, 120u, 1u, BT_AUDIO_CONTEXT_TYPE_ANY);
 
 static struct bt_conn *default_conn;
 static struct bt_bap_stream sink_streams[CONFIG_BT_ASCS_MAX_ASE_SNK_COUNT];
@@ -98,9 +97,7 @@ static const struct bt_data ad[] = {
 	BT_DATA(BT_DATA_NAME_COMPLETE, CONFIG_BT_DEVICE_NAME, sizeof(CONFIG_BT_DEVICE_NAME) - 1),
 };
 
-#define SDU_INTERVAL_US		10000UL		   /* 10 ms SDU interval */
 #define AUDIO_VOLUME		(INT16_MAX - 3000) /* codec does clipping above INT16_MAX - 3000 */
-#define AUDIO_TONE_FREQUENCY_HZ 400
 
 #define ACL_LINK_STATUS	  DK_LED1
 #define ISO_STREAM_STATUS DK_LED2
@@ -196,7 +193,7 @@ static void send_data()
 		memset(lc3_encoded_buffer, 0, sizeof(lc3_encoded_buffer));
 
 		ret = sw_codec_lc3_enc_run(
-			send_pcm_data, sizeof(send_pcm_data), configured_octets_per_frame * 8 * 100,
+			send_pcm_data, sizeof(send_pcm_data), configured_octets_per_frame * 8 * 100 * 100 / 75,
 			0, sizeof(lc3_encoded_buffer), lc3_encoded_buffer, &encoded_bytes_written);
 		if (ret) {
 			LOG_INF("LC3 encoder failed - wrong parameters?: %d", ret);
@@ -279,8 +276,9 @@ static int lc3_config(struct bt_conn *conn, const struct bt_bap_ep *ep, enum bt_
 
 	if (dir == BT_AUDIO_DIR_SOURCE) {
 		configured_octets_per_frame = bt_audio_codec_cfg_get_octets_per_frame(codec_cfg);
+		LOG_INF("Configured octets per frame: %d", configured_octets_per_frame);
 		ret = sw_codec_lc3_enc_init(MAX_SAMPLE_RATE, 16, MAX_FRAME_DURATION_US,
-					    configured_octets_per_frame * 8 * 100, 1,
+					    configured_octets_per_frame * 8 * 100 * 100 / 75, 1,
 					    &pcm_bytes_req_enc);
 		if (ret) {
 			LOG_INF("sw_codec_lc3_enc_init failed (ret %d)", ret);
@@ -690,7 +688,8 @@ static void dmic_fetch_thread(void *arg1, void *arg2, void *arg3)
 			LOG_INF("DMIC read failed: %d", ret);
 		}
 		if (size > sizeof(send_pcm_data)) {
-			LOG_INF("Buffer size exceeds send_pcm_data size");
+			LOG_INF("Buffer size exceeds send_pcm_data size, size = %d, send_pcm_data size = %zu",
+				size, sizeof(send_pcm_data));
 			size = sizeof(send_pcm_data);
 		}
 		memcpy(send_pcm_data, buffer, size);
@@ -736,6 +735,7 @@ static int pdm_mic_init()
 	cfg.channel.req_chan_map_lo = dmic_build_channel_map(0, 0, PDM_CHAN_LEFT);
 	cfg.streams[0].pcm_rate = MAX_SAMPLE_RATE;
 	cfg.streams[0].block_size = BLOCK_SIZE(cfg.streams[0].pcm_rate, cfg.channel.req_num_chan);
+	LOG_INF("DMIC block size: %d", cfg.streams[0].block_size);
 
 	err = dmic_configure(dmic_dev, &cfg);
 	if (err < 0) {
