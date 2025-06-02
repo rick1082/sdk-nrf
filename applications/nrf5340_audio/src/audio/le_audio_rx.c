@@ -62,6 +62,8 @@ void le_audio_rx_data_handler(uint8_t const *const p_data, size_t data_size, boo
 		/* A valid frame should always be equal to desired_data_size, set bad_frame
 		 * if that is not the case
 		 */
+		LOG_INF("ISO RX SDU size mismatch: Ch: %d, Size: %zu, Expected: %zu",
+			channel_index, data_size, desired_data_size);
 		bad_frame = true;
 		rx_stats[channel_index].data_size_mismatch_cnt++;
 	}
@@ -72,7 +74,7 @@ void le_audio_rx_data_handler(uint8_t const *const p_data, size_t data_size, boo
 
 	if ((rx_stats[channel_index].recv_cnt % 100) == 0 && rx_stats[channel_index].recv_cnt) {
 		/* NOTE: The string below is used by the Nordic CI system */
-		LOG_DBG("ISO RX SDUs: Ch: %d Total: %d Bad: %d Size mismatch %d", channel_index,
+		LOG_INF("ISO RX SDUs: Ch: %d Total: %d Bad: %d Size mismatch %d", channel_index,
 			rx_stats[channel_index].recv_cnt, rx_stats[channel_index].bad_frame_cnt,
 			rx_stats[channel_index].data_size_mismatch_cnt);
 	}

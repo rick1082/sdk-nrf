@@ -39,7 +39,7 @@ LOG_MODULE_REGISTER(audio_datapath, CONFIG_AUDIO_DATAPATH_LOG_LEVEL);
 
 #define SDU_REF_DELTA_MAX_ERR_US (int)(CONFIG_AUDIO_FRAME_DURATION_US * 0.001)
 
-#define BLK_PERIOD_US 1000
+#define BLK_PERIOD_US 500
 
 /* Total sample FIFO period in microseconds */
 #define FIFO_SMPL_PERIOD_US (CONFIG_AUDIO_MAX_PRES_DLY_US * 2)
@@ -77,7 +77,7 @@ LOG_MODULE_REGISTER(audio_datapath, CONFIG_AUDIO_DATAPATH_LOG_LEVEL);
 #define APLL_FREQ_ADJ(t) (-((t)*1000) / 331)
 /* clang-format on */
 
-#define DRIFT_MEAS_PERIOD_US	   100000
+#define DRIFT_MEAS_PERIOD_US	   75000
 #define DRIFT_ERR_THRESH_LOCK	   16
 #define DRIFT_ERR_THRESH_UNLOCK	   32
 /* To get smaller corrections */
