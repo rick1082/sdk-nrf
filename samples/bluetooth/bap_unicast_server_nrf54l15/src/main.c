@@ -19,8 +19,9 @@
 #include <zephyr/sys/byteorder.h>
 #include <zephyr/drivers/clock_control/nrf_clock_control.h>
 #include <dk_buttons_and_leds.h>
+#include <hal/nrf_gpio.h>
 #include "sw_codec_lc3.h"
-#include "hal/nrf_pdm.h"
+#include <nrfx_pdm.h>
 
 #if defined(NRF54L15_XXAA)
 #include <hal/nrf_clock.h>
@@ -46,19 +47,45 @@ NET_BUF_POOL_FIXED_DEFINE(tx_pool, CONFIG_BT_ASCS_MAX_ASE_SRC_COUNT,
 static K_SEM_DEFINE(lc3_encoder_sem, 0U, TOTAL_BUF_NEEDED);
 #define SAMPLE_BIT_WIDTH 16
 #define BYTES_PER_SAMPLE sizeof(int16_t)
+#define PDM_CLK_PIN     NRF_GPIO_PIN_MAP(1, 12)
+#define PDM_DIN_PIN     NRF_GPIO_PIN_MAP(1, 13)
+#define PDM_NL DT_NODELABEL(pdm20)
+#define PDM_BUF_SIZE        120 // 16000Hz * 7.5ms / 1000us = 120 samples per frame
 
-/* Size of a block for 10 ms of audio data. */
-#define BLOCK_SIZE(_sample_rate, _number_of_channels)                                              \
-	((BYTES_PER_SAMPLE * (_sample_rate / 100) * _number_of_channels) * 75 / 100)
+static int16_t m_pdm_buffer_a[PDM_BUF_SIZE]; // Example using two buffers for release/request cycle
+static int16_t m_pdm_buffer_b[PDM_BUF_SIZE];
+static bool buffer_a_in_use = true;
+static nrfx_pdm_t pdm_inst = NRFX_PDM_INSTANCE(20);
+static volatile bool pdm_data_ready_flag = false;
+static volatile int16_t *p_latest_pdm_buffer = NULL;
 
-/* Driver will allocate blocks from this slab to receive audio data into them.
- * Application, after getting a given block from the driver and processing its
- * data, needs to free that block.
- */
-#define MAX_BLOCK_SIZE BLOCK_SIZE(MAX_SAMPLE_RATE, 2)
-#define BLOCK_COUNT    8
-K_MEM_SLAB_DEFINE_STATIC(mem_slab, MAX_BLOCK_SIZE, BLOCK_COUNT, 8);
-static const struct device *const dmic_dev = DEVICE_DT_GET(DT_NODELABEL(dmic_dev));
+static void nrfx_pdm_event_handler(nrfx_pdm_evt_t const * const p_evt)
+{
+	nrfx_err_t err;
+
+	if (p_evt->buffer_requested) {
+		// Handle buffer request
+		//LOG_INF("PDM buffer requested");
+		if (buffer_a_in_use) {
+            err = nrfx_pdm_buffer_set(&pdm_inst, m_pdm_buffer_b, PDM_BUF_SIZE);
+            buffer_a_in_use = false; // Buffer A was just released (or is initial), B is now set for filling
+        } else {
+            err = nrfx_pdm_buffer_set(&pdm_inst, m_pdm_buffer_a, PDM_BUF_SIZE);
+            buffer_a_in_use = true; // Buffer B was just released, A is now set for filling
+        }
+	}
+
+	if (p_evt->buffer_released) {
+		// Handle released buffer
+		//LOG_INF("PDM buffer released");
+		p_latest_pdm_buffer = p_evt->buffer_released; // Store pointer to the filled buffer
+        pdm_data_ready_flag = true;
+	}
+
+	if (p_evt->error != NRFX_PDM_NO_ERROR) {
+		LOG_INF("PDM error occurred: %d", p_evt->error);
+	}
+}
 
 static int16_t send_pcm_data[MAX_NUM_SAMPLES];
 static const struct bt_audio_codec_cap lc3_codec_cap = BT_AUDIO_CODEC_CAP_LC3(
@@ -407,7 +434,7 @@ static void stream_recv(struct bt_bap_stream *stream, const struct bt_iso_recv_i
 			struct net_buf *buf)
 {
 	if (info->flags & BT_ISO_FLAGS_VALID) {
-		LOG_INF("Incoming audio on stream %p len %u", (void *)stream, buf->len);
+		//LOG_INF("Incoming audio on stream %p len %u", (void *)stream, buf->len);
 	}
 }
 
@@ -426,7 +453,7 @@ static void stream_stopped(struct bt_bap_stream *stream, uint8_t reason)
 	if (stream_dir(stream) == BT_AUDIO_DIR_SOURCE) {
 		dk_set_led_off(ISO_STREAM_STATUS);
 		k_thread_suspend(dmic_fetch);
-		ret = dmic_trigger(dmic_dev, DMIC_TRIGGER_STOP);
+		//ret = dmic_trigger(dmic_dev, DMIC_TRIGGER_STOP);
 		if (ret < 0) {
 			LOG_INF("DMIC stop trigger failed: %d", ret);
 		} else {
@@ -446,13 +473,12 @@ static void stream_stopped(struct bt_bap_stream *stream, uint8_t reason)
 
 static void stream_started(struct bt_bap_stream *stream)
 {
-	int ret;
 	LOG_INF("Audio Stream %p started", (void *)stream);
 
 	if (stream_dir(stream) == BT_AUDIO_DIR_SOURCE) {
 		dk_set_led_on(ISO_STREAM_STATUS);
 		k_thread_resume(dmic_fetch);
-		ret = dmic_trigger(dmic_dev, DMIC_TRIGGER_START);
+		//ret = dmic_trigger(dmic_dev, DMIC_TRIGGER_START);
 		if (ret < 0) {
 			LOG_INF("DMIC start trigger failed: %d", ret);
 		} else {
@@ -677,12 +703,23 @@ static int clocks_start(void)
 static void dmic_fetch_thread(void *arg1, void *arg2, void *arg3)
 {
 	int ret;
+	nrfx_err_t err;
 	void *buffer;
 	uint32_t size;
 
+	err = nrfx_pdm_start(&pdm_inst);
+	if (err != NRFX_SUCCESS) {
+		LOG_INF(">> nrfx_pdm_start failed: %d", err);
+	} else {
+		LOG_INF(">> nrfx_pdm_start OK");
+	}
 	while (true) {
-		k_sem_take(&lc3_encoder_sem, K_FOREVER);
-
+		k_sem_take(&lc3_encoder_sem, K_MSEC(8));
+		if(pdm_data_ready_flag == true){
+			memcpy(send_pcm_data, p_latest_pdm_buffer, MAX_NUM_SAMPLES * BYTES_PER_SAMPLE);
+			pdm_data_ready_flag = false;
+		}
+		/*
 		ret = dmic_read(dmic_dev, 0, &buffer, &size, 10);
 		if (ret < 0) {
 			LOG_INF("DMIC read failed: %d", ret);
@@ -695,55 +732,34 @@ static void dmic_fetch_thread(void *arg1, void *arg2, void *arg3)
 		memcpy(send_pcm_data, buffer, size);
 
 		k_mem_slab_free(&mem_slab, buffer);
+		*/
 		send_data();
 	}
 }
 
 static int pdm_mic_init()
 {
-	int err;
-	struct pcm_stream_cfg stream = {
-		.pcm_width = SAMPLE_BIT_WIDTH,
-		.mem_slab = &mem_slab,
-	};
-	struct dmic_cfg cfg = {
-		.io =
-			{
-				/* These fields can be used to limit the PDM clock
-				 * configurations that the driver is allowed to use
-				 * to those supported by the microphone.
-				 */
-				.min_pdm_clk_freq = 1000000,
-				.max_pdm_clk_freq = 3250000,
-				.min_pdm_clk_dc = 40,
-				.max_pdm_clk_dc = 60,
-			},
-		.streams = &stream,
-		.channel =
-			{
-				.req_num_streams = 1,
-			},
-	};
+	nrfx_err_t err;
 
-	err = device_is_ready(dmic_dev);
-	if (err < 0) {
-		LOG_INF("DMIC device is not ready: %d", err);
-		return err;
-	}
+	IRQ_CONNECT(DT_IRQN(PDM_NL), DT_IRQ(PDM_NL, priority), nrfx_isr, nrfx_pdm_20_irq_handler, 0);
+	irq_enable(DT_IRQN(PDM_NL));
+    nrfx_pdm_config_t pdm_cfg = NRFX_PDM_DEFAULT_CONFIG(PDM_CLK_PIN, PDM_DIN_PIN);
+    pdm_cfg.mode       = NRF_PDM_MODE_MONO;
+    pdm_cfg.edge       = NRF_PDM_EDGE_LEFTFALLING;
+    pdm_cfg.skip_gpio_cfg = false;
+    pdm_cfg.skip_psel_cfg = false;
+	pdm_cfg.prescaler = 25;
+    pdm_cfg.ratio     = NRF_PDM_RATIO_80X;
+    pdm_cfg.gain_l        = NRF_PDM_GAIN_DEFAULT;
+    pdm_cfg.gain_r        = NRF_PDM_GAIN_DEFAULT;
+    pdm_cfg.interrupt_priority = 2;
 
-	cfg.channel.req_num_chan = 1;
-	cfg.channel.req_chan_map_lo = dmic_build_channel_map(0, 0, PDM_CHAN_LEFT);
-	cfg.streams[0].pcm_rate = MAX_SAMPLE_RATE;
-	cfg.streams[0].block_size = BLOCK_SIZE(cfg.streams[0].pcm_rate, cfg.channel.req_num_chan);
-	LOG_INF("DMIC block size: %d", cfg.streams[0].block_size);
+    err = nrfx_pdm_init(&pdm_inst, &pdm_cfg, nrfx_pdm_event_handler);
+    if (err != NRFX_SUCCESS) {
+        LOG_INF(">> nrfx_pdm_init failed: %d", err);
+    }
+    LOG_INF(">> nrfx_pdm_init OK");
 
-	err = dmic_configure(dmic_dev, &cfg);
-	if (err < 0) {
-		LOG_INF("Failed to configure the driver: %d", err);
-		return err;
-	}
-
-	nrf_pdm_gain_set(NRF_PDM20_S, GAIN_DEFAULT, GAIN_DEFAULT);
 
 	return 0;
 }
