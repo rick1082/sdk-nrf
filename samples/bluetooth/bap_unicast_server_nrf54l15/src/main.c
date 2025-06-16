@@ -286,7 +286,7 @@ static int lc3_config(struct bt_conn *conn, const struct bt_bap_ep *ep, enum bt_
 			LOG_INF("LC3 encoder initialized, PCM bytes required for encoding: %u",
 				pcm_bytes_req_enc);
 		}
-		configured_source_stream_count++;
+		configured_source_stream_count = 1;
 	}
 
 	*pref = qos_pref;
@@ -407,7 +407,7 @@ static void stream_recv(struct bt_bap_stream *stream, const struct bt_iso_recv_i
 			struct net_buf *buf)
 {
 	if (info->flags & BT_ISO_FLAGS_VALID) {
-		LOG_INF("Incoming audio on stream %p len %u", (void *)stream, buf->len);
+		LOG_DBG("Incoming audio on stream %p len %u", (void *)stream, buf->len);
 	}
 }
 
