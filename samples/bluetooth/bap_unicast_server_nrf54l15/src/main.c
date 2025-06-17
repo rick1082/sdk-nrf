@@ -22,6 +22,7 @@
 #include <hal/nrf_gpio.h>
 #include "sw_codec_lc3.h"
 #include <nrfx_pdm.h>
+#include "zephyr/sys/ring_buffer.h"
 
 #if defined(NRF54L15_XXAA)
 #include <hal/nrf_clock.h>
@@ -43,7 +44,7 @@ NET_BUF_POOL_FIXED_DEFINE(tx_pool, CONFIG_BT_ASCS_MAX_ASE_SRC_COUNT,
 #define MAX_SAMPLE_RATE			16000
 #define MAX_FRAME_DURATION_US	7500
 #define MAX_NUM_SAMPLES			((MAX_FRAME_DURATION_US * MAX_SAMPLE_RATE) / USEC_PER_SEC)
-#define TOTAL_BUF_NEEDED		4
+#define TOTAL_BUF_NEEDED		2
 static K_SEM_DEFINE(lc3_encoder_sem, 0U, TOTAL_BUF_NEEDED);
 #define SAMPLE_BIT_WIDTH 16
 #define BYTES_PER_SAMPLE sizeof(int16_t)
@@ -58,6 +59,10 @@ static bool buffer_a_in_use = true;
 static nrfx_pdm_t pdm_inst = NRFX_PDM_INSTANCE(20);
 static volatile bool pdm_data_ready_flag = false;
 static volatile int16_t *p_latest_pdm_buffer = NULL;
+
+#define RING_BUF_NEEDED 2
+RING_BUF_DECLARE(pdm_ring_buf, PDM_BUF_SIZE * RING_BUF_NEEDED * BYTES_PER_SAMPLE);
+K_MUTEX_DEFINE(pdm_ring_buf_mutex);
 
 static void nrfx_pdm_event_handler(nrfx_pdm_evt_t const * const p_evt)
 {
@@ -80,6 +85,16 @@ static void nrfx_pdm_event_handler(nrfx_pdm_evt_t const * const p_evt)
 		//LOG_INF("PDM buffer released");
 		p_latest_pdm_buffer = p_evt->buffer_released; // Store pointer to the filled buffer
         pdm_data_ready_flag = true;
+		
+		k_mutex_lock(&pdm_ring_buf_mutex, K_FOREVER);
+		uint32_t ring_buf_space_bytes = ring_buf_space_get(&pdm_ring_buf);
+		int16_t dummy_data[120];
+		if (ring_buf_space_bytes < (PDM_BUF_SIZE * BYTES_PER_SAMPLE)) {
+			// Not enough buffers available, request more
+			ring_buf_put(&pdm_ring_buf, (uint8_t *) dummy_data, (PDM_BUF_SIZE - ring_buf_space_bytes) * BYTES_PER_SAMPLE);
+		}
+		ring_buf_put(&pdm_ring_buf, (uint8_t *) p_latest_pdm_buffer, PDM_BUF_SIZE * BYTES_PER_SAMPLE);
+		k_mutex_unlock(&pdm_ring_buf_mutex);
 	}
 
 	if (p_evt->error != NRFX_PDM_NO_ERROR) {
@@ -201,6 +216,8 @@ static void print_qos(const struct bt_bap_qos_cfg *qos)
 		qos->interval, qos->framing, qos->phy, qos->sdu, qos->rtn, qos->latency, qos->pd);
 }
 
+
+static uint32_t ts = 0;
 static void send_data()
 {
 	int ret;
@@ -208,35 +225,51 @@ static void send_data()
 	uint16_t encoded_bytes_written;
 	struct net_buf *buf;
 
+	if (configured_octets_per_frame <= 0) {
+		LOG_INF("Configured octets per frame is not set, cannot encode");
+		return;
+	}
+
 	/* We configured the sink streams to be first in `streams`, so that
-	 * we can use `stream[i]` to select sink streams (i.e. streams with
-	 * data going to the server)
-	 */
-	for (size_t i = 0; i < configured_source_stream_count; i++) {
-		struct bt_bap_stream *stream = &source_streams[i].stream;
+	* we can use `stream[i]` to select sink streams (i.e. streams with
+	* data going to the server)
+	*/
+	struct bt_bap_stream *stream = &source_streams[0].stream;
 
-		buf = net_buf_alloc(&tx_pool, K_FOREVER);
-		net_buf_reserve(buf, BT_ISO_CHAN_SEND_RESERVE);
-		memset(lc3_encoded_buffer, 0, sizeof(lc3_encoded_buffer));
+	buf = net_buf_alloc(&tx_pool, K_FOREVER);
+	net_buf_reserve(buf, BT_ISO_CHAN_SEND_RESERVE);
+	memset(lc3_encoded_buffer, 0, sizeof(lc3_encoded_buffer));
 
-		ret = sw_codec_lc3_enc_run(
-			send_pcm_data, sizeof(send_pcm_data), configured_octets_per_frame * 8 * 100 * 100 / 75,
-			0, sizeof(lc3_encoded_buffer), lc3_encoded_buffer, &encoded_bytes_written);
-		if (ret) {
-			LOG_INF("LC3 encoder failed - wrong parameters?: %d", ret);
-			net_buf_unref(buf);
-			return;
-		}
 
-		net_buf_add_mem(buf, lc3_encoded_buffer, configured_octets_per_frame);
 
+	ret = sw_codec_lc3_enc_run(
+		send_pcm_data, sizeof(send_pcm_data), configured_octets_per_frame * 8 * 100 * 100 / 75,
+		0, sizeof(lc3_encoded_buffer), lc3_encoded_buffer, &encoded_bytes_written);
+	if (ret) {
+		LOG_INF("LC3 encoder failed - wrong parameters?: %d, %d, %d", ret, configured_octets_per_frame, encoded_bytes_written);
+		net_buf_unref(buf);
+		return;
+	}
+
+	net_buf_add_mem(buf, lc3_encoded_buffer, configured_octets_per_frame);
+
+	//if (ts == 0) {
 		ret = bt_bap_stream_send(stream, buf, get_and_incr_seq_num(stream));
 		if (ret < 0) {
-			LOG_INF("Failed to send audio data on streams[%zu] (%p): (%d)", i, stream,
+			LOG_INF("Failed to send audio data on streams(%p): (%d)", stream,
+				ret);
+			net_buf_unref(buf);
+		}
+		/*
+	} else {
+		ret = bt_bap_stream_send_ts(stream, buf, get_and_incr_seq_num(stream), ts);
+		if (ret < 0) {
+			LOG_INF("Failed to send audio data on streams(%p): (%d)", stream,
 				ret);
 			net_buf_unref(buf);
 		}
 	}
+		*/
 }
 
 static enum bt_audio_dir stream_dir(const struct bt_bap_stream *stream)
@@ -313,7 +346,7 @@ static int lc3_config(struct bt_conn *conn, const struct bt_bap_ep *ep, enum bt_
 			LOG_INF("LC3 encoder initialized, PCM bytes required for encoding: %u",
 				pcm_bytes_req_enc);
 		}
-		configured_source_stream_count++;
+		configured_source_stream_count = 1;
 	}
 
 	*pref = qos_pref;
@@ -447,18 +480,20 @@ K_WORK_DEFINE(work_disconnect, disconnect_work_handler);
 
 static void stream_stopped(struct bt_bap_stream *stream, uint8_t reason)
 {
-	int ret;
+	//int ret;
 	LOG_INF("Audio Stream %p stopped with reason 0x%02X", (void *)stream, reason);
 
 	if (stream_dir(stream) == BT_AUDIO_DIR_SOURCE) {
 		dk_set_led_off(ISO_STREAM_STATUS);
 		k_thread_suspend(dmic_fetch);
-		//ret = dmic_trigger(dmic_dev, DMIC_TRIGGER_STOP);
+		/*
+		ret = dmic_trigger(dmic_dev, DMIC_TRIGGER_STOP);
 		if (ret < 0) {
 			LOG_INF("DMIC stop trigger failed: %d", ret);
 		} else {
 			LOG_INF("DMIC stop trigger success");
 		}
+		*/
 		sw_codec_lc3_enc_uninit_all();
 	}
 
@@ -473,6 +508,8 @@ static void stream_stopped(struct bt_bap_stream *stream, uint8_t reason)
 
 static void stream_started(struct bt_bap_stream *stream)
 {
+	int ret;
+
 	LOG_INF("Audio Stream %p started", (void *)stream);
 
 	if (stream_dir(stream) == BT_AUDIO_DIR_SOURCE) {
@@ -506,13 +543,46 @@ static void stream_disabled_cb(struct bt_bap_stream *stream)
 {
 }
 
+#define HANDLE_INVALID 0xFFFF
+static int iso_conn_handle_set(struct bt_bap_stream *bap_stream, uint16_t *iso_conn_handle)
+{
+	int ret;
+
+	if (*iso_conn_handle == HANDLE_INVALID) {
+		struct bt_bap_ep_info ep_info;
+
+		ret = bt_bap_ep_get_info(bap_stream->ep, &ep_info);
+		if (ret) {
+			LOG_WRN("Unable to get info for ep");
+			return -EACCES;
+		}
+
+		ret = bt_hci_get_conn_handle(ep_info.iso_chan->iso, iso_conn_handle);
+		if (ret) {
+			LOG_ERR("Failed obtaining conn_handle (ret:%d)", ret);
+			return ret;
+		}
+	} else {
+		/* Already set. */
+	}
+
+	return 0;
+}
+
 static void stream_sent_cb(struct bt_bap_stream *stream)
 {
+	struct bt_iso_tx_info info;
 	static uint32_t sent_num;
 	sent_num++;
 	if (sent_num % 100 == 0) {
 		LOG_INF("Sent %u packets", sent_num);
 	}
+	//iso_conn_handle_set(stream, &iso_conn_handle);
+	//LOG_INF("iso stream handle = %d", iso_conn_handle);
+	bt_bap_stream_get_tx_sync(stream, &info);
+	//LOG_INF("Stream %p sent, ts %u, seq_num %u, offset 0x%02x",
+	//	(void *)stream, info.ts, info.seq_num, info.offset);
+		ts = info.ts + 10000; // Increment ts by 100ms for next packet
 	k_sem_give(&lc3_encoder_sem);
 }
 
@@ -702,10 +772,7 @@ static int clocks_start(void)
 
 static void dmic_fetch_thread(void *arg1, void *arg2, void *arg3)
 {
-	int ret;
 	nrfx_err_t err;
-	void *buffer;
-	uint32_t size;
 
 	err = nrfx_pdm_start(&pdm_inst);
 	if (err != NRFX_SUCCESS) {
@@ -714,11 +781,22 @@ static void dmic_fetch_thread(void *arg1, void *arg2, void *arg3)
 		LOG_INF(">> nrfx_pdm_start OK");
 	}
 	while (true) {
-		k_sem_take(&lc3_encoder_sem, K_MSEC(8));
+		//k_sem_take(&lc3_encoder_sem, K_MSEC(8));
 		if(pdm_data_ready_flag == true){
-			memcpy(send_pcm_data, p_latest_pdm_buffer, MAX_NUM_SAMPLES * BYTES_PER_SAMPLE);
+			//memcpy(send_pcm_data, (uint8_t *)p_latest_pdm_buffer, MAX_NUM_SAMPLES * BYTES_PER_SAMPLE);
+			k_mutex_lock(&pdm_ring_buf_mutex, K_FOREVER);
+			uint32_t ring_buf_size = ring_buf_size_get(&pdm_ring_buf);
+			if (ring_buf_size < (PDM_BUF_SIZE * BYTES_PER_SAMPLE)) {
+				LOG_INF("dmic_fetch_thread: Not enough sample in ring buffer %d", ring_buf_size);
+			} else {
+				
+				ring_buf_get(&pdm_ring_buf, (uint8_t *)send_pcm_data, sizeof(send_pcm_data));
+				send_data();
+			}
+			k_mutex_unlock(&pdm_ring_buf_mutex);
 			pdm_data_ready_flag = false;
 		}
+		k_sleep(K_MSEC(1));
 		/*
 		ret = dmic_read(dmic_dev, 0, &buffer, &size, 10);
 		if (ret < 0) {
@@ -733,7 +811,7 @@ static void dmic_fetch_thread(void *arg1, void *arg2, void *arg3)
 
 		k_mem_slab_free(&mem_slab, buffer);
 		*/
-		send_data();
+		
 	}
 }
 
