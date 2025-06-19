@@ -44,14 +44,16 @@ NET_BUF_POOL_FIXED_DEFINE(tx_pool, CONFIG_BT_ASCS_MAX_ASE_SRC_COUNT,
 #define MAX_SAMPLE_RATE			16000
 #define MAX_FRAME_DURATION_US	7500
 #define MAX_NUM_SAMPLES			((MAX_FRAME_DURATION_US * MAX_SAMPLE_RATE) / USEC_PER_SEC)
-#define TOTAL_BUF_NEEDED		2
+#define TOTAL_BUF_NEEDED		1
 static K_SEM_DEFINE(lc3_encoder_sem, 0U, TOTAL_BUF_NEEDED);
 #define SAMPLE_BIT_WIDTH 16
 #define BYTES_PER_SAMPLE sizeof(int16_t)
 #define PDM_CLK_PIN     NRF_GPIO_PIN_MAP(1, 12)
 #define PDM_DIN_PIN     NRF_GPIO_PIN_MAP(1, 13)
 #define PDM_NL DT_NODELABEL(pdm20)
-#define PDM_BUF_SIZE        120 // 16000Hz * 7.5ms / 1000us = 120 samples per frame
+#define PDM_BUF_SIZE        15//120 // 16000Hz * 7.5ms / 1000us = 120 samples per frame
+#define PDM_FRAME_SIZE_BYTE	   (PDM_FRAME_SAMPLE_SIZE * BYTES_PER_SAMPLE) // 120 samples * 2 bytes/sample = 240 bytes per frame
+#define PDM_FRAME_SAMPLE_SIZE  120
 
 static int16_t m_pdm_buffer_a[PDM_BUF_SIZE]; // Example using two buffers for release/request cycle
 static int16_t m_pdm_buffer_b[PDM_BUF_SIZE];
@@ -61,7 +63,7 @@ static volatile bool pdm_data_ready_flag = false;
 static volatile int16_t *p_latest_pdm_buffer = NULL;
 atomic_t iso_tx_pool_alloc;
 #define RING_BUF_NEEDED 1
-RING_BUF_DECLARE(pdm_ring_buf, PDM_BUF_SIZE * RING_BUF_NEEDED * BYTES_PER_SAMPLE);
+RING_BUF_DECLARE(pdm_ring_buf, PDM_FRAME_SIZE_BYTE * RING_BUF_NEEDED );
 K_MUTEX_DEFINE(pdm_ring_buf_mutex);
 
 static void nrfx_pdm_event_handler(nrfx_pdm_evt_t const * const p_evt)
@@ -86,7 +88,7 @@ static void nrfx_pdm_event_handler(nrfx_pdm_evt_t const * const p_evt)
 		p_latest_pdm_buffer = p_evt->buffer_released; // Store pointer to the filled buffer
         pdm_data_ready_flag = true;
 		
-		k_mutex_lock(&pdm_ring_buf_mutex, K_FOREVER);
+		//k_mutex_lock(&pdm_ring_buf_mutex, K_FOREVER);
 		uint32_t ring_buf_space_bytes = ring_buf_space_get(&pdm_ring_buf);
 		int16_t dummy_data[120];
 		if (ring_buf_space_bytes < (PDM_BUF_SIZE * BYTES_PER_SAMPLE)) {
@@ -94,7 +96,7 @@ static void nrfx_pdm_event_handler(nrfx_pdm_evt_t const * const p_evt)
 			ring_buf_put(&pdm_ring_buf, (uint8_t *) dummy_data, (PDM_BUF_SIZE - ring_buf_space_bytes) * BYTES_PER_SAMPLE);
 		}
 		ring_buf_put(&pdm_ring_buf, (uint8_t *) p_latest_pdm_buffer, PDM_BUF_SIZE * BYTES_PER_SAMPLE);
-		k_mutex_unlock(&pdm_ring_buf_mutex);
+		//k_mutex_unlock(&pdm_ring_buf_mutex);
 	}
 
 	if (p_evt->error != NRFX_PDM_NO_ERROR) {
@@ -145,7 +147,7 @@ static const struct bt_data ad[] = {
 #define ISO_STREAM_STATUS DK_LED2
 
 #define LC3_ENCODER_STACK_SIZE 8192
-#define LC3_ENCODER_PRIORITY   5
+#define LC3_ENCODER_PRIORITY   3
 static void dmic_fetch_thread(void *arg1, void *arg2, void *arg3);
 K_THREAD_DEFINE(dmic_fetch, LC3_ENCODER_STACK_SIZE, dmic_fetch_thread, NULL, NULL, NULL,
 		LC3_ENCODER_PRIORITY, 0, -1);
@@ -218,7 +220,7 @@ static void print_qos(const struct bt_bap_qos_cfg *qos)
 
 
 static uint32_t ts = 0;
-#define HCI_ISO_BUF_PER_CHAN 2
+#define HCI_ISO_BUF_PER_CHAN 1
 static void send_data()
 {
 	int ret;
@@ -790,21 +792,23 @@ static void dmic_fetch_thread(void *arg1, void *arg2, void *arg3)
 	}
 	while (true) {
 		//k_sem_take(&lc3_encoder_sem, K_MSEC(8));
-		if(pdm_data_ready_flag == true){
+		
+		//if(pdm_data_ready_flag == true){
 			//memcpy(send_pcm_data, (uint8_t *)p_latest_pdm_buffer, MAX_NUM_SAMPLES * BYTES_PER_SAMPLE);
 			k_mutex_lock(&pdm_ring_buf_mutex, K_FOREVER);
 			uint32_t ring_buf_size = ring_buf_size_get(&pdm_ring_buf);
-			if (ring_buf_size < (PDM_BUF_SIZE * BYTES_PER_SAMPLE)) {
-				LOG_INF("dmic_fetch_thread: Not enough sample in ring buffer %d", ring_buf_size);
+			if (ring_buf_size < PDM_FRAME_SIZE_BYTE) {
+				//LOG_INF("dmic_fetch_thread: Not enough sample in ring buffer %d", ring_buf_size);
 			} else {
-				
+				//LOG_INF("dmic_fetch_thread: Ring buffer size %d, getting data", ring_buf_size);
 				ring_buf_get(&pdm_ring_buf, (uint8_t *)send_pcm_data, sizeof(send_pcm_data));
 				send_data();
 			}
 			k_mutex_unlock(&pdm_ring_buf_mutex);
 			pdm_data_ready_flag = false;
-		}
-		k_sleep(K_MSEC(1));
+		//}
+		k_sleep(K_USEC(10));
+		//k_yield();
 		/*
 		ret = dmic_read(dmic_dev, 0, &buffer, &size, 10);
 		if (ret < 0) {
@@ -838,7 +842,7 @@ static int pdm_mic_init()
     pdm_cfg.ratio     = NRF_PDM_RATIO_80X;
     pdm_cfg.gain_l        = NRF_PDM_GAIN_DEFAULT;
     pdm_cfg.gain_r        = NRF_PDM_GAIN_DEFAULT;
-    pdm_cfg.interrupt_priority = 2;
+    pdm_cfg.interrupt_priority = 1;
 
     err = nrfx_pdm_init(&pdm_inst, &pdm_cfg, nrfx_pdm_event_handler);
     if (err != NRFX_SUCCESS) {
@@ -966,7 +970,7 @@ int main(void)
 		}
 
 		LOG_INF("Advertising successfully started");
-
+		k_sleep(K_SECONDS(1));
 		err = k_sem_take(&sem_disconnected, K_FOREVER);
 		if (err != 0) {
 			LOG_INF("failed to take sem_disconnected (err %d)", err);
