@@ -59,8 +59,8 @@ static bool buffer_a_in_use = true;
 static nrfx_pdm_t pdm_inst = NRFX_PDM_INSTANCE(20);
 static volatile bool pdm_data_ready_flag = false;
 static volatile int16_t *p_latest_pdm_buffer = NULL;
-
-#define RING_BUF_NEEDED 2
+atomic_t iso_tx_pool_alloc;
+#define RING_BUF_NEEDED 1
 RING_BUF_DECLARE(pdm_ring_buf, PDM_BUF_SIZE * RING_BUF_NEEDED * BYTES_PER_SAMPLE);
 K_MUTEX_DEFINE(pdm_ring_buf_mutex);
 
@@ -218,6 +218,7 @@ static void print_qos(const struct bt_bap_qos_cfg *qos)
 
 
 static uint32_t ts = 0;
+#define HCI_ISO_BUF_PER_CHAN 2
 static void send_data()
 {
 	int ret;
@@ -226,7 +227,12 @@ static void send_data()
 	struct net_buf *buf;
 
 	if (configured_octets_per_frame <= 0) {
-		LOG_INF("Configured octets per frame is not set, cannot encode");
+		//LOG_INF("Configured octets per frame is not set, cannot encode");
+		return;
+	}
+
+	if (atomic_get(&iso_tx_pool_alloc) >= HCI_ISO_BUF_PER_CHAN) {
+		LOG_INF("ISO TX pool is full");
 		return;
 	}
 
@@ -252,24 +258,24 @@ static void send_data()
 	}
 
 	net_buf_add_mem(buf, lc3_encoded_buffer, configured_octets_per_frame);
-
-	//if (ts == 0) {
+	atomic_inc(&iso_tx_pool_alloc);
+	if (ts == 0) {
 		ret = bt_bap_stream_send(stream, buf, get_and_incr_seq_num(stream));
 		if (ret < 0) {
 			LOG_INF("Failed to send audio data on streams(%p): (%d)", stream,
 				ret);
 			net_buf_unref(buf);
+			atomic_dec(&iso_tx_pool_alloc);
 		}
-		/*
 	} else {
 		ret = bt_bap_stream_send_ts(stream, buf, get_and_incr_seq_num(stream), ts);
 		if (ret < 0) {
 			LOG_INF("Failed to send audio data on streams(%p): (%d)", stream,
 				ret);
 			net_buf_unref(buf);
+			atomic_dec(&iso_tx_pool_alloc);
 		}
 	}
-		*/
 }
 
 static enum bt_audio_dir stream_dir(const struct bt_bap_stream *stream)
@@ -511,7 +517,7 @@ static void stream_started(struct bt_bap_stream *stream)
 	int ret;
 
 	LOG_INF("Audio Stream %p started", (void *)stream);
-
+	atomic_clear(&iso_tx_pool_alloc);
 	if (stream_dir(stream) == BT_AUDIO_DIR_SOURCE) {
 		dk_set_led_on(ISO_STREAM_STATUS);
 		k_thread_resume(dmic_fetch);
@@ -577,12 +583,14 @@ static void stream_sent_cb(struct bt_bap_stream *stream)
 	if (sent_num % 100 == 0) {
 		LOG_INF("Sent %u packets", sent_num);
 	}
+	atomic_dec(&iso_tx_pool_alloc);
 	//iso_conn_handle_set(stream, &iso_conn_handle);
 	//LOG_INF("iso stream handle = %d", iso_conn_handle);
 	bt_bap_stream_get_tx_sync(stream, &info);
 	//LOG_INF("Stream %p sent, ts %u, seq_num %u, offset 0x%02x",
 	//	(void *)stream, info.ts, info.seq_num, info.offset);
-		ts = info.ts + 10000; // Increment ts by 100ms for next packet
+		//ts = info.ts + 10000; // Increment ts by 100ms for next packet
+		//ts = info.ts + 7500; // Increment ts by 7.5ms for next packet
 	k_sem_give(&lc3_encoder_sem);
 }
 
