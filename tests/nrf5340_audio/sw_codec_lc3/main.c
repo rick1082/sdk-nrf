@@ -7,7 +7,7 @@
 #include <zephyr/ztest.h>
 #include <zephyr/tc_util.h>
 
-#include "sw_codec_lc3.h"
+#include "sw_codec_liblc3.h"
 
 static const int16_t sample_sine_100hz[] = {
 	0x0000, 0x0157, 0x02AE, 0x0405, 0x055D, 0x06B1, 0x080A, 0x095F, 0x0AB2, 0x0C0C, 0x0D5B,

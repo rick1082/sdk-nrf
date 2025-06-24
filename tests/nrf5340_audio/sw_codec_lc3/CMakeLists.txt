@@ -12,4 +12,5 @@ project(NONE)
 target_sources(app
   PRIVATE
   main.c
+  sw_codec_liblc3.c
 )
