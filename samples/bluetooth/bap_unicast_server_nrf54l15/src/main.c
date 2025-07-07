@@ -111,7 +111,7 @@ static struct conn_mode {
 
 
 #define GAIN_DEFAULT	      0x50
-#define MAX_SAMPLE_RATE	      16000
+#define MAX_SAMPLE_RATE	      32000
 #define MAX_FRAME_DURATION_US 10000
 #define MAX_NUM_SAMPLES	      ((MAX_FRAME_DURATION_US * MAX_SAMPLE_RATE) / USEC_PER_SEC)
 #define TOTAL_BUF_NEEDED      4
@@ -135,7 +135,7 @@ static const struct device *const dmic_dev = DEVICE_DT_GET(DT_NODELABEL(dmic_dev
 
 static int16_t send_pcm_data[MAX_NUM_SAMPLES];
 static const struct bt_audio_codec_cap lc3_codec_cap = BT_AUDIO_CODEC_CAP_LC3(
-	BT_AUDIO_CODEC_CAP_FREQ_16KHZ, BT_AUDIO_CODEC_CAP_DURATION_10,
+	(BT_AUDIO_CODEC_CAP_FREQ_16KHZ|BT_AUDIO_CODEC_CAP_FREQ_32KHZ), BT_AUDIO_CODEC_CAP_DURATION_10,
 	BT_AUDIO_CODEC_CAP_CHAN_COUNT_SUPPORT(1), 40u, 120u, 1u, BT_AUDIO_CONTEXT_TYPE_ANY);
 
 static struct bt_conn *default_conn;
@@ -168,7 +168,9 @@ static const struct bt_data ad[] = {
 	BT_DATA(BT_DATA_NAME_COMPLETE, CONFIG_BT_DEVICE_NAME, sizeof(CONFIG_BT_DEVICE_NAME) - 1),
 };
 
-#define SDU_INTERVAL_US		10000UL		   /* 10 ms SDU interval */
+static uint16_t configured_sampling_freq;
+static int pdm_mic_init(uint16_t sampling_rate);
+
 #define AUDIO_VOLUME		(INT16_MAX - 3000) /* codec does clipping above INT16_MAX - 3000 */
 #define AUDIO_TONE_FREQUENCY_HZ 400
 
@@ -218,7 +220,8 @@ static void print_codec_cfg(const struct bt_audio_codec_cfg *codec_cfg)
 
 		ret = bt_audio_codec_cfg_get_freq(codec_cfg);
 		if (ret > 0) {
-			LOG_INF("  Frequency: %d Hz", bt_audio_codec_cfg_freq_to_freq_hz(ret));
+			configured_sampling_freq = bt_audio_codec_cfg_freq_to_freq_hz(ret);
+			LOG_INF("  Frequency: %d Hz", configured_sampling_freq);
 		}
 
 		ret = bt_audio_codec_cfg_get_frame_dur(codec_cfg);
@@ -350,7 +353,7 @@ static int lc3_config(struct bt_conn *conn, const struct bt_bap_ep *ep, enum bt_
 
 	if (dir == BT_AUDIO_DIR_SOURCE) {
 		configured_octets_per_frame = bt_audio_codec_cfg_get_octets_per_frame(codec_cfg);
-		ret = sw_codec_lc3_enc_init(MAX_SAMPLE_RATE, 16, MAX_FRAME_DURATION_US,
+		ret = sw_codec_lc3_enc_init(configured_sampling_freq, 16, MAX_FRAME_DURATION_US,
 					    configured_octets_per_frame * 8 * 100, 1,
 					    &pcm_bytes_req_enc);
 		if (ret) {
@@ -525,6 +528,10 @@ static void stream_started(struct bt_bap_stream *stream)
 	if (stream_dir(stream) == BT_AUDIO_DIR_SOURCE) {
 		dk_set_led_on(ISO_STREAM_STATUS);
 		k_thread_resume(dmic_fetch);
+		ret = pdm_mic_init(configured_sampling_freq);
+		if (ret) {
+			LOG_ERR("Cannot init PDM mic: %d", ret);
+		}
 		ret = dmic_trigger(dmic_dev, DMIC_TRIGGER_START);
 		if (ret < 0) {
 			LOG_INF("DMIC start trigger failed: %d", ret);
@@ -1005,7 +1012,7 @@ static void dmic_fetch_thread(void *arg1, void *arg2, void *arg3)
 	}
 }
 
-static int pdm_mic_init()
+static int pdm_mic_init(uint16_t sampling_rate)
 {
 	int err;
 	struct pcm_stream_cfg stream = {
@@ -1039,7 +1046,7 @@ static int pdm_mic_init()
 
 	cfg.channel.req_num_chan = 1;
 	cfg.channel.req_chan_map_lo = dmic_build_channel_map(0, 0, PDM_CHAN_LEFT);
-	cfg.streams[0].pcm_rate = MAX_SAMPLE_RATE;
+	cfg.streams[0].pcm_rate = sampling_rate;
 	cfg.streams[0].block_size = BLOCK_SIZE(cfg.streams[0].pcm_rate, cfg.channel.req_num_chan);
 
 	err = dmic_configure(dmic_dev, &cfg);
@@ -1139,11 +1146,6 @@ int main(void)
 	err = dk_buttons_init(button_changed);
 	if (err) {
 		LOG_ERR("Cannot init buttons (err: %d)", err);
-	}
-
-	err = pdm_mic_init();
-	if (err) {
-		LOG_ERR("Cannot init PDM mic (err: %d)", err);
 	}
 
 	/* DIS initialized at system boot with SYS_INIT macro. */
