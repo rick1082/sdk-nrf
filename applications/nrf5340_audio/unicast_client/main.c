@@ -295,6 +295,11 @@ static void le_audio_msg_sub_thread(void)
 				if (ret) {
 					LOG_WRN("Failed to update conn parameters: %d", ret);
 				}
+
+				ret = bt_conn_le_phy_update(msg.conn, BT_CONN_LE_PHY_PARAM_1M);
+				if (ret) {
+					LOG_WRN("Failed to update phy parameters: %d", ret);
+				}
 			}
 
 			LOG_DBG("LE audio config received");

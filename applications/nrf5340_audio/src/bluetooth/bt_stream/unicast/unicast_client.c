@@ -70,21 +70,21 @@ struct temp_cap_storage {
 };
 
 /* Since there is no subgroups for CIG we will use 1 as a hard coded value */
-static struct le_audio_unicast_server unicast_servers[CONFIG_BT_ISO_MAX_CIG][1][CONFIG_BT_MAX_CONN];
+static struct le_audio_unicast_server unicast_servers[CONFIG_BT_ISO_MAX_CIG][1][1];
 
 K_MSGQ_DEFINE(cap_start_msgq, sizeof(struct stream_index), CONFIG_BT_ISO_MAX_CHAN,
 	      sizeof(uint32_t));
 
 static struct temp_cap_storage temp_cap[CONFIG_BT_ISO_MAX_CHAN];
 
-/* Make sure that we have at least one unicast_server per CONFIG_BT_BAP_UNICAST_CLIENT_ASE_SNK */
+/* Make sure that we have at least one unicast_server per CONFIG_BT_BAP_UNICAST_CLIENT_ASE_SNK 
 BUILD_ASSERT(ARRAY_SIZE(unicast_servers[0][0]) >= CONFIG_BT_BAP_UNICAST_CLIENT_ASE_SNK_COUNT,
 	     "We need to have at least one unicast_server per ASE SINK");
-
-/* Make sure that we have at least one unicast_server per CONFIG_BT_BAP_UNICAST_CLIENT_ASE_SRC */
+*/
+/* Make sure that we have at least one unicast_server per CONFIG_BT_BAP_UNICAST_CLIENT_ASE_SRC 
 BUILD_ASSERT(ARRAY_SIZE(unicast_servers[0][0]) >= CONFIG_BT_BAP_UNICAST_CLIENT_ASE_SRC_COUNT,
 	     "We need to have at least one unicast_server per ASE SOURCE");
-
+*/
 BUILD_ASSERT(CONFIG_BT_ISO_MAX_CIG == 1, "Only one CIG is supported");
 
 static le_audio_receive_cb receive_cb;
@@ -92,12 +92,23 @@ static le_audio_receive_cb receive_cb;
 static struct bt_bap_unicast_group *unicast_group;
 static bool unicast_group_created;
 
+
+#define BT_BAP_QOS_CFG_UNFRAMED_1M(_interval, _sdu, _rtn, _latency, _pd)                              \
+	BT_BAP_QOS_CFG(_interval, BT_BAP_QOS_CFG_FRAMING_UNFRAMED, BT_BAP_QOS_CFG_1M, _sdu, _rtn,  \
+		       _latency, _pd)
+
+#define BT_BAP_LC3_UNICAST_PRESET_16_2_1_RTN_10(_loc, _stream_context)                                    \
+	BT_BAP_LC3_PRESET(BT_AUDIO_CODEC_LC3_CONFIG(BT_AUDIO_CODEC_CFG_FREQ_16KHZ,                 \
+						    BT_AUDIO_CODEC_CFG_DURATION_10, _loc, 40U, 1,  \
+						    _stream_context),                              \
+			  BT_BAP_QOS_CFG_UNFRAMED_1M(10000u, 40u, 10u, 10u, 40000u))
+
 static struct bt_bap_lc3_preset lc3_preset_sink = BT_BAP_LC3_UNICAST_PRESET_NRF5340_AUDIO_SINK;
 static struct bt_bap_lc3_preset lc3_preset_sink_48_4_1 = BT_BAP_LC3_UNICAST_PRESET_48_4_1(
 	BT_AUDIO_LOCATION_ANY, (BT_AUDIO_CONTEXT_TYPE_UNSPECIFIED));
 static struct bt_bap_lc3_preset lc3_preset_sink_24_2_1 = BT_BAP_LC3_UNICAST_PRESET_24_2_1(
 	BT_AUDIO_LOCATION_ANY, (BT_AUDIO_CONTEXT_TYPE_UNSPECIFIED));
-static struct bt_bap_lc3_preset lc3_preset_sink_16_2_1 = BT_BAP_LC3_UNICAST_PRESET_16_2_1(
+static struct bt_bap_lc3_preset lc3_preset_sink_16_2_1 = BT_BAP_LC3_UNICAST_PRESET_16_2_1_RTN_10(
 	BT_AUDIO_LOCATION_ANY, (BT_AUDIO_CONTEXT_TYPE_UNSPECIFIED));
 
 static struct bt_bap_lc3_preset lc3_preset_source = BT_BAP_LC3_UNICAST_PRESET_NRF5340_AUDIO_SOURCE;
@@ -106,7 +117,7 @@ static struct bt_bap_lc3_preset lc3_preset_source_48_4_1 =
 static struct bt_bap_lc3_preset lc3_preset_source_24_2_1 =
 	BT_BAP_LC3_UNICAST_PRESET_24_2_1(BT_AUDIO_LOCATION_ANY, BT_AUDIO_CONTEXT_TYPE_UNSPECIFIED);
 static struct bt_bap_lc3_preset lc3_preset_source_16_2_1 =
-	BT_BAP_LC3_UNICAST_PRESET_16_2_1(BT_AUDIO_LOCATION_ANY, BT_AUDIO_CONTEXT_TYPE_UNSPECIFIED);
+	BT_BAP_LC3_UNICAST_PRESET_16_2_1_RTN_10(BT_AUDIO_LOCATION_ANY, BT_AUDIO_CONTEXT_TYPE_UNSPECIFIED);
 
 static bool playing_state = true;
 
