@@ -58,13 +58,13 @@ int lc3_file_frame_get(struct lc3_file_ctx *file, uint8_t *buffer, size_t buffer
 		LOG_ERR("Failed to read frame header: %d", ret);
 		return ret;
 	}
-
+	//LOG_WRN("Frame header size: %d", frame_header_size);
 	if ((frame_header_size == 0) || (frame_header == 0)) {
 		LOG_DBG("No more frames to read");
 		return -ENODATA;
 	}
 
-	LOG_DBG("Size of frame is %d", frame_header);
+	//LOG_DBG("Size of frame is %d", frame_header);
 
 	if (buffer_size < frame_header) {
 		LOG_ERR("Buffer size too small: %d < %d", buffer_size, frame_header);
@@ -110,7 +110,7 @@ int lc3_file_open(struct lc3_file_ctx *file, const char *file_name)
 		LOG_ERR("Failed to read the LC3 header: %d", ret);
 		return ret;
 	}
-
+	LOG_WRN("LC3 header size: %d", size);
 	/* Debug: Print header */
 	lc3_header_print(&file->lc3_header);
 
@@ -134,6 +134,23 @@ int lc3_file_close(struct lc3_file_ctx *file)
 	ret = sd_card_close(&file->file_object);
 	if (ret) {
 		LOG_ERR("Failed to close file: %d", ret);
+		return ret;
+	}
+
+	return ret;
+}
+
+int lc3_file_fp_reset(struct lc3_file_ctx *file)
+{
+	int ret;
+	if (file == NULL) {
+		LOG_ERR("Nullptr received");
+		return -EINVAL;
+	}
+
+	ret = sd_card_fseek(&file->file_object);
+		if (ret) {
+		LOG_ERR("Failed to seek file: %d", ret);
 		return ret;
 	}
 

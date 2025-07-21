@@ -5,7 +5,7 @@
         "channel": "left"
  },
  {
-        "nrf5340_audio_dk_snr": 1000,
+        "nrf5340_audio_dk_snr": 1050191519,
         "nrf5340_audio_dk_dev": "gateway",
         "channel": "NA"
  },

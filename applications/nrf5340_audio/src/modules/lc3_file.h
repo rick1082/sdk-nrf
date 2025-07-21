@@ -77,6 +77,8 @@ int lc3_file_open(struct lc3_file_ctx *file, const char *file_name);
  */
 int lc3_file_close(struct lc3_file_ctx *file);
 
+int lc3_file_fp_reset(struct lc3_file_ctx *file);
+
 /**
  * @brief Initialize the LC3 file module.
  *

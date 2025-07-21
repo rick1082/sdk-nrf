@@ -144,6 +144,8 @@ int sd_card_read(char *buf, size_t *size, struct fs_file_t *f_seg_read_entry);
  */
 int sd_card_close(struct fs_file_t *f_seg_read_entry);
 
+int sd_card_fseek(struct fs_file_t *f_seg_read_entry);
+
 /**
  * @brief	Initialize the SD card interface and print out SD card details.
  *

@@ -175,6 +175,7 @@ enum usecase_type {
 	MULTI_LANGUAGE,
 	PERSONAL_SHARING,
 	PERSONAL_MULTI_LANGUAGE,
+	FOUR_BISES,
 };
 
 /** @brief Use case information */
@@ -193,6 +194,7 @@ static struct usecase_info pre_defined_use_cases[] = {
 	{.use_case = MULTI_LANGUAGE, .name = "Multi-language"},
 	{.use_case = PERSONAL_SHARING, .name = "Personal sharing"},
 	{.use_case = PERSONAL_MULTI_LANGUAGE, .name = "Personal multi-language"},
+	{.use_case = FOUR_BISES, .name = "Four bises"},
 };
 
 /** @} */

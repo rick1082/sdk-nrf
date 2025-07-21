@@ -12,13 +12,13 @@
 #include <zephyr/kernel.h>
 
 #include <zephyr/logging/log.h>
-LOG_MODULE_REGISTER(lc3_streamer, CONFIG_MODULE_SD_CARD_LC3_STREAMER_LOG_LEVEL);
+LOG_MODULE_REGISTER(lc3_streamer, 4);
 
 K_THREAD_STACK_DEFINE(lc3_streamer_work_q_stack_area, CONFIG_SD_CARD_LC3_STREAMER_STACK_SIZE);
 
 struct k_work_q lc3_streamer_work_q;
 
-#define LC3_STREAMER_BUFFER_NUM_FRAMES 2
+#define LC3_STREAMER_BUFFER_NUM_FRAMES 60
 
 #if CONFIG_SD_CARD_LC3_STREAMER_MAX_NUM_STREAMS > UINT8_MAX
 #error "CONFIG_SD_CARD_LC3_STREAMER_MAX_NUM_STREAMS must be less than or equal to UINT8_MAX"
@@ -161,7 +161,7 @@ static int put_next_frame_to_fifo(struct lc3_stream *stream)
 static int stream_loop(struct lc3_stream *stream)
 {
 	int ret;
-
+/*
 	ret = lc3_file_close(&stream->file);
 	if (ret) {
 		LOG_ERR("Failed to close file %d", ret);
@@ -173,7 +173,12 @@ static int stream_loop(struct lc3_stream *stream)
 		LOG_ERR("Failed to open file %s: %d", stream->filename, ret);
 		return ret;
 	}
-
+*/
+	ret = lc3_file_fp_reset(&stream->file);
+	if (ret) {
+		LOG_ERR("Failed to reset file pointer %d", ret);
+		return ret;
+	}
 	ret = put_next_frame_to_fifo(stream);
 	if (ret) {
 		LOG_ERR("Failed to put first frame after loop to fifo %d", ret);
@@ -186,7 +191,6 @@ static int stream_loop(struct lc3_stream *stream)
 
 		return ret;
 	}
-
 	return 0;
 }
 
@@ -202,7 +206,7 @@ static void next_frame_load(struct k_work *work)
 
 	ret = put_next_frame_to_fifo(stream);
 	if (ret == -ENODATA) {
-		LOG_DBG("End of stream");
+		//LOG_DBG("End of stream");
 		if (stream->loop_stream) {
 			ret = stream_loop(stream);
 			if (ret) {
