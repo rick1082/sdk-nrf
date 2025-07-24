@@ -162,15 +162,9 @@ static int stream_loop(struct lc3_stream *stream)
 {
 	int ret;
 
-	ret = lc3_file_close(&stream->file);
+	ret = lc3_file_fp_reset(&stream->file);
 	if (ret) {
-		LOG_ERR("Failed to close file %d", ret);
-		return ret;
-	}
-
-	ret = lc3_file_open(&stream->file, stream->filename);
-	if (ret) {
-		LOG_ERR("Failed to open file %s: %d", stream->filename, ret);
+		LOG_ERR("Failed to reset file pointer %d", ret);
 		return ret;
 	}
 

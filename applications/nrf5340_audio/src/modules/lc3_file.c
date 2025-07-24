@@ -140,6 +140,23 @@ int lc3_file_close(struct lc3_file_ctx *file)
 	return ret;
 }
 
+int lc3_file_fp_reset(struct lc3_file_ctx *file)
+{
+	int ret;
+	if (file == NULL) {
+		LOG_ERR("Nullptr received");
+		return -EINVAL;
+	}
+
+	ret = sd_card_fseek(&file->file_object);
+		if (ret) {
+		LOG_ERR("Failed to seek file: %d", ret);
+		return ret;
+	}
+
+	return ret;
+}
+
 int lc3_file_init(void)
 {
 	int ret;

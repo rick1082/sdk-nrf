@@ -115,6 +115,10 @@ struct subgroup_lc3_stream_info {
 static struct subgroup_lc3_stream_info lc3_stream_infos[CONFIG_BT_ISO_MAX_BIG]
 						       [CONFIG_BT_BAP_BROADCAST_SRC_SUBGROUP_COUNT];
 
+
+static void four_bises_demo_set(const struct shell *shell);
+static int cmd_start(const struct shell *shell, size_t argc, char **argv);
+
 /* Find the most significant 1 in bits, bits will not be 0. */
 static int8_t context_msb_one(uint16_t bits)
 {
@@ -709,6 +713,9 @@ void nrf_auraconfig_main(void)
 		ret = sd_card_toc_gen();
 		ERR_CHK_MSG(ret, "Failed to generate SD card table");
 	}
+
+	four_bises_demo_set(NULL);
+	cmd_start(NULL, 0, NULL);
 }
 
 static void context_print(const struct shell *shell)
@@ -2528,6 +2535,64 @@ static void personal_multi_language_set(const struct shell *shell)
 	}
 }
 
+static void four_bises_demo_set(const struct shell *shell)
+{
+	/*
+    char *preset_argv[3] = {"preset", "48_2_1", "0"};
+    char *num_bis0_argv[4] = {"num_bises", "4", "0", "0"};
+
+
+    char *fileselect000_argv[5] = {
+        "file select", "10ms/48000hz/80_kbps/auditorium-english_48kHz_left_80kbps_10ms.lc3",
+        "0", "0", "0"};
+    char *fileselect001_argv[5] = {
+        "file select",
+        "10ms/48000hz/80_kbps/adventuresherlockholmes_01_doyle_48kHz_left_80kbps_10ms.lc3", "0", "0",
+        "1"};
+    char *fileselect010_argv[5] = {
+        "file select",
+        "10ms/48000hz/80_kbps/auditorium-mandarin_48kHz_left_80kbps_10ms.lc3", "0", "0",
+        "2"};
+    char *fileselect011_argv[5] = {
+        "file select",
+        "10ms/48000hz/80_kbps/groovy-ambient-funk-201745_48kHz_left_80kbps_10ms.lc3", "0", "0",
+        "3"};
+		*/
+
+
+    char *preset_argv[3] = {"preset", "24_2_1", "0"};	/* Using 24_2_1 preset as start*/
+    char *num_bis0_argv[4] = {"num_bises", "4", "0", "0"}; /* Four BISes */
+	char *num_rtn_argv[4] = {"rtn", "4", "0", "0"}; /* Setting higher retransmission time */
+
+    char *fileselect000_argv[5] = {
+        "file select", "10ms/24000hz/48_kbps/auditorium-english_24kHz_left_48kbps_10ms.lc3",
+        "0", "0", "0"};
+    char *fileselect001_argv[5] = {
+        "file select",
+        "10ms/24000hz/48_kbps/adventuresherlockholmes_01_doyle_24kHz_left_48kbps_10ms.lc3", "0", "0",
+        "1"};
+    char *fileselect010_argv[5] = {
+        "file select",
+        "10ms/24000hz/48_kbps/auditorium-mandarin_24kHz_left_48kbps_10ms.lc3", "0", "0",
+        "2"};
+    char *fileselect011_argv[5] = {
+        "file select",
+        "10ms/24000hz/48_kbps/groovy-ambient-funk-201745_24kHz_left_48kbps_10ms.lc3", "0", "0",
+        "3"};
+
+    cmd_preset(shell, 3, preset_argv);
+    cmd_num_bises(shell, 4, num_bis0_argv);
+	cmd_rtn(shell, 4, num_rtn_argv);
+
+
+    if (sd_card_present) {
+        cmd_file_select(shell, 5, fileselect000_argv);
+        cmd_file_select(shell, 5, fileselect001_argv);
+        cmd_file_select(shell, 5, fileselect010_argv);
+        cmd_file_select(shell, 5, fileselect011_argv);
+    }
+}
+
 static int cmd_usecase(const struct shell *shell, size_t argc, char **argv)
 {
 	if ((argc >= 2) && (strcmp(argv[1], "print") == 0)) {
@@ -2578,6 +2643,9 @@ static int cmd_usecase(const struct shell *shell, size_t argc, char **argv)
 		break;
 	case PERSONAL_MULTI_LANGUAGE:
 		personal_multi_language_set(shell);
+		break;
+	case FOUR_BISES_DEMO:
+		four_bises_demo_set(shell);
 		break;
 	default:
 		shell_error(shell, "Use case not found");

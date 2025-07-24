@@ -78,6 +78,16 @@ int lc3_file_open(struct lc3_file_ctx *file, const char *file_name);
 int lc3_file_close(struct lc3_file_ctx *file);
 
 /**
+ * @brief Reset the file pointer to the beginning of the LC3 file.
+ *
+ * @param[in]	file	Pointer to the file context.
+ *
+ * @retval -EINVAL	Invalid file context.
+ * @retval 0		Success.
+ */
+int lc3_file_fp_reset(struct lc3_file_ctx *file);
+
+/**
  * @brief Initialize the LC3 file module.
  *
  * Initializes the SD card and mounts the file system.

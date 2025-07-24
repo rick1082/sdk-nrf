@@ -442,6 +442,20 @@ int sd_card_close(struct fs_file_t *f_seg_read_entry)
 	return 0;
 }
 
+int sd_card_fseek(struct fs_file_t *f_seg_read_entry)
+{
+	int ret;
+
+	/* Offset 18 is to skip the LC3 header */
+	ret = fs_seek(f_seg_read_entry, 18, FS_SEEK_SET);
+	if (ret) {
+		LOG_ERR("Fseek file failed: %d", ret);
+		return ret;
+	}
+
+	return 0;
+}
+
 int sd_card_init(void)
 {
 	int ret;
