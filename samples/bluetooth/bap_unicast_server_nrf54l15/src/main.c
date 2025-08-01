@@ -179,7 +179,7 @@ static int pdm_mic_init(uint16_t sampling_rate);
 #define ADV_STATUS	  	  DK_LED3
 
 #define LC3_ENCODER_STACK_SIZE 8192
-#define LC3_ENCODER_PRIORITY   5
+#define LC3_ENCODER_PRIORITY   2
 static void dmic_fetch_thread(void *arg1, void *arg2, void *arg3);
 K_THREAD_DEFINE(dmic_fetch, LC3_ENCODER_STACK_SIZE, dmic_fetch_thread, NULL, NULL, NULL,
 		LC3_ENCODER_PRIORITY, 0, -1);
