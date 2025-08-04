@@ -460,6 +460,10 @@ static int lc3_stop(struct bt_bap_stream *stream, struct bt_bap_ascs_rsp *rsp)
 
 static int lc3_release(struct bt_bap_stream *stream, struct bt_bap_ascs_rsp *rsp)
 {
+
+	if (stream_dir(stream) == BT_AUDIO_DIR_SOURCE) {
+		sw_codec_lc3_enc_uninit_all();
+	}
 	LOG_INF("Release: stream %p", (void *)stream);
 	return 0;
 }
@@ -508,7 +512,6 @@ static void stream_stopped(struct bt_bap_stream *stream, uint8_t reason)
 		} else {
 			LOG_INF("DMIC stop trigger success");
 		}
-		sw_codec_lc3_enc_uninit_all();
 	}
 
 	/* Workaround for unexpected disconnection
