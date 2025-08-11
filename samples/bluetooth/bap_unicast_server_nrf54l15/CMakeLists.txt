@@ -6,6 +6,7 @@ project(bap_unicast_server_nrf54l15)
 
 target_sources(app PRIVATE
   src/main.c
+  src/stylus_hid.c
 )
 
 zephyr_library_include_directories(${ZEPHYR_BASE}/samples/bluetooth)
