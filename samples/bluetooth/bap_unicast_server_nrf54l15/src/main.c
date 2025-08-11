@@ -9,7 +9,7 @@
 #include <errno.h>
 #include <zephyr/kernel.h>
 #include <zephyr/sys/printk.h>
-#include <zephyr/audio/dmic.h>
+#include <zephyr/drivers/i2s.h>
 #include <zephyr/bluetooth/bluetooth.h>
 #include <zephyr/bluetooth/byteorder.h>
 #include <zephyr/bluetooth/conn.h>
@@ -20,7 +20,6 @@
 #include <zephyr/drivers/clock_control/nrf_clock_control.h>
 #include <dk_buttons_and_leds.h>
 #include "sw_codec_lc3.h"
-#include "hal/nrf_pdm.h"
 #include <zephyr/drivers/gpio.h>
 
 #include <zephyr/bluetooth/bluetooth.h>
@@ -128,10 +127,10 @@ static K_SEM_DEFINE(lc3_encoder_sem, 0U, TOTAL_BUF_NEEDED);
  * Application, after getting a given block from the driver and processing its
  * data, needs to free that block.
  */
-#define MAX_BLOCK_SIZE BLOCK_SIZE(MAX_SAMPLE_RATE, 2)
-#define BLOCK_COUNT    8
-K_MEM_SLAB_DEFINE_STATIC(mem_slab, MAX_BLOCK_SIZE, BLOCK_COUNT, 8);
-static const struct device *const dmic_dev = DEVICE_DT_GET(DT_NODELABEL(dmic_dev));
+#define MAX_BLOCK_SIZE BLOCK_SIZE(MAX_SAMPLE_RATE, 4)
+#define BLOCK_COUNT    4
+K_MEM_SLAB_DEFINE_STATIC(mem_slab, MAX_BLOCK_SIZE, BLOCK_COUNT, 4);
+static const struct device *const i2s_dev = DEVICE_DT_GET(DT_NODELABEL(i2s20));
 
 static int16_t send_pcm_data[MAX_NUM_SAMPLES];
 static const struct bt_audio_codec_cap lc3_codec_cap = BT_AUDIO_CODEC_CAP_LC3(
@@ -169,7 +168,7 @@ static const struct bt_data ad[] = {
 };
 
 static uint16_t configured_sampling_freq;
-static int pdm_mic_init(uint16_t sampling_rate);
+static int i2s_mic_init(uint16_t sampling_rate);
 
 #define AUDIO_VOLUME		(INT16_MAX - 3000) /* codec does clipping above INT16_MAX - 3000 */
 #define AUDIO_TONE_FREQUENCY_HZ 400
@@ -180,8 +179,8 @@ static int pdm_mic_init(uint16_t sampling_rate);
 
 #define LC3_ENCODER_STACK_SIZE 8192
 #define LC3_ENCODER_PRIORITY   2
-static void dmic_fetch_thread(void *arg1, void *arg2, void *arg3);
-K_THREAD_DEFINE(dmic_fetch, LC3_ENCODER_STACK_SIZE, dmic_fetch_thread, NULL, NULL, NULL,
+static void i2s_fetch_thread(void *arg1, void *arg2, void *arg3);
+K_THREAD_DEFINE(i2s_fetch, LC3_ENCODER_STACK_SIZE, i2s_fetch_thread, NULL, NULL, NULL,
 		LC3_ENCODER_PRIORITY, 0, -1);
 
 static uint16_t get_and_incr_seq_num(const struct bt_bap_stream *stream)
@@ -505,12 +504,12 @@ static void stream_stopped(struct bt_bap_stream *stream, uint8_t reason)
 
 	if (stream_dir(stream) == BT_AUDIO_DIR_SOURCE) {
 		dk_set_led_off(ISO_STREAM_STATUS);
-		k_thread_suspend(dmic_fetch);
-		ret = dmic_trigger(dmic_dev, DMIC_TRIGGER_STOP);
+		k_thread_suspend(i2s_fetch);
+		ret = i2s_trigger(i2s_dev, I2S_DIR_RX, I2S_TRIGGER_DROP);
 		if (ret < 0) {
-			LOG_INF("DMIC stop trigger failed: %d", ret);
+			LOG_INF("I2S stop trigger failed: %d", ret);
 		} else {
-			LOG_INF("DMIC stop trigger success");
+			LOG_INF("I2S stop trigger success");
 		}
 	}
 
@@ -530,16 +529,16 @@ static void stream_started(struct bt_bap_stream *stream)
 
 	if (stream_dir(stream) == BT_AUDIO_DIR_SOURCE) {
 		dk_set_led_on(ISO_STREAM_STATUS);
-		k_thread_resume(dmic_fetch);
-		ret = pdm_mic_init(configured_sampling_freq);
+		k_thread_resume(i2s_fetch);
+		ret = i2s_mic_init(configured_sampling_freq);
 		if (ret) {
-			LOG_ERR("Cannot init PDM mic: %d", ret);
+			LOG_ERR("Cannot init I2S mic: %d", ret);
 		}
-		ret = dmic_trigger(dmic_dev, DMIC_TRIGGER_START);
+		ret = i2s_trigger(i2s_dev, I2S_DIR_RX, I2S_TRIGGER_START);
 		if (ret < 0) {
-			LOG_INF("DMIC start trigger failed: %d", ret);
+			LOG_INF("I2S start trigger failed: %d", ret);
 		} else {
-			LOG_INF("DMIC start trigger success");
+			LOG_INF("I2S start trigger success");
 			k_sem_give(&lc3_encoder_sem);
 		}
 	}
@@ -991,18 +990,24 @@ static int clocks_start(void)
 	return 0;
 }
 
-static void dmic_fetch_thread(void *arg1, void *arg2, void *arg3)
+static void i2s_fetch_thread(void *arg1, void *arg2, void *arg3)
 {
 	int ret;
 	void *buffer;
-	uint32_t size;
+	size_t size;
 
 	while (true) {
 		k_sem_take(&lc3_encoder_sem, K_FOREVER);
 
-		ret = dmic_read(dmic_dev, 0, &buffer, &size, 10);
-		if (ret < 0) {
-			LOG_INF("DMIC read failed: %d", ret);
+		ret = i2s_read(i2s_dev, &buffer, &size);
+		if (ret == -5) {
+			LOG_INF("I2S read failed: %d", ret);
+			i2s_trigger(i2s_dev, I2S_DIR_RX, I2S_TRIGGER_PREPARE);
+			//i2s_trigger(i2s_dev, I2S_DIR_RX, I2S_TRIGGER_START);
+		}else if (ret == -11){
+			LOG_INF("I2S read failed: %d", ret);
+			i2s_trigger(i2s_dev, I2S_DIR_RX, I2S_TRIGGER_START);
+			//i2s_trigger(i2s_dev, I2S_DIR_RX, I2S_TRIGGER_START);
 		}
 		if (size > sizeof(send_pcm_data)) {
 			LOG_INF("Buffer size exceeds send_pcm_data size");
@@ -1015,50 +1020,30 @@ static void dmic_fetch_thread(void *arg1, void *arg2, void *arg3)
 	}
 }
 
-static int pdm_mic_init(uint16_t sampling_rate)
+static int i2s_mic_init(uint16_t sampling_rate)
 {
 	int err;
-	struct pcm_stream_cfg stream = {
-		.pcm_width = SAMPLE_BIT_WIDTH,
-		.mem_slab = &mem_slab,
-	};
-	struct dmic_cfg cfg = {
-		.io =
-			{
-				/* These fields can be used to limit the PDM clock
-				 * configurations that the driver is allowed to use
-				 * to those supported by the microphone.
-				 */
-				.min_pdm_clk_freq = 1000000,
-				.max_pdm_clk_freq = 3250000,
-				.min_pdm_clk_dc = 40,
-				.max_pdm_clk_dc = 60,
-			},
-		.streams = &stream,
-		.channel =
-			{
-				.req_num_streams = 1,
-			},
-	};
+	struct i2s_config i2s_cfg;
 
-	err = device_is_ready(dmic_dev);
-	if (err < 0) {
-		LOG_INF("DMIC device is not ready: %d", err);
-		return err;
+	if (!device_is_ready(i2s_dev)) {
+		LOG_ERR("I2S device not ready");
+		return -ENODEV;
 	}
 
-	cfg.channel.req_num_chan = 1;
-	cfg.channel.req_chan_map_lo = dmic_build_channel_map(0, 0, PDM_CHAN_LEFT);
-	cfg.streams[0].pcm_rate = sampling_rate;
-	cfg.streams[0].block_size = BLOCK_SIZE(cfg.streams[0].pcm_rate, cfg.channel.req_num_chan);
+	i2s_cfg.word_size = SAMPLE_BIT_WIDTH;
+	i2s_cfg.channels = 1;
+	i2s_cfg.format = I2S_FMT_DATA_FORMAT_I2S;
+	i2s_cfg.options = I2S_OPT_BIT_CLK_MASTER | I2S_OPT_FRAME_CLK_MASTER;
+	i2s_cfg.frame_clk_freq = sampling_rate;
+	i2s_cfg.mem_slab = &mem_slab;
+	i2s_cfg.block_size = BLOCK_SIZE(sampling_rate, 1);
+	i2s_cfg.timeout = READ_TIMEOUT;
 
-	err = dmic_configure(dmic_dev, &cfg);
+	err = i2s_configure(i2s_dev, I2S_DIR_RX, &i2s_cfg);
 	if (err < 0) {
-		LOG_INF("Failed to configure the driver: %d", err);
+		LOG_INF("Failed to configure the I2S driver: %d", err);
 		return err;
 	}
-
-	nrf_pdm_gain_set(NRF_PDM20_S, GAIN_DEFAULT, GAIN_DEFAULT);
 
 	return 0;
 }
@@ -1227,8 +1212,8 @@ int main(void)
 		return 0;
 	}
 
-	k_thread_start(dmic_fetch);
-	
+	k_thread_start(i2s_fetch);
+
 	k_work_init(&adv_work, advertising_process);
 	k_work_submit(&adv_work);
 
