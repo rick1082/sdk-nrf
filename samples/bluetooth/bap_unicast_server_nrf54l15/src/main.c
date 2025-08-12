@@ -144,9 +144,6 @@ static const struct bt_data ad[] = {
 static uint16_t configured_sampling_freq;
 static int i2s_mic_init(uint16_t sampling_rate);
 
-#define AUDIO_VOLUME		(INT16_MAX - 3000) /* codec does clipping above INT16_MAX - 3000 */
-#define AUDIO_TONE_FREQUENCY_HZ 400
-
 #define ACL_LINK_STATUS	  DK_LED1
 #define ISO_STREAM_STATUS DK_LED2
 #define ADV_STATUS	  DK_LED3
@@ -171,6 +168,12 @@ void audio_i2s_set_next_buf(const uint8_t *tx_buf, uint32_t *rx_buf)
 	}
 }
 
+void audio_i2s_stop()
+{
+	nrfx_i2s_stop(&i2s_inst);
+	nrfx_i2s_uninit(&i2s_inst);
+}
+
 void audio_i2s_start(const uint8_t *tx_buf, uint32_t *rx_buf)
 {
 	const nrfx_i2s_buffers_t i2s_buf = {.p_rx_buffer = rx_buf,
@@ -187,9 +190,10 @@ void audio_i2s_start(const uint8_t *tx_buf, uint32_t *rx_buf)
 }
 
 #include <zephyr/sys/ring_buffer.h>
-// 10 buffers of size I2S_SAMPLES_NUM * 2 * sizeof(uint16_t)
-RING_BUF_DECLARE(i2s_rx_ring_buf, I2S_SAMPLES_NUM * sizeof(uint16_t) * 20);
-#define BYTES_PER_SAMPLE 4
+
+#define RING_BUFFER_SIZE 20
+RING_BUF_DECLARE(i2s_rx_ring_buf, I2S_SAMPLES_NUM * sizeof(uint16_t) * RING_BUFFER_SIZE);
+#define DMA_BYTES_PER_SAMPLE 4
 static void i2s_comp_handler(nrfx_i2s_buffers_t const *released_bufs, uint32_t status)
 {
 	int16_t dummy_data[120] = {0};
@@ -197,16 +201,16 @@ static void i2s_comp_handler(nrfx_i2s_buffers_t const *released_bufs, uint32_t s
 		uint32_t ring_buf_space_bytes = ring_buf_space_get(&i2s_rx_ring_buf);
 		
 		if ((uint32_t *)released_bufs->p_rx_buffer == (uint32_t *)i2s_rx_buf_a) {
-			if (ring_buf_space_bytes < (I2S_SAMPLES_NUM * BYTES_PER_SAMPLE)) {
-				ring_buf_put(&i2s_rx_ring_buf, (uint8_t *) dummy_data, (I2S_SAMPLES_NUM - ring_buf_space_bytes) * BYTES_PER_SAMPLE);
+			if (ring_buf_space_bytes < (I2S_SAMPLES_NUM * DMA_BYTES_PER_SAMPLE)) {
+				ring_buf_put(&i2s_rx_ring_buf, (uint8_t *) dummy_data, (I2S_SAMPLES_NUM - ring_buf_space_bytes) * DMA_BYTES_PER_SAMPLE);
 			}
-			ring_buf_put(&i2s_rx_ring_buf, (uint8_t *) i2s_rx_buf_a, I2S_SAMPLES_NUM * BYTES_PER_SAMPLE);
+			ring_buf_put(&i2s_rx_ring_buf, (uint8_t *) i2s_rx_buf_a, I2S_SAMPLES_NUM * DMA_BYTES_PER_SAMPLE);
 			audio_i2s_set_next_buf(NULL, (uint32_t *)i2s_rx_buf_b);
 		} else if ((uint32_t *)released_bufs->p_rx_buffer == (uint32_t *)i2s_rx_buf_b) {
-			if (ring_buf_space_bytes < (I2S_SAMPLES_NUM * BYTES_PER_SAMPLE)) {
-				ring_buf_put(&i2s_rx_ring_buf, (uint8_t *) dummy_data, (I2S_SAMPLES_NUM - ring_buf_space_bytes) * BYTES_PER_SAMPLE);
+			if (ring_buf_space_bytes < (I2S_SAMPLES_NUM * DMA_BYTES_PER_SAMPLE)) {
+				ring_buf_put(&i2s_rx_ring_buf, (uint8_t *) dummy_data, (I2S_SAMPLES_NUM - ring_buf_space_bytes) * DMA_BYTES_PER_SAMPLE);
 			}
-			ring_buf_put(&i2s_rx_ring_buf, (uint8_t *) i2s_rx_buf_b, I2S_SAMPLES_NUM * BYTES_PER_SAMPLE);
+			ring_buf_put(&i2s_rx_ring_buf, (uint8_t *) i2s_rx_buf_b, I2S_SAMPLES_NUM * DMA_BYTES_PER_SAMPLE);
 			audio_i2s_set_next_buf(NULL, (uint32_t *)i2s_rx_buf_a);
 		}
 	}
@@ -533,14 +537,6 @@ static const struct bt_bap_unicast_server_cb unicast_server_cb = {
 	.release = lc3_release,
 };
 
-static void stream_recv(struct bt_bap_stream *stream, const struct bt_iso_recv_info *info,
-			struct net_buf *buf)
-{
-	if (info->flags & BT_ISO_FLAGS_VALID) {
-		LOG_DBG("Incoming audio on stream %p len %u", (void *)stream, buf->len);
-	}
-}
-
 static void disconnect_work_handler(struct k_work *work)
 {
 	bt_conn_disconnect(default_conn, BT_HCI_ERR_REMOTE_USER_TERM_CONN);
@@ -550,22 +546,12 @@ K_WORK_DEFINE(work_disconnect, disconnect_work_handler);
 
 static void stream_stopped(struct bt_bap_stream *stream, uint8_t reason)
 {
-	int ret;
 	LOG_INF("Audio Stream %p stopped with reason 0x%02X", (void *)stream, reason);
 
 	if (stream_dir(stream) == BT_AUDIO_DIR_SOURCE) {
 		dk_set_led_off(ISO_STREAM_STATUS);
 		k_thread_suspend(i2s_fetch);
-		nrfx_i2s_stop(&i2s_inst);
-		nrfx_i2s_uninit(&i2s_inst);
-		/*
-		ret = i2s_trigger(i2s_dev, I2S_DIR_RX, I2S_TRIGGER_DROP);
-		if (ret < 0) {
-			LOG_INF("I2S stop trigger failed: %d", ret);
-		} else {
-			LOG_INF("I2S stop trigger success");
-		}
-		*/
+		audio_i2s_stop();
 	}
 
 	/* Workaround for unexpected disconnection
@@ -631,7 +617,6 @@ static void stream_sent_cb(struct bt_bap_stream *stream)
 }
 
 static struct bt_bap_stream_ops stream_ops = {
-	.recv = stream_recv,
 	.stopped = stream_stopped,
 	.started = stream_started,
 	.enabled = stream_enabled_cb,
@@ -704,10 +689,6 @@ BT_CONN_CB_DEFINE(conn_callbacks) = {
 	.connected = connected,
 	.disconnected = disconnected,
 	.security_changed = security_level_changed,
-};
-
-static struct bt_pacs_cap cap_sink = {
-	.codec_cap = &lc3_codec_cap,
 };
 
 static struct bt_pacs_cap cap_source = {
@@ -830,63 +811,17 @@ static int clocks_start(void)
 
 static void i2s_fetch_thread(void *arg1, void *arg2, void *arg3)
 {
-	int ret;
-	void *buffer;
-	size_t size;
-
 	while (true) {
 		k_sem_take(&lc3_encoder_sem, K_FOREVER);
 		uint32_t ring_buf_size = ring_buf_size_get(&i2s_rx_ring_buf);
 		if (ring_buf_size < 16*2*10) {
-			//printk("%d\n", ring_buf_size);
-			//LOG_INF("dmic_fetch_thread: Not enough sample in ring buffer %d", ring_buf_size);
+			//LOG_DBG("I2S underrun");
 		} else {
-			//printk(":%d\n", ring_buf_size);
-			//LOG_INF("dmic_fetch_thread: Ring buffer size %d, getting data", ring_buf_size);
 			ring_buf_get(&i2s_rx_ring_buf, (uint8_t *)send_pcm_data, 16*2*10);
-			//send_data();
 		}		
-/*
-		ret = i2s_read(i2s_dev, &buffer, &size);
-		if (ret == -5) {
-			LOG_INF("I2S read failed: %d", ret);
-			i2s_trigger(i2s_dev, I2S_DIR_RX, I2S_TRIGGER_PREPARE);
-			// i2s_trigger(i2s_dev, I2S_DIR_RX, I2S_TRIGGER_START);
-		} else if (ret == -11) {
-			LOG_INF("I2S read failed: %d", ret);
-			i2s_trigger(i2s_dev, I2S_DIR_RX, I2S_TRIGGER_START);
-			// i2s_trigger(i2s_dev, I2S_DIR_RX, I2S_TRIGGER_START);
-		}
-		if (size > sizeof(send_pcm_data)) {
-			LOG_INF("Buffer size exceeds send_pcm_data size");
-			size = sizeof(send_pcm_data);
-		}
-
-		memcpy(send_pcm_data, buffer, size);
-*/
 		send_data();
 	}
 }
-/*
-static int i2s_mic_init(uint16_t sampling_rate)
-{
-	int err;
-	struct i2s_config i2s_cfg;
-
-	if (!device_is_ready(i2s_dev)) {
-		LOG_ERR("I2S device not ready");
-		return -ENODEV;
-	}
-
-	err = i2s_configure(i2s_dev, I2S_DIR_RX, &i2s_cfg);
-	if (err < 0) {
-		LOG_INF("Failed to configure the I2S driver: %d", err);
-		return err;
-	}
-
-	return 0;
-}
-	*/
 
 /* Handles button state changes and adjusts PDM gain accordingly */
 static void button_changed(uint32_t button_state, uint32_t has_changed)
@@ -1014,12 +949,7 @@ int main(void)
 	bt_bap_unicast_server_register(&param);
 	bt_bap_unicast_server_register_cb(&unicast_server_cb);
 
-	bt_pacs_cap_register(BT_AUDIO_DIR_SINK, &cap_sink);
 	bt_pacs_cap_register(BT_AUDIO_DIR_SOURCE, &cap_source);
-
-	for (size_t i = 0; i < ARRAY_SIZE(sink_streams); i++) {
-		bt_bap_stream_cb_register(&sink_streams[i], &stream_ops);
-	}
 
 	for (size_t i = 0; i < ARRAY_SIZE(source_streams); i++) {
 		bt_bap_stream_cb_register(&source_streams[i].stream, &stream_ops);
