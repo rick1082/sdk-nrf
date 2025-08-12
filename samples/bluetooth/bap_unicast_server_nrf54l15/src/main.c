@@ -9,7 +9,7 @@
 #include <errno.h>
 #include <zephyr/kernel.h>
 #include <zephyr/sys/printk.h>
-#include <zephyr/drivers/i2s.h>
+#include <nrfx_i2s.h>
 #include <zephyr/bluetooth/bluetooth.h>
 #include <zephyr/bluetooth/byteorder.h>
 #include <zephyr/bluetooth/conn.h>
@@ -59,7 +59,7 @@ BT_HIDS_DEF(hids_obj, INPUT_REP_BUTTONS_LEN, INPUT_REP_MOVEMENT_LEN, INPUT_REP_M
 
 static const struct device *gpio;
 static struct k_work hids_work;
-#define erase_bond_btn 4 //P0.04
+#define erase_bond_btn 4 // P0.04
 
 static struct bt_le_ext_adv *adv;
 static struct k_work adv_work;
@@ -78,32 +78,37 @@ NET_BUF_POOL_FIXED_DEFINE(tx_pool, CONFIG_BT_ASCS_MAX_ASE_SRC_COUNT,
 			  BT_ISO_SDU_BUF_SIZE(CONFIG_BT_ISO_TX_MTU),
 			  CONFIG_BT_CONN_TX_USER_DATA_SIZE, NULL);
 
-#define GAIN_DEFAULT	      0x50
-#define MAX_SAMPLE_RATE	      32000
+#define MAX_SAMPLE_RATE	      16000
 #define MAX_FRAME_DURATION_US 10000
 #define MAX_NUM_SAMPLES	      ((MAX_FRAME_DURATION_US * MAX_SAMPLE_RATE) / USEC_PER_SEC)
 #define TOTAL_BUF_NEEDED      4
 static K_SEM_DEFINE(lc3_encoder_sem, 0U, TOTAL_BUF_NEEDED);
-#define SAMPLE_BIT_WIDTH 16
-#define BYTES_PER_SAMPLE sizeof(int16_t)
-/* Milliseconds to wait for a block to be read. */
-#define READ_TIMEOUT	 1000
-/* Size of a block for 10 ms of audio data. */
-#define BLOCK_SIZE(_sample_rate, _number_of_channels)                                              \
-	(BYTES_PER_SAMPLE * (_sample_rate / 100) * _number_of_channels)
+#include <zephyr/drivers/pinctrl.h>
+#define I2S_NL DT_NODELABEL(i2s20)
+PINCTRL_DT_DEFINE(I2S_NL);
+static nrfx_i2s_t i2s_inst = NRFX_I2S_INSTANCE(20);
+static nrfx_i2s_config_t cfg = {
+	/* Pins are configured by pinctrl. */
+	.skip_gpio_cfg = true,
+	.skip_psel_cfg = true,
+	.irq_priority = DT_IRQ(I2S_NL, priority),
+	.mode = NRF_I2S_MODE_MASTER,
+	.format = NRF_I2S_FORMAT_I2S,
+	.alignment = NRF_I2S_ALIGN_LEFT,
+	.ratio = NRF_I2S_RATIO_64X,
+	.sample_width = NRF_I2S_SWIDTH_16BIT,
+	.channels = NRF_I2S_CHANNELS_LEFT,
+	.mck_setup = 0x8102000,
+};
 
-/* Driver will allocate blocks from this slab to receive audio data into them.
- * Application, after getting a given block from the driver and processing its
- * data, needs to free that block.
- */
-#define MAX_BLOCK_SIZE BLOCK_SIZE(MAX_SAMPLE_RATE, 4)
-#define BLOCK_COUNT    4
-K_MEM_SLAB_DEFINE_STATIC(mem_slab, MAX_BLOCK_SIZE, BLOCK_COUNT, 4);
-static const struct device *const i2s_dev = DEVICE_DT_GET(DT_NODELABEL(i2s20));
+#define I2S_SAMPLES_NUM 16
+static uint16_t i2s_rx_buf_a[I2S_SAMPLES_NUM];
+static uint16_t i2s_rx_buf_b[I2S_SAMPLES_NUM];
+
 
 static int16_t send_pcm_data[MAX_NUM_SAMPLES];
 static const struct bt_audio_codec_cap lc3_codec_cap = BT_AUDIO_CODEC_CAP_LC3(
-	(BT_AUDIO_CODEC_CAP_FREQ_16KHZ|BT_AUDIO_CODEC_CAP_FREQ_32KHZ), BT_AUDIO_CODEC_CAP_DURATION_10,
+	(BT_AUDIO_CODEC_CAP_FREQ_16KHZ), BT_AUDIO_CODEC_CAP_DURATION_10,
 	BT_AUDIO_CODEC_CAP_CHAN_COUNT_SUPPORT(1), 40u, 120u, 1u, BT_AUDIO_CONTEXT_TYPE_ANY);
 
 static struct bt_conn *default_conn;
@@ -144,13 +149,90 @@ static int i2s_mic_init(uint16_t sampling_rate);
 
 #define ACL_LINK_STATUS	  DK_LED1
 #define ISO_STREAM_STATUS DK_LED2
-#define ADV_STATUS	  	  DK_LED3
+#define ADV_STATUS	  DK_LED3
 
 #define LC3_ENCODER_STACK_SIZE 8192
 #define LC3_ENCODER_PRIORITY   2
 static void i2s_fetch_thread(void *arg1, void *arg2, void *arg3);
 K_THREAD_DEFINE(i2s_fetch, LC3_ENCODER_STACK_SIZE, i2s_fetch_thread, NULL, NULL, NULL,
 		LC3_ENCODER_PRIORITY, 0, -1);
+
+void audio_i2s_set_next_buf(const uint8_t *tx_buf, uint32_t *rx_buf)
+{
+	const nrfx_i2s_buffers_t i2s_buf = {.p_rx_buffer = rx_buf,
+					    .p_tx_buffer = (uint32_t *)tx_buf,
+					    .buffer_size = I2S_SAMPLES_NUM};
+
+	nrfx_err_t ret;
+
+	ret = nrfx_i2s_next_buffers_set(&i2s_inst, &i2s_buf);
+	if (ret != NRFX_SUCCESS) {
+		printk("Failed to set next buffers: %x\n", ret);
+	}
+}
+
+void audio_i2s_start(const uint8_t *tx_buf, uint32_t *rx_buf)
+{
+	const nrfx_i2s_buffers_t i2s_buf = {.p_rx_buffer = rx_buf,
+					    .p_tx_buffer = (uint32_t *)tx_buf,
+					    .buffer_size = I2S_SAMPLES_NUM};
+
+	int ret;
+
+	/* Buffer size in 32-bit words */
+	ret = nrfx_i2s_start(&i2s_inst, &i2s_buf, 0);
+	if (ret != NRFX_SUCCESS) {
+		printk("Failed to start I2S: %d\n", ret);
+	}
+}
+
+#include <zephyr/sys/ring_buffer.h>
+// 10 buffers of size I2S_SAMPLES_NUM * 2 * sizeof(uint16_t)
+RING_BUF_DECLARE(i2s_rx_ring_buf, I2S_SAMPLES_NUM * sizeof(uint16_t) * 20);
+#define BYTES_PER_SAMPLE 4
+static void i2s_comp_handler(nrfx_i2s_buffers_t const *released_bufs, uint32_t status)
+{
+	int16_t dummy_data[120] = {0};
+	if (status == NRFX_I2S_STATUS_NEXT_BUFFERS_NEEDED) {
+		uint32_t ring_buf_space_bytes = ring_buf_space_get(&i2s_rx_ring_buf);
+		
+		if ((uint32_t *)released_bufs->p_rx_buffer == (uint32_t *)i2s_rx_buf_a) {
+			if (ring_buf_space_bytes < (I2S_SAMPLES_NUM * BYTES_PER_SAMPLE)) {
+				ring_buf_put(&i2s_rx_ring_buf, (uint8_t *) dummy_data, (I2S_SAMPLES_NUM - ring_buf_space_bytes) * BYTES_PER_SAMPLE);
+			}
+			ring_buf_put(&i2s_rx_ring_buf, (uint8_t *) i2s_rx_buf_a, I2S_SAMPLES_NUM * BYTES_PER_SAMPLE);
+			audio_i2s_set_next_buf(NULL, (uint32_t *)i2s_rx_buf_b);
+		} else if ((uint32_t *)released_bufs->p_rx_buffer == (uint32_t *)i2s_rx_buf_b) {
+			if (ring_buf_space_bytes < (I2S_SAMPLES_NUM * BYTES_PER_SAMPLE)) {
+				ring_buf_put(&i2s_rx_ring_buf, (uint8_t *) dummy_data, (I2S_SAMPLES_NUM - ring_buf_space_bytes) * BYTES_PER_SAMPLE);
+			}
+			ring_buf_put(&i2s_rx_ring_buf, (uint8_t *) i2s_rx_buf_b, I2S_SAMPLES_NUM * BYTES_PER_SAMPLE);
+			audio_i2s_set_next_buf(NULL, (uint32_t *)i2s_rx_buf_a);
+		}
+	}
+}
+
+static int i2s_mic_init(uint16_t sampling_rate)
+{
+	int ret;
+
+	ret = pinctrl_apply_state(PINCTRL_DT_DEV_CONFIG_GET(I2S_NL), PINCTRL_STATE_DEFAULT);
+	if (ret != 0) {
+		printk("Failed to apply pinctrl state: %d\n", ret);
+		return -EIO;
+	}
+
+	IRQ_CONNECT(DT_IRQN(I2S_NL), DT_IRQ(I2S_NL, priority), nrfx_isr, nrfx_i2s_20_irq_handler,
+		    0);
+	irq_enable(DT_IRQN(I2S_NL));
+
+	ret = nrfx_i2s_init(&i2s_inst, &cfg, i2s_comp_handler);
+	if (ret != NRFX_SUCCESS) {
+		printk("Failed to initialize I2S: %x\n", ret);
+		return -EIO;
+	}
+	return 0;
+}
 
 static uint16_t get_and_incr_seq_num(const struct bt_bap_stream *stream)
 {
@@ -474,12 +556,16 @@ static void stream_stopped(struct bt_bap_stream *stream, uint8_t reason)
 	if (stream_dir(stream) == BT_AUDIO_DIR_SOURCE) {
 		dk_set_led_off(ISO_STREAM_STATUS);
 		k_thread_suspend(i2s_fetch);
+		nrfx_i2s_stop(&i2s_inst);
+		nrfx_i2s_uninit(&i2s_inst);
+		/*
 		ret = i2s_trigger(i2s_dev, I2S_DIR_RX, I2S_TRIGGER_DROP);
 		if (ret < 0) {
 			LOG_INF("I2S stop trigger failed: %d", ret);
 		} else {
 			LOG_INF("I2S stop trigger success");
 		}
+		*/
 	}
 
 	/* Workaround for unexpected disconnection
@@ -503,7 +589,10 @@ static void stream_started(struct bt_bap_stream *stream)
 		if (ret) {
 			LOG_ERR("Cannot init I2S mic: %d", ret);
 		}
-		ret = i2s_trigger(i2s_dev, I2S_DIR_RX, I2S_TRIGGER_START);
+		memset(i2s_rx_buf_a, 0, sizeof(i2s_rx_buf_a));
+		memset(i2s_rx_buf_b, 0, sizeof(i2s_rx_buf_b));
+		audio_i2s_start(NULL, (uint32_t *)i2s_rx_buf_a);
+		audio_i2s_set_next_buf(NULL, (uint32_t *)i2s_rx_buf_b);
 		if (ret < 0) {
 			LOG_INF("I2S start trigger failed: %d", ret);
 		} else {
@@ -572,7 +661,6 @@ static void connected(struct bt_conn *conn, uint8_t err)
 		return;
 	}
 
-
 	stylus_hid_insert_conn_object(&hids_obj, conn);
 	LOG_INF("Connected: %s", addr);
 	default_conn = bt_conn_ref(conn);
@@ -597,7 +685,6 @@ static void disconnected(struct bt_conn *conn, uint8_t reason)
 	bt_conn_unref(default_conn);
 	default_conn = NULL;
 	dk_set_led_off(ACL_LINK_STATUS);
-
 
 	stylus_hid_remove_conn_object(&hids_obj, conn);
 	k_work_submit(&adv_work);
@@ -749,28 +836,38 @@ static void i2s_fetch_thread(void *arg1, void *arg2, void *arg3)
 
 	while (true) {
 		k_sem_take(&lc3_encoder_sem, K_FOREVER);
-
+		uint32_t ring_buf_size = ring_buf_size_get(&i2s_rx_ring_buf);
+		if (ring_buf_size < 16*2*10) {
+			//printk("%d\n", ring_buf_size);
+			//LOG_INF("dmic_fetch_thread: Not enough sample in ring buffer %d", ring_buf_size);
+		} else {
+			//printk(":%d\n", ring_buf_size);
+			//LOG_INF("dmic_fetch_thread: Ring buffer size %d, getting data", ring_buf_size);
+			ring_buf_get(&i2s_rx_ring_buf, (uint8_t *)send_pcm_data, 16*2*10);
+			//send_data();
+		}		
+/*
 		ret = i2s_read(i2s_dev, &buffer, &size);
 		if (ret == -5) {
 			LOG_INF("I2S read failed: %d", ret);
 			i2s_trigger(i2s_dev, I2S_DIR_RX, I2S_TRIGGER_PREPARE);
-			//i2s_trigger(i2s_dev, I2S_DIR_RX, I2S_TRIGGER_START);
-		}else if (ret == -11){
+			// i2s_trigger(i2s_dev, I2S_DIR_RX, I2S_TRIGGER_START);
+		} else if (ret == -11) {
 			LOG_INF("I2S read failed: %d", ret);
 			i2s_trigger(i2s_dev, I2S_DIR_RX, I2S_TRIGGER_START);
-			//i2s_trigger(i2s_dev, I2S_DIR_RX, I2S_TRIGGER_START);
+			// i2s_trigger(i2s_dev, I2S_DIR_RX, I2S_TRIGGER_START);
 		}
 		if (size > sizeof(send_pcm_data)) {
 			LOG_INF("Buffer size exceeds send_pcm_data size");
 			size = sizeof(send_pcm_data);
 		}
-		memcpy(send_pcm_data, buffer, size);
 
-		k_mem_slab_free(&mem_slab, buffer);
+		memcpy(send_pcm_data, buffer, size);
+*/
 		send_data();
 	}
 }
-
+/*
 static int i2s_mic_init(uint16_t sampling_rate)
 {
 	int err;
@@ -781,15 +878,6 @@ static int i2s_mic_init(uint16_t sampling_rate)
 		return -ENODEV;
 	}
 
-	i2s_cfg.word_size = SAMPLE_BIT_WIDTH;
-	i2s_cfg.channels = 1;
-	i2s_cfg.format = I2S_FMT_DATA_FORMAT_I2S;
-	i2s_cfg.options = I2S_OPT_BIT_CLK_MASTER | I2S_OPT_FRAME_CLK_MASTER;
-	i2s_cfg.frame_clk_freq = sampling_rate;
-	i2s_cfg.mem_slab = &mem_slab;
-	i2s_cfg.block_size = BLOCK_SIZE(sampling_rate, 1);
-	i2s_cfg.timeout = READ_TIMEOUT;
-
 	err = i2s_configure(i2s_dev, I2S_DIR_RX, &i2s_cfg);
 	if (err < 0) {
 		LOG_INF("Failed to configure the I2S driver: %d", err);
@@ -798,6 +886,7 @@ static int i2s_mic_init(uint16_t sampling_rate)
 
 	return 0;
 }
+	*/
 
 /* Handles button state changes and adjusts PDM gain accordingly */
 static void button_changed(uint32_t button_state, uint32_t has_changed)
@@ -916,6 +1005,7 @@ int main(void)
 	}
 
 	k_work_init(&hids_work, mouse_handler);
+
 	err = sw_codec_lc3_init(NULL, NULL, MAX_FRAME_DURATION_US);
 	if (err) {
 		LOG_INF("sw_codec_lc3_init failed (err %d)", err);
@@ -970,7 +1060,7 @@ int main(void)
 
 	while (true) {
 		k_sleep(K_SECONDS(1));
-		bas_notify();		
+		bas_notify();
 	}
 	return 0;
 }

@@ -34,9 +34,40 @@
 /* Id of reference to Mouse Input Report containing media player data. */
 #define INPUT_REP_REF_MPLAYER_ID   3
 
-void stylus_hid_remove_conn_object(struct bt_hids *hids_obj, struct bt_conn *conn);
+/** @brief Insert a connection object into the HID service.
+ * 
+ * This function is called when a new connection is established.
+ *
+ * @param hids_obj Pointer to the HID service object.
+ * @param conn Pointer to the Bluetooth connection object.
+ */
 void stylus_hid_insert_conn_object(struct bt_hids *hids_obj,struct bt_conn *conn);
-void stylus_hid_init(struct bt_hids *hids_obj);
+
+/** @brief Remove a connection object from the HID service.
+ *
+ * This function is called when a connection is terminated.
+ *
+ * @param hids_obj Pointer to the HID service object.
+ * @param conn Pointer to the Bluetooth connection object.
+ */
+void stylus_hid_remove_conn_object(struct bt_hids *hids_obj, struct bt_conn *conn);
+
+/** @brief Send mouse movement data to the HID service.
+ *
+ * This function is called to send mouse movement data to the HID service.
+ *
+ * @param hids_obj Pointer to the HID service object.
+ * @param x_delta Change in the X axis.
+ * @param y_delta Change in the Y axis.
+ */
 void stylus_hid_mouse_movement_send(struct bt_hids *hids_obj, int16_t x_delta, int16_t y_delta);
+
+/** @brief Initialize the HID service.
+ *
+ * This function is called to initialize the HID service.
+ *
+ * @param hids_obj Pointer to the HID service object.
+ */
+void stylus_hid_init(struct bt_hids *hids_obj);
 
 #endif
