@@ -32,6 +32,8 @@
 #include <zephyr/bluetooth/services/dis.h>
 #include <zephyr/settings/settings.h>
 #include "stylus_hid.h"
+#include <zephyr/sys/ring_buffer.h>
+#include <zephyr/drivers/pinctrl.h>
 
 #if defined(NRF54L15_XXAA)
 #include <hal/nrf_clock.h>
@@ -50,16 +52,13 @@ LOG_MODULE_REGISTER(app);
 /* Key used to move cursor down */
 #define KEY_DOWN_MASK	DK_BTN4_MSK
 
-/* Key used to accept or reject passkey value */
-#define KEY_PAIRING_ACCEPT DK_BTN1_MSK
-#define KEY_PAIRING_REJECT DK_BTN2_MSK
+#define erase_bond_btn 4 // P0.04
 
 /* HIDS instance. */
 BT_HIDS_DEF(hids_obj, INPUT_REP_BUTTONS_LEN, INPUT_REP_MOVEMENT_LEN, INPUT_REP_MEDIA_PLAYER_LEN);
 
 static const struct device *gpio;
 static struct k_work hids_work;
-#define erase_bond_btn 4 // P0.04
 
 static struct bt_le_ext_adv *adv;
 static struct k_work adv_work;
@@ -71,19 +70,27 @@ struct mouse_pos {
 /* Mouse movement queue. */
 K_MSGQ_DEFINE(hids_queue, sizeof(struct mouse_pos), HIDS_QUEUE_SIZE, 4);
 
-#define AVAILABLE_SINK_CONTEXT	 BT_AUDIO_CONTEXT_TYPE_ANY
-#define AVAILABLE_SOURCE_CONTEXT BT_AUDIO_CONTEXT_TYPE_ANY
-
 NET_BUF_POOL_FIXED_DEFINE(tx_pool, CONFIG_BT_ASCS_MAX_ASE_SRC_COUNT,
 			  BT_ISO_SDU_BUF_SIZE(CONFIG_BT_ISO_TX_MTU),
 			  CONFIG_BT_CONN_TX_USER_DATA_SIZE, NULL);
 
-#define MAX_SAMPLE_RATE	      16000
-#define MAX_FRAME_DURATION_US 10000
-#define MAX_NUM_SAMPLES	      ((MAX_FRAME_DURATION_US * MAX_SAMPLE_RATE) / USEC_PER_SEC)
-#define TOTAL_BUF_NEEDED      4
+#define AVAILABLE_SINK_CONTEXT	 BT_AUDIO_CONTEXT_TYPE_ANY
+#define AVAILABLE_SOURCE_CONTEXT BT_AUDIO_CONTEXT_TYPE_ANY
+#define MAX_SAMPLE_RATE		 	16000
+#define MAX_FRAME_DURATION_US	10000
+#define MAX_NUM_SAMPLES		 ((MAX_FRAME_DURATION_US * MAX_SAMPLE_RATE) / USEC_PER_SEC)
+#define TOTAL_BUF_NEEDED		4
+#define RING_BUFFER_SIZE		20
+#define DMA_BYTES_PER_SAMPLE	4
+
+#define I2S_SAMPLES_NUM 16	// Number of samples per I2S transfer
+static uint16_t i2s_rx_buf_a[I2S_SAMPLES_NUM];
+static uint16_t i2s_rx_buf_b[I2S_SAMPLES_NUM];
+static int16_t send_pcm_data[MAX_NUM_SAMPLES];
+
+RING_BUF_DECLARE(i2s_rx_ring_buf, I2S_SAMPLES_NUM * sizeof(uint16_t) * RING_BUFFER_SIZE);
 static K_SEM_DEFINE(lc3_encoder_sem, 0U, TOTAL_BUF_NEEDED);
-#include <zephyr/drivers/pinctrl.h>
+
 #define I2S_NL DT_NODELABEL(i2s20)
 PINCTRL_DT_DEFINE(I2S_NL);
 static nrfx_i2s_t i2s_inst = NRFX_I2S_INSTANCE(20);
@@ -98,15 +105,9 @@ static nrfx_i2s_config_t cfg = {
 	.ratio = NRF_I2S_RATIO_64X,
 	.sample_width = NRF_I2S_SWIDTH_16BIT,
 	.channels = NRF_I2S_CHANNELS_LEFT,
-	.mck_setup = 0x8102000,
+	.mck_setup = 0x8102000,	
 };
 
-#define I2S_SAMPLES_NUM 16
-static uint16_t i2s_rx_buf_a[I2S_SAMPLES_NUM];
-static uint16_t i2s_rx_buf_b[I2S_SAMPLES_NUM];
-
-
-static int16_t send_pcm_data[MAX_NUM_SAMPLES];
 static const struct bt_audio_codec_cap lc3_codec_cap = BT_AUDIO_CODEC_CAP_LC3(
 	(BT_AUDIO_CODEC_CAP_FREQ_16KHZ), BT_AUDIO_CODEC_CAP_DURATION_10,
 	BT_AUDIO_CODEC_CAP_CHAN_COUNT_SUPPORT(1), 40u, 120u, 1u, BT_AUDIO_CONTEXT_TYPE_ANY);
@@ -189,11 +190,6 @@ void audio_i2s_start(const uint8_t *tx_buf, uint32_t *rx_buf)
 	}
 }
 
-#include <zephyr/sys/ring_buffer.h>
-
-#define RING_BUFFER_SIZE 20
-RING_BUF_DECLARE(i2s_rx_ring_buf, I2S_SAMPLES_NUM * sizeof(uint16_t) * RING_BUFFER_SIZE);
-#define DMA_BYTES_PER_SAMPLE 4
 static void i2s_comp_handler(nrfx_i2s_buffers_t const *released_bufs, uint32_t status)
 {
 	int16_t dummy_data[120] = {0};
