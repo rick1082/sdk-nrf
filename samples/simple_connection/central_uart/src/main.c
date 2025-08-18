@@ -29,13 +29,14 @@ static struct bt_gatt_subscribe_params subscribe_params;
 static void start_scan(void);
 
 static struct bt_conn *default_conn;
+static uint16_t nus_write_handle = 0xffff;
 
 static bool device_name_check(struct bt_data *data, void *user_data)
 {
 	int ret;
 	bt_addr_le_t *addr = user_data;
 	char addr_string[BT_ADDR_LE_STR_LEN];
-	char srch_name[] = "Zephyr NUS";
+	char srch_name[] = CONFIG_BT_DEVICE_NAME;
 	/* We only care about LTVs with name */
 	if (data->type == BT_DATA_NAME_COMPLETE || data->type == BT_DATA_NAME_SHORTENED) {
 		size_t srch_name_size = strlen(srch_name);
@@ -115,6 +116,23 @@ static uint8_t notify_func(struct bt_conn *conn,
 	return BT_GATT_ITER_CONTINUE;
 }
 
+static int nus_write(const char *data, uint16_t length)
+{
+	int err;
+
+	if (!default_conn || nus_write_handle == 0xffff) {
+		printk("Not connected or NUS write handle not set\n");
+		return -EIO;
+	}
+
+	err = bt_gatt_write_without_response(default_conn, nus_write_handle, data, length, false);
+	if (err) {
+		printk("Write failed (err %d)\n", err);
+		return err;
+	}
+	return 0;
+}
+
 static uint8_t discover_func(struct bt_conn *conn,
 			     const struct bt_gatt_attr *attr,
 			     struct bt_gatt_discover_params *params)
@@ -153,7 +171,8 @@ static uint8_t discover_func(struct bt_conn *conn,
 		if (err) {
 			printk("Discover failed (err %d)\n", err);
 		}
-	} else {
+	} else if (!bt_uuid_cmp(discover_params.uuid,
+				BT_UUID_GATT_CCC)) {
 		subscribe_params.notify = notify_func;
 		subscribe_params.value = BT_GATT_CCC_NOTIFY;
 		subscribe_params.ccc_handle = attr->handle;
@@ -165,6 +184,21 @@ static uint8_t discover_func(struct bt_conn *conn,
 			printk("[SUBSCRIBED]\n");
 		}
 
+		memcpy(&discover_uuid, BT_UUID_NUS_RX, sizeof(discover_uuid));
+		discover_params.uuid = &discover_uuid.uuid;
+		discover_params.start_handle = attr->handle + 1;
+		discover_params.type = BT_GATT_DISCOVER_CHARACTERISTIC;
+		err = bt_gatt_discover(conn, &discover_params);
+		if (err) {
+			printk("Discover failed (err %d)\n", err);
+		}
+	} else if (!bt_uuid_cmp(discover_params.uuid,
+				BT_UUID_NUS_RX)) {
+		printk("NUS RX service found\n");
+		nus_write_handle = bt_gatt_attr_value_handle(attr);
+		return BT_GATT_ITER_STOP;
+	} else {
+		printk("Unknown attribute found\n");
 		return BT_GATT_ITER_STOP;
 	}
 
@@ -241,9 +275,10 @@ int main(void)
 	}
 
 	printk("Bluetooth initialized\n");
-	const char *hello_world = "Hello World!\n";
+	const char *hello_world = "Hello World!";
 	start_scan();
 	while(1){
+		nus_write(hello_world, strlen(hello_world));
 		k_sleep(K_MSEC(1000));
 	}
 	return 0;
