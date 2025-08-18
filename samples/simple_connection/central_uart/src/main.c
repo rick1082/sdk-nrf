@@ -20,11 +20,12 @@
 #include <zephyr/sys/byteorder.h>
 
 #include <bluetooth/services/nus.h>
-#include <bluetooth/services/nus_client.h>
-#include <bluetooth/gatt_dm.h>
 
-static struct bt_nus_client nus_client;
-static void gatt_discover(struct bt_conn *conn);
+static struct bt_uuid_128 discover_uuid = BT_UUID_INIT_128(0);
+static struct bt_uuid_16 discover_cccd_uuid = BT_UUID_INIT_16(0);
+static struct bt_gatt_discover_params discover_params;
+static struct bt_gatt_subscribe_params subscribe_params;
+
 static void start_scan(void);
 
 static struct bt_conn *default_conn;
@@ -98,6 +99,78 @@ static void start_scan(void)
 	printk("Scanning successfully started\n");
 }
 
+static uint8_t notify_func(struct bt_conn *conn,
+			   struct bt_gatt_subscribe_params *params,
+			   const void *data, uint16_t length)
+{
+	if (!data) {
+		printk("[UNSUBSCRIBED]\n");
+		params->value_handle = 0U;
+		return BT_GATT_ITER_STOP;
+	}
+
+	printk("[NOTIFICATION] data %p length %u\n", data, length);
+	printk("%s\n", (char *)data);
+
+	return BT_GATT_ITER_CONTINUE;
+}
+
+static uint8_t discover_func(struct bt_conn *conn,
+			     const struct bt_gatt_attr *attr,
+			     struct bt_gatt_discover_params *params)
+{
+	int err;
+
+	if (!attr) {
+		printk("Discover complete\n");
+		(void)memset(params, 0, sizeof(*params));
+		return BT_GATT_ITER_STOP;
+	}
+
+	printk("[ATTRIBUTE] handle %u\n", attr->handle);
+
+	if (!bt_uuid_cmp(discover_params.uuid, BT_UUID_NUS_SERVICE)) {
+		printk("NUS service found\n");
+		memcpy(&discover_uuid, BT_UUID_NUS_TX, sizeof(discover_uuid));
+		discover_params.uuid = &discover_uuid.uuid;
+		discover_params.start_handle = attr->handle + 1;
+		discover_params.type = BT_GATT_DISCOVER_CHARACTERISTIC;
+		err = bt_gatt_discover(conn, &discover_params);
+		if (err) {
+			printk("Discover failed (err %d)\n", err);
+		}
+		
+	} else if (!bt_uuid_cmp(discover_params.uuid,
+				BT_UUID_NUS_TX)) {
+		printk("NUS TX service found\n");
+		memcpy(&discover_cccd_uuid, BT_UUID_GATT_CCC, sizeof(discover_cccd_uuid));
+		discover_params.uuid = &discover_cccd_uuid.uuid;
+		discover_params.start_handle = attr->handle + 1;
+		discover_params.type = BT_GATT_DISCOVER_DESCRIPTOR;
+		subscribe_params.value_handle = bt_gatt_attr_value_handle(attr);
+
+		err = bt_gatt_discover(conn, &discover_params);
+		if (err) {
+			printk("Discover failed (err %d)\n", err);
+		}
+	} else {
+		subscribe_params.notify = notify_func;
+		subscribe_params.value = BT_GATT_CCC_NOTIFY;
+		subscribe_params.ccc_handle = attr->handle;
+
+		err = bt_gatt_subscribe(conn, &subscribe_params);
+		if (err && err != -EALREADY) {
+			printk("Subscribe failed (err %d)\n", err);
+		} else {
+			printk("[SUBSCRIBED]\n");
+		}
+
+		return BT_GATT_ITER_STOP;
+	}
+
+	return BT_GATT_ITER_STOP;
+}
+
 static void connected(struct bt_conn *conn, uint8_t err)
 {
 	char addr[BT_ADDR_LE_STR_LEN];
@@ -119,7 +192,19 @@ static void connected(struct bt_conn *conn, uint8_t err)
 	}
 
 	printk("Connected: %s\n", addr);
-	gatt_discover(conn);
+
+	memcpy(&discover_uuid, BT_UUID_NUS_SERVICE, sizeof(discover_uuid));
+	discover_params.uuid = &discover_uuid.uuid;
+	discover_params.func = discover_func;
+	discover_params.start_handle = BT_ATT_FIRST_ATTRIBUTE_HANDLE;
+	discover_params.end_handle = BT_ATT_LAST_ATTRIBUTE_HANDLE;
+	discover_params.type = BT_GATT_DISCOVER_PRIMARY;
+
+	err = bt_gatt_discover(default_conn, &discover_params);
+	if (err) {
+		printk("Discover failed(err %d)\n", err);
+		return;
+	}
 }
 
 static void disconnected(struct bt_conn *conn, uint8_t reason)
@@ -145,95 +230,6 @@ BT_CONN_CB_DEFINE(conn_callbacks) = {
 	.disconnected = disconnected,
 };
 
-static void discovery_complete(struct bt_gatt_dm *dm,
-			       void *context)
-{
-	struct bt_nus_client *nus = context;
-	printk("Service discovery completed\n");
-
-	bt_gatt_dm_data_print(dm);
-
-	bt_nus_handles_assign(dm, nus);
-	bt_nus_subscribe_receive(nus);
-
-	bt_gatt_dm_data_release(dm);
-}
-
-static void discovery_service_not_found(struct bt_conn *conn,
-					void *context)
-{
-	printk("Service not found\n");
-}
-
-static void discovery_error(struct bt_conn *conn,
-			    int err,
-			    void *context)
-{
-	printk("Error while discovering GATT database: (%d)\n", err);
-}
-
-struct bt_gatt_dm_cb discovery_cb = {
-	.completed         = discovery_complete,
-	.service_not_found = discovery_service_not_found,
-	.error_found       = discovery_error,
-};
-
-static void gatt_discover(struct bt_conn *conn)
-{
-	int err;
-
-	if (conn != default_conn) {
-		return;
-	}
-
-	err = bt_gatt_dm_start(conn,
-			       BT_UUID_NUS_SERVICE,
-			       &discovery_cb,
-			       &nus_client);
-	if (err) {
-		printk("could not start the discovery procedure, error "
-			"code: %d\n", err);
-	}
-}
-
-static void ble_data_sent(struct bt_nus_client *nus, uint8_t err,
-					const uint8_t *const data, uint16_t len)
-{
-	ARG_UNUSED(nus);
-	ARG_UNUSED(data);
-	ARG_UNUSED(len);
-
-}
-
-static uint8_t ble_data_received(struct bt_nus_client *nus,
-						const uint8_t *data, uint16_t len)
-{
-	ARG_UNUSED(nus);
-	printk("Received data: %.*s\n", len, (char *)data);
-
-	return BT_GATT_ITER_CONTINUE;
-}
-
-static int nus_client_init(void)
-{
-	int err;
-	struct bt_nus_client_init_param init = {
-		.cb = {
-			.received = ble_data_received,
-			.sent = ble_data_sent,
-		}
-	};
-
-	err = bt_nus_client_init(&nus_client, &init);
-	if (err) {
-		printk("NUS Client initialization failed (err %d)\n", err);
-		return err;
-	}
-
-	printk("NUS Client module initialized\n");
-	return err;
-}
-
 int main(void)
 {
 	int err;
@@ -244,10 +240,11 @@ int main(void)
 		return 0;
 	}
 
-	nus_client_init();
-
 	printk("Bluetooth initialized\n");
-
+	const char *hello_world = "Hello World!\n";
 	start_scan();
+	while(1){
+		k_sleep(K_MSEC(1000));
+	}
 	return 0;
 }

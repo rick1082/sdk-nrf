@@ -121,11 +121,15 @@ int main(void)
 	printk("Initialization complete\n");
 
 	while (true) {
-		const char *hello_world = "Hello World!\n";
+		char hello_world[100];
+		for(int i = 0; i < 100; i++) {
+			hello_world[i] = 'A' + (i % 26);
+		}
+		hello_world[99] = '\0';
 
 		k_sleep(K_SECONDS(3));
 
-		err = bt_nus_send(NULL, hello_world, strlen(hello_world));
+		err = bt_nus_send(NULL, hello_world, sizeof(hello_world));
 		printk("Data send - Result: %d\n", err);
 
 		if (err < 0 && (err != -EAGAIN) && (err != -ENOTCONN)) {
