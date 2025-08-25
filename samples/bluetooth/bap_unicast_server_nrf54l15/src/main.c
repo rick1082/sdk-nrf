@@ -842,14 +842,6 @@ static int set_supported_contexts(void)
 {
 	int err;
 
-	if (IS_ENABLED(CONFIG_BT_PAC_SNK)) {
-		err = bt_pacs_set_supported_contexts(BT_AUDIO_DIR_SINK, AVAILABLE_SINK_CONTEXT);
-		if (err != 0) {
-			LOG_INF("Failed to set sink supported contexts (err %d)", err);
-			return err;
-		}
-	}
-
 	if (IS_ENABLED(CONFIG_BT_PAC_SRC)) {
 		err = bt_pacs_set_supported_contexts(BT_AUDIO_DIR_SOURCE, AVAILABLE_SOURCE_CONTEXT);
 		if (err != 0) {
@@ -865,14 +857,6 @@ static int set_supported_contexts(void)
 static int set_available_contexts(void)
 {
 	int err;
-
-	if (IS_ENABLED(CONFIG_BT_PAC_SNK)) {
-		err = bt_pacs_set_available_contexts(BT_AUDIO_DIR_SINK, AVAILABLE_SINK_CONTEXT);
-		if (err != 0) {
-			LOG_INF("Failed to set sink available contexts (err %d)", err);
-			return err;
-		}
-	}
 
 	if (IS_ENABLED(CONFIG_BT_PAC_SRC)) {
 		err = bt_pacs_set_available_contexts(BT_AUDIO_DIR_SOURCE, AVAILABLE_SOURCE_CONTEXT);
@@ -986,6 +970,17 @@ int main(void)
 		.src_cnt = CONFIG_BT_ASCS_MAX_ASE_SRC_COUNT};
 	bt_bap_unicast_server_register(&param);
 	bt_bap_unicast_server_register_cb(&unicast_server_cb);
+
+	const struct bt_pacs_register_param pacs_param = {
+		.src_pac = true,
+		.src_loc = true,
+	};
+
+	err = bt_pacs_register(&pacs_param);
+	if (err) {
+		printk("Could not register PACS (err %d)\n", err);
+		return 0;
+	}
 
 	bt_pacs_cap_register(BT_AUDIO_DIR_SOURCE, &cap_source);
 
