@@ -13,6 +13,13 @@
 #include <zephyr/net_buf.h>
 #include <zephyr/sys_clock.h>
 
+#define LC3_MAX_SAMPLE_RATE_HZ     48000U
+#define LC3_MAX_FRAME_DURATION_US  10000U
+#define LC3_MAX_NUM_SAMPLES_MONO                                                                   \
+	((LC3_MAX_FRAME_DURATION_US * LC3_MAX_SAMPLE_RATE_HZ) / USEC_PER_SEC)
+#define LC3_MAX_NUM_SAMPLES_STEREO (LC3_MAX_NUM_SAMPLES_MONO * 2U)
+#define CONFIG_INFO_REPORTING_INTERVAL 1000
+
 /* Since the lc3.h header file is not available when CONFIG_LIBLC3=n, we need to guard the include
  * and use of it
  */

@@ -36,11 +36,12 @@
 
 #include "lc3.h"
 #include "usb.h"
+#include "stream_lc3.h"
 
-LOG_MODULE_REGISTER(usb, CONFIG_LOG_DEFAULT_LEVEL);
+LOG_MODULE_REGISTER(usb, 4);
 
 #define USB_ENQUEUE_COUNT        30U /* 30 times 1ms frames => 30ms */
-#define USB_FRAME_DURATION_US    1000U
+#define USB_FRAME_DURATION_US    125U	/* USB in high-speed mode */
 #define USB_SAMPLE_CNT           ((USB_FRAME_DURATION_US * USB_SAMPLE_RATE_HZ) / USEC_PER_SEC)
 #define USB_BYTES_PER_SAMPLE     sizeof(int16_t)
 #define USB_MONO_FRAME_SIZE      (USB_SAMPLE_CNT * USB_BYTES_PER_SAMPLE)
@@ -52,12 +53,7 @@ LOG_MODULE_REGISTER(usb, CONFIG_LOG_DEFAULT_LEVEL);
 #define IN_TERMINAL_ID UAC2_ENTITY_ID(DT_NODELABEL(in_terminal))
 #define CONFIG_MAX_CODEC_FRAMES_PER_SDU 1
 
-#define LC3_MAX_SAMPLE_RATE_HZ     48000U
-#define LC3_MAX_FRAME_DURATION_US  10000U
-#define LC3_MAX_NUM_SAMPLES_MONO                                                                   \
-	((LC3_MAX_FRAME_DURATION_US * LC3_MAX_SAMPLE_RATE_HZ) / USEC_PER_SEC)
-#define LC3_MAX_NUM_SAMPLES_STEREO (LC3_MAX_NUM_SAMPLES_MONO * 2U)
-#define CONFIG_INFO_REPORTING_INTERVAL 1000
+
 
 struct decoded_sdu {
 	int16_t right_frames[CONFIG_MAX_CODEC_FRAMES_PER_SDU][LC3_MAX_NUM_SAMPLES_MONO];
@@ -95,7 +91,7 @@ static void uac2_sof_cb(const struct device *dev, void *user_data)
 	size = ring_buf_get(&usb_out_ring_buf, pcm_buf, USB_STEREO_FRAME_SIZE);
 	if (size != USB_STEREO_FRAME_SIZE) {
 		/* If we could not fill the buffer, zero-fill the rest (possibly all) */
-		memset(((uint8_t *)pcm_buf) + size, 100, USB_STEREO_FRAME_SIZE - size);
+		memset(((uint8_t *)pcm_buf) + size, 0, USB_STEREO_FRAME_SIZE - size);
 	}
 
 	if (CONFIG_INFO_REPORTING_INTERVAL > 0) {

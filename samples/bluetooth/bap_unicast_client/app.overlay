@@ -10,6 +10,9 @@
 	uac2_microphone: usb_audio2 {
 		compatible = "zephyr,uac2";
 		status = "okay";
+		/*
+		 * Now the UAC2 only works for high-speed mode.
+		 */
 		high-speed;
 		audio-function = <AUDIO_FUNCTION_OTHER>;
 
