@@ -6,9 +6,12 @@ project(bap_unicast_client)
 
 target_sources(app PRIVATE
   src/main.c
+  src/usb.c
 )
 
 zephyr_sources_ifdef(CONFIG_LIBLC3 src/stream_lc3.c)
 zephyr_sources_ifdef(CONFIG_BT_AUDIO_TX src/stream_tx.c)
 
 zephyr_library_include_directories(${ZEPHYR_BASE}/samples/bluetooth)
+
+include(${ZEPHYR_BASE}/samples/subsys/usb/common/common.cmake)

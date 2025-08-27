@@ -32,6 +32,7 @@
 #include <zephyr/sys/util.h>
 #include <zephyr/sys/util_macro.h>
 #include <zephyr/types.h>
+#include "usb.h"
 
 #include "stream_tx.h"
 
@@ -531,6 +532,8 @@ static int init(void)
 	if (IS_ENABLED(CONFIG_BT_AUDIO_TX)) {
 		stream_tx_init();
 	}
+
+	usb_init();
 
 	return 0;
 }
