@@ -80,10 +80,22 @@ static volatile bool big_synced;
 static volatile bool base_received;
 static struct bt_conn *broadcast_assistant_conn;
 static struct bt_le_ext_adv *ext_adv;
+static struct bt_bap_stream bis_stream[CONFIG_BT_BAP_BROADCAST_SNK_STREAM_COUNT];
+
+
+uint8_t stream_num_get(struct bt_bap_stream * stream)
+{
+	for (int i = 0; i < CONFIG_BT_BAP_BROADCAST_SNK_STREAM_COUNT; i++) {
+		if (bap_streams_p[i] == stream) {
+			return i;
+		}
+	}
+	return -1;
+}
 
 static const struct bt_audio_codec_cap codec_cap = BT_AUDIO_CODEC_CAP_LC3(
-	BT_AUDIO_CODEC_CAP_FREQ_16KHZ | BT_AUDIO_CODEC_CAP_FREQ_24KHZ,
-	BT_AUDIO_CODEC_CAP_DURATION_10, BT_AUDIO_CODEC_CAP_CHAN_COUNT_SUPPORT(1), 40u, 60u,
+	BT_AUDIO_CODEC_CAP_FREQ_16KHZ | BT_AUDIO_CODEC_CAP_FREQ_24KHZ | BT_AUDIO_CODEC_CAP_FREQ_48KHZ,
+	BT_AUDIO_CODEC_CAP_DURATION_10, BT_AUDIO_CODEC_CAP_CHAN_COUNT_SUPPORT(1), 40u, 120u,
 	CONFIG_MAX_CODEC_FRAMES_PER_SDU,
 	(BT_AUDIO_CONTEXT_TYPE_CONVERSATIONAL | BT_AUDIO_CONTEXT_TYPE_MEDIA));
 
@@ -153,13 +165,15 @@ static void stream_disconnected_cb(struct bt_bap_stream *bap_stream, uint8_t rea
 		printk("Failed to take sem_stream_connected: %d\n", err);
 	}
 }
-
+#include "audio/bap_endpoint.h"
+#include "audio/bap_iso.h"
 static void stream_started_cb(struct bt_bap_stream *bap_stream)
 {
-	int err;
-
 	printk("Stream %p started\n", bap_stream);
 
+	struct bt_iso_info bt_iso_info_test;
+	bt_iso_chan_get_info(&bap_stream->ep->iso->chan, &bt_iso_info_test);
+	printk("-------latency = %d\n", bt_iso_info_test.sync_receiver.latency);
 	k_sem_give(&sem_stream_started);
 }
 
@@ -175,14 +189,26 @@ static void stream_stopped_cb(struct bt_bap_stream *bap_stream, uint8_t reason)
 	}
 }
 
+struct recv_pkt_info {
+	uint32_t sdu_ref_us;
+	uint32_t recv_frame_ts_us;
+	uint8_t channel;
+	bool bad_frame;
+	uint8_t size;
+	uint8_t desired_data_size;
+	uint8_t buf[CONFIG_BT_ISO_RX_MTU];
+} __packed;
+
 static void stream_recv_cb(struct bt_bap_stream *bap_stream, const struct bt_iso_recv_info *info,
 			   struct net_buf *buf)
 {
 	static int i;
 	i++;
+
 	if (i%1000 == 0){
-		printk("received %d packets\n", i);
+		//printk("received %d packets\n", i);
 	}
+	printk("%p, %d, %d\n", (void *)bap_stream, stream_num_get(bap_stream),info->ts);
 }
 
 static struct bt_bap_stream_ops stream_ops = {
@@ -360,6 +386,10 @@ static void broadcast_sink_started_cb(struct bt_bap_broadcast_sink *sink)
 	printk("Broadcast sink %p started\n", sink);
 
 	big_synced = true;
+	//struct bt_iso_info bt_iso_info_test;
+	//bt_iso_chan_get_info(sink->bis[0].chan, &bt_iso_info_test);
+	//printk("latency = %d\n", bt_iso_info_test.sync_receiver.latency);
+
 	k_sem_give(&sem_big_synced);
 }
 
@@ -838,7 +868,7 @@ static struct bt_le_per_adv_sync_cb bap_pa_sync_cb = {
 	.term = bap_pa_sync_terminated_cb,
 };
 
-static struct bt_bap_stream bis_stream[2];
+
 static int init(void)
 {
 	const struct bt_pacs_register_param pacs_param = {
@@ -1140,6 +1170,7 @@ int main(void)
 			return 0;
 		}
 
+		//if (0) {
 		if (IS_ENABLED(CONFIG_SCAN_OFFLOAD)) {
 			if (broadcast_assistant_conn == NULL) {
 				k_sem_reset(&sem_connected);
