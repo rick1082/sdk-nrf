@@ -199,16 +199,78 @@ struct recv_pkt_info {
 	uint8_t buf[CONFIG_BT_ISO_RX_MTU];
 } __packed;
 
+
+#define JITTER_BUFFER_SIZE 5
+K_MSGQ_DEFINE(recv_pkt_msgq_l, sizeof(struct recv_pkt_info), JITTER_BUFFER_SIZE, 4);
+K_MSGQ_DEFINE(recv_pkt_msgq_r, sizeof(struct recv_pkt_info), JITTER_BUFFER_SIZE, 4);
+
 static void stream_recv_cb(struct bt_bap_stream *bap_stream, const struct bt_iso_recv_info *info,
 			   struct net_buf *buf)
 {
 	static int i;
 	i++;
-
-	if (i%1000 == 0){
-		//printk("received %d packets\n", i);
+	struct recv_pkt_info dummy_pkt_info = {0};
+	if (stream_num_get(bap_stream) == 0) {
+		struct recv_pkt_info pkt_info = {0};
+		pkt_info.sdu_ref_us = sys_cpu_to_le32(info->ts);
+		pkt_info.recv_frame_ts_us = sys_cpu_to_le32(k_uptime_get_32() * 1000);
+		pkt_info.channel = stream_num_get(bap_stream);
+		pkt_info.size = buf->len;
+		pkt_info.desired_data_size = CONFIG_BT_ISO_RX_MTU;
+		if (buf->len != CONFIG_BT_ISO_RX_MTU || ((info->flags & BT_ISO_FLAGS_VALID) == 0)) {
+			pkt_info.bad_frame = true;
+		} else {
+			pkt_info.bad_frame = false;
+		}
+		memcpy(pkt_info.buf, buf->data, buf->len);
+		int ret = k_msgq_put(&recv_pkt_msgq_l, &pkt_info, K_NO_WAIT);
+		if (ret != 0) {
+			//printk("L: MsgQ full: %d\n", ret);
+			k_msgq_get(&recv_pkt_msgq_l, &dummy_pkt_info, K_NO_WAIT);
+			k_msgq_put(&recv_pkt_msgq_l, &pkt_info, K_NO_WAIT);
+			//k_msgq_purge(&recv_pkt_msgq_l);
+		}
+	} else if (stream_num_get(bap_stream) == 1) {
+		struct recv_pkt_info pkt_info = {0};
+		pkt_info.sdu_ref_us = sys_cpu_to_le32(info->ts);
+		pkt_info.recv_frame_ts_us = sys_cpu_to_le32(k_uptime_get_32() * 1000);
+		pkt_info.channel = stream_num_get(bap_stream);
+		pkt_info.size = buf->len;
+		pkt_info.desired_data_size = CONFIG_BT_ISO_RX_MTU;
+		if (buf->len != CONFIG_BT_ISO_RX_MTU || ((info->flags & BT_ISO_FLAGS_VALID) == 0)) {
+			pkt_info.bad_frame = true;
+		} else {
+			pkt_info.bad_frame = false;
+		}
+		memcpy(pkt_info.buf, buf->data, buf->len);
+		int ret = k_msgq_put(&recv_pkt_msgq_r, &pkt_info, K_NO_WAIT);
+		if (ret != 0) {
+			//printk("R: MsgQ full: %d\n", ret);
+			k_msgq_get(&recv_pkt_msgq_r, &dummy_pkt_info, K_NO_WAIT);
+			k_msgq_put(&recv_pkt_msgq_r, &pkt_info, K_NO_WAIT);
+			//k_msgq_purge(&recv_pkt_msgq_r);
+		}
 	}
-	printk("%p, %d, %d\n", (void *)bap_stream, stream_num_get(bap_stream),info->ts);
+
+	struct recv_pkt_info pkt_info_l = {0};
+	struct recv_pkt_info pkt_info_r = {0};
+	if (k_msgq_num_used_get(&recv_pkt_msgq_l) >= 3 || k_msgq_num_used_get(&recv_pkt_msgq_r) >= 3) {
+		k_msgq_peek(&recv_pkt_msgq_l, &pkt_info_l);
+		k_msgq_peek(&recv_pkt_msgq_r, &pkt_info_r);
+		if (pkt_info_l.sdu_ref_us > pkt_info_r.sdu_ref_us) {
+			k_msgq_get(&recv_pkt_msgq_r, &pkt_info_r, K_NO_WAIT);
+		} else if (pkt_info_l.sdu_ref_us < pkt_info_r.sdu_ref_us){
+			k_msgq_get(&recv_pkt_msgq_l, &pkt_info_l, K_NO_WAIT);
+		} else {
+			//printk("Sync: %d %d\n", pkt_info_l.sdu_ref_us, pkt_info_r.sdu_ref_us);
+			k_msgq_get(&recv_pkt_msgq_l, &pkt_info_l, K_NO_WAIT);
+			k_msgq_get(&recv_pkt_msgq_r, &pkt_info_r, K_NO_WAIT);
+			if (pkt_info_l.sdu_ref_us != pkt_info_r.sdu_ref_us){
+				printk("%d %d\n", pkt_info_l.sdu_ref_us, pkt_info_r.sdu_ref_us);
+			}
+		}
+	}
+	//printk("%p, %d, %d\n", (void *)bap_stream, stream_num_get(bap_stream),info->ts);
 }
 
 static struct bt_bap_stream_ops stream_ops = {
@@ -1170,8 +1232,8 @@ int main(void)
 			return 0;
 		}
 
-		//if (0) {
-		if (IS_ENABLED(CONFIG_SCAN_OFFLOAD)) {
+		if (0) {
+		//if (IS_ENABLED(CONFIG_SCAN_OFFLOAD)) {
 			if (broadcast_assistant_conn == NULL) {
 				k_sem_reset(&sem_connected);
 
