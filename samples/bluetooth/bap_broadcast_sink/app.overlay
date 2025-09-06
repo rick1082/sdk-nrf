@@ -1,57 +1,78 @@
-/*
- * Copyright (c) 2025 Nordic Semiconductor ASA
- *
- * SPDX-License-Identifier: Apache-2.0
- */
+/ {
+	aliases {
+		i2s-node0 = &i2s20;
+		i2c-slave = &i2c22;
+    };
+};
 
-#include <dt-bindings/usb/audio.h>
 
 / {
-	uac2_microphone: usb_audio2 {
-		compatible = "zephyr,uac2";
-		status = "okay";
-		full-speed;
-		audio-function = <AUDIO_FUNCTION_MICROPHONE>;
+	chosen {
+		zephyr,shell-uart = &uart30;
+		zephyr,console = &uart30;
+	};
+};
 
-		/* Clock supporting 48KHz
-		 *
-		 * Since the incoming audio may be between 8 and 48 KHz, we always upsample to 48KHz
-		 */
-		uac_aclk: aclk {
-			compatible = "zephyr,uac2-clock-source";
-			clock-type = "internal-programmable";
-			frequency-control = "read-only";
-			sampling-frequencies = <48000>;
-			/* Falsely claim synchronous audio because we
-			 * currently don't calculate feedback value
-			 */
-			sof-synchronized;
-		};
+&uart30 {
+	status = "okay";
+};
 
-		/* The out_terminal supports the incoming Bluetooth LE Audio over ISO
-		 * and treats it as a microphone towards the USB host
-		 */
-		out_terminal: out_terminal {
-			compatible = "zephyr,uac2-input-terminal";
-			clock-source = <&uac_aclk>;
-			terminal-type = <INPUT_TERMINAL_MICROPHONE>;
-			front-left;
-			front-right;
-		};
+&uart20 {
+	status = "disabled";
+};
 
-		/* USB Audio terminal from USB device to USB host */
-		in_terminal: in_terminal {
-			compatible = "zephyr,uac2-output-terminal";
-			data-source = <&out_terminal>;
-			clock-source = <&uac_aclk>;
-			terminal-type = <USB_TERMINAL_STREAMING>;
+&pinctrl {
+	i2s20_default: i2s20_default {
+		group1 {
+			psels = <NRF_PSEL(I2S_MCK, 1, 7)>,
+					<NRF_PSEL(I2S_SCK_S, 1, 6)>,
+					<NRF_PSEL(I2S_LRCK_S, 1, 5)>,
+					<NRF_PSEL(I2S_SDOUT, 1, 4)>;
 		};
+	};
 
-		as_iso_in: in_interface {
-			compatible = "zephyr,uac2-audio-streaming";
-			linked-terminal = <&in_terminal>;
-			subslot-size = <2>;
-			bit-resolution = <16>;
+	i2s20_sleep: i2s20_sleep {
+		group1 {
+			psels = <NRF_PSEL(I2S_MCK, 1, 7)>,
+					<NRF_PSEL(I2S_SCK_S, 1, 6)>,
+					<NRF_PSEL(I2S_LRCK_S, 1, 5)>,
+					<NRF_PSEL(I2S_SDOUT, 1, 4)>;
+			low-power-enable;
 		};
+	};
+	i2c21_default_alt: i2c21_default_alt {
+		group1 {
+			psels = <NRF_PSEL(TWIM_SDA, 1, 11)>,
+				<NRF_PSEL(TWIM_SCL, 1, 12)>;
+		};
+	};
+
+	i2c21_sleep_alt: i2c21_sleep_alt {
+		group1 {
+			psels = <NRF_PSEL(TWIM_SDA, 1, 11)>,
+				<NRF_PSEL(TWIM_SCL, 1, 12)>;
+			low-power-enable;
+		};
+	};
+
+};
+
+&i2s20 {
+	status = "okay";
+	pinctrl-0 = <&i2s20_default>;
+	pinctrl-1 = <&i2s20_sleep>;
+	pinctrl-names = "default", "sleep";
+};
+
+&i2c21 {
+	compatible = "nordic,nrf-twim";
+	status = "okay";
+	pinctrl-0 = <&i2c21_default_alt>;
+	pinctrl-1 = <&i2c21_sleep_alt>;
+	pinctrl-names = "default", "sleep";
+	tlv320: tlv320@18 {
+        compatible = "i2c-device";
+        status = "okay";
+		reg = <0x18>;
 	};
 };
