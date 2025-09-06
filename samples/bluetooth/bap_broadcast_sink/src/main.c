@@ -440,7 +440,7 @@ struct recv_pkt_info {
 } __packed;
 
 
-#define JITTER_BUFFER_SIZE 10
+#define JITTER_BUFFER_SIZE 6
 K_MSGQ_DEFINE(recv_pkt_msgq_l, sizeof(struct recv_pkt_info), JITTER_BUFFER_SIZE, 4);
 K_MSGQ_DEFINE(recv_pkt_msgq_r, sizeof(struct recv_pkt_info), JITTER_BUFFER_SIZE, 4);
 
@@ -491,15 +491,15 @@ static void stream_recv_cb(struct bt_bap_stream *bap_stream, const struct bt_iso
 	struct recv_pkt_info pkt_info_l = {0};
 	struct recv_pkt_info pkt_info_r = {0};
 	if (k_msgq_num_used_get(&recv_pkt_msgq_l) >= 4 || k_msgq_num_used_get(&recv_pkt_msgq_r) >= 4) {
-		//k_msgq_peek(&recv_pkt_msgq_l, &pkt_info_l);
-		//k_msgq_peek(&recv_pkt_msgq_r, &pkt_info_r);
-		//if (pkt_info_l.sdu_ref_us > pkt_info_r.sdu_ref_us) {
-			//k_msgq_get(&recv_pkt_msgq_r, &pkt_info_r, K_NO_WAIT);
-			//printk("drop L %d %d\n", pkt_info_l.sdu_ref_us, pkt_info_r.sdu_ref_us);
-		//} else if (pkt_info_l.sdu_ref_us < pkt_info_r.sdu_ref_us){
-			//k_msgq_get(&recv_pkt_msgq_l, &pkt_info_l, K_NO_WAIT);
-			//printk("drop R %d %d\n", pkt_info_l.sdu_ref_us, pkt_info_r.sdu_ref_us);
-		//} else {
+		k_msgq_peek(&recv_pkt_msgq_l, &pkt_info_l);
+		k_msgq_peek(&recv_pkt_msgq_r, &pkt_info_r);
+		if (pkt_info_l.sdu_ref_us > pkt_info_r.sdu_ref_us && (pkt_info_l.sdu_ref_us - pkt_info_r.sdu_ref_us) > 2000) {
+			k_msgq_get(&recv_pkt_msgq_r, &pkt_info_r, K_NO_WAIT);
+			printk("drop L %d %d\n", pkt_info_l.sdu_ref_us, pkt_info_r.sdu_ref_us);
+		} else if (pkt_info_l.sdu_ref_us < pkt_info_r.sdu_ref_us && (pkt_info_r.sdu_ref_us - pkt_info_l.sdu_ref_us) > 2000){
+			k_msgq_get(&recv_pkt_msgq_l, &pkt_info_l, K_NO_WAIT);
+			printk("drop R %d %d\n", pkt_info_l.sdu_ref_us, pkt_info_r.sdu_ref_us);
+		} else {
 			//printk("Sync: %d %d\n", pkt_info_l.sdu_ref_us, pkt_info_r.sdu_ref_us);
 			k_msgq_get(&recv_pkt_msgq_l, &pkt_info_l, K_NO_WAIT);
 			k_msgq_get(&recv_pkt_msgq_r, &pkt_info_r, K_NO_WAIT);
@@ -547,7 +547,7 @@ static void stream_recv_cb(struct bt_bap_stream *bap_stream, const struct bt_iso
 
 			ring_buf_put(&i2s_tx_ring_buf, (uint8_t *)audio_buf_test, 480 * 2 * sizeof(int16_t));
 
-		//}
+		}
 	}
 	//printk("%p, %d, %d\n", (void *)bap_stream, stream_num_get(bap_stream),info->ts);
 }
@@ -627,7 +627,13 @@ static bool subgroup_get_valid_bis_indexes_cb(const struct bt_bap_base_subgroup 
 		configured_sampling_freq = ret;
 	}
 	printk("------sampling freq------: %d\n", ret);
+	for (int i = 0; i < 2; i++) {
+		//if (lc3_decoder[i] == NULL) {
+			lc3_decoder[i] = lc3_setup_decoder(10000, configured_sampling_freq, 48000,
+							&lc3_decoder_mem[i]);
+		//}
 
+	}
 	if (codec_cfg.id != BT_HCI_CODING_FORMAT_LC3) {
 		printk("Only LC3 codec supported (%u)\n", codec_cfg.id);
 		goto next_subgroup;
@@ -737,13 +743,7 @@ static void broadcast_sink_started_cb(struct bt_bap_broadcast_sink *sink)
 	//struct bt_iso_info bt_iso_info_test;
 	//bt_iso_chan_get_info(sink->bis[0].chan, &bt_iso_info_test);
 	//printk("latency = %d\n", bt_iso_info_test.sync_receiver.latency);
-	for (int i = 0; i < 2; i++) {
-		if (lc3_decoder[i] == NULL) {
-			lc3_decoder[i] = lc3_setup_decoder(10000, configured_sampling_freq, 0, /* No resampling */
-							&lc3_decoder_mem[i]);
-		}
 
-	}
 
 	k_sem_give(&sem_big_synced);
 }
@@ -752,6 +752,11 @@ static void broadcast_sink_stopped_cb(struct bt_bap_broadcast_sink *sink, uint8_
 {
 	printk("Broadcast sink %p stopped with reason 0x%02X\n", sink, reason);
 
+	for (int i = 0; i < 2; i++) {
+		lc3_decoder[i] == NULL;
+	}
+	k_msgq_purge(&recv_pkt_msgq_l);
+	k_msgq_purge(&recv_pkt_msgq_r);
 	big_synced = false;
 	k_sem_give(&sem_broadcast_sink_stopped);
 }
