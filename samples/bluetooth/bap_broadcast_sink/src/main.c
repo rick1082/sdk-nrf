@@ -316,8 +316,8 @@ void tlv320_setup(void)
 
 	dac_i2c_write(&dev_i2c, 0x00, 0x00);
 	dac_i2c_write(&dev_i2c, 0x3F, 0xD4);
-	dac_i2c_write(&dev_i2c, 0x41, -60);
-	dac_i2c_write(&dev_i2c, 0x42, -60);
+	dac_i2c_write(&dev_i2c, 0x41, -20);
+	dac_i2c_write(&dev_i2c, 0x42, -20);
 	dac_i2c_write(&dev_i2c, 0x40, 0x00);
 	dac_i2c_write(&dev_i2c, 0x00, 0x00);
 }
@@ -412,9 +412,8 @@ static void stream_started_cb(struct bt_bap_stream *bap_stream)
 	printk("Stream %p started\n", bap_stream);
 
 	struct bt_iso_info bt_iso_info_test;
-	bt_iso_chan_get_info(&bap_stream->ep->iso->chan, &bt_iso_info_test);
-	printk("-------latency = %d\n", bt_iso_info_test.sync_receiver.latency);
 	k_sem_give(&sem_stream_started);
+	gpio_pin_set_dt(&led, 1);
 }
 
 static void stream_stopped_cb(struct bt_bap_stream *bap_stream, uint8_t reason)
@@ -427,6 +426,7 @@ static void stream_stopped_cb(struct bt_bap_stream *bap_stream, uint8_t reason)
 	if (err != 0) {
 		printk("Failed to take sem_stream_started: %d\n", err);
 	}
+	gpio_pin_set_dt(&led, 0);
 }
 
 struct recv_pkt_info {
@@ -441,6 +441,7 @@ struct recv_pkt_info {
 
 
 #define JITTER_BUFFER_SIZE 6
+#define JITTER_BUFFER_CHECK 4
 K_MSGQ_DEFINE(recv_pkt_msgq_l, sizeof(struct recv_pkt_info), JITTER_BUFFER_SIZE, 4);
 K_MSGQ_DEFINE(recv_pkt_msgq_r, sizeof(struct recv_pkt_info), JITTER_BUFFER_SIZE, 4);
 
@@ -490,7 +491,7 @@ static void stream_recv_cb(struct bt_bap_stream *bap_stream, const struct bt_iso
 
 	struct recv_pkt_info pkt_info_l = {0};
 	struct recv_pkt_info pkt_info_r = {0};
-	if (k_msgq_num_used_get(&recv_pkt_msgq_l) >= 4 || k_msgq_num_used_get(&recv_pkt_msgq_r) >= 4) {
+	if (k_msgq_num_used_get(&recv_pkt_msgq_l) >= JITTER_BUFFER_CHECK || k_msgq_num_used_get(&recv_pkt_msgq_r) >= JITTER_BUFFER_CHECK) {
 		k_msgq_peek(&recv_pkt_msgq_l, &pkt_info_l);
 		k_msgq_peek(&recv_pkt_msgq_r, &pkt_info_r);
 		if (pkt_info_l.sdu_ref_us > pkt_info_r.sdu_ref_us && (pkt_info_l.sdu_ref_us - pkt_info_r.sdu_ref_us) > 2000) {
@@ -753,7 +754,7 @@ static void broadcast_sink_stopped_cb(struct bt_bap_broadcast_sink *sink, uint8_
 	printk("Broadcast sink %p stopped with reason 0x%02X\n", sink, reason);
 
 	for (int i = 0; i < 2; i++) {
-		lc3_decoder[i] == NULL;
+		lc3_decoder[i] = NULL;
 	}
 	k_msgq_purge(&recv_pkt_msgq_l);
 	k_msgq_purge(&recv_pkt_msgq_r);
