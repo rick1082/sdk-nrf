@@ -77,9 +77,9 @@ static uint32_t octets_per_frame_source;
  */
 #define BT_BAP_LC3_UNICAST_PRESET_TEST(_loc, _stream_context)                                    \
 	BT_BAP_LC3_PRESET(BT_AUDIO_CODEC_LC3_CONFIG(BT_AUDIO_CODEC_CFG_FREQ_48KHZ,                 \
-						    BT_AUDIO_CODEC_CFG_DURATION_10, _loc, 40U, 1,  \
+						    BT_AUDIO_CODEC_CFG_DURATION_10, _loc, 100U, 1,  \
 						    _stream_context),                              \
-			  BT_BAP_QOS_CFG_UNFRAMED(10000u, 40u, 2u, 10u, 40000u))
+			  BT_BAP_QOS_CFG_UNFRAMED(10000u, 100u, 2u, 10u, 40000u))
 static struct bt_bap_lc3_preset codec_configuration = BT_BAP_LC3_UNICAST_PRESET_TEST(
 	BT_AUDIO_LOCATION_FRONT_LEFT, BT_AUDIO_CONTEXT_TYPE_UNSPECIFIED);
 
@@ -555,7 +555,7 @@ static void lc3_decoder_thread_func(void *arg1, void *arg2, void *arg3)
 		if (err < 0) {
 			printk("Failed to decode LC3 data\n");
 		}else{
-			usb_add_frame_to_usb(BT_AUDIO_LOCATION_FRONT_LEFT, lc3_rx_buf, sizeof(lc3_rx_buf), data->ts);
+			usb_add_frame_to_usb(BT_AUDIO_LOCATION_MONO_AUDIO, lc3_rx_buf, sizeof(lc3_rx_buf), data->ts);
 		}
 
 

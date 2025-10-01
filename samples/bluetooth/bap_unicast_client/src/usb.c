@@ -41,7 +41,7 @@
 LOG_MODULE_REGISTER(usb, 4);
 
 #define USB_ENQUEUE_COUNT        30U /* 30 times 1ms frames => 30ms */
-#define USB_FRAME_DURATION_US    125U	/* USB in high-speed mode */
+#define USB_FRAME_DURATION_US    1000U	/* USB in full-speed mode */
 #define USB_SAMPLE_CNT           ((USB_FRAME_DURATION_US * USB_SAMPLE_RATE_HZ) / USEC_PER_SEC)
 #define USB_BYTES_PER_SAMPLE     sizeof(int16_t)
 #define USB_MONO_FRAME_SIZE      (USB_SAMPLE_CNT * USB_BYTES_PER_SAMPLE)

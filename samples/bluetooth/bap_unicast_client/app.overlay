@@ -13,7 +13,7 @@
 		/*
 		 * Now the UAC2 only works for high-speed mode.
 		 */
-		high-speed;
+		full-speed;
 		audio-function = <AUDIO_FUNCTION_OTHER>;
 
 		/* Clock supporting 48KHz
