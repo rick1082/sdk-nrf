@@ -32,8 +32,8 @@
 #include <zephyr/sys/util.h>
 #include <zephyr/sys/util_macro.h>
 #include <zephyr/types.h>
+#include <dk_buttons_and_leds.h>
 #include "usb.h"
-
 #include "stream_tx.h"
 
 static void start_scan(void);
@@ -67,6 +67,22 @@ static size_t configured_sink_stream_count;
 static size_t configured_source_stream_count;
 static uint32_t configured_source_sampling_freq;
 static uint32_t octets_per_frame_source;
+static struct k_work hids_work;
+static struct k_work hids_work;
+struct mouse_pos {
+	int16_t x_val;
+	int16_t y_val;
+};
+#define MOVEMENT_SPEED		   10
+#define KEY_LEFT_MASK	DK_BTN1_MSK
+/* Key used to move cursor up */
+#define KEY_UP_MASK	DK_BTN2_MSK
+/* Key used to move cursor right */
+#define KEY_RIGHT_MASK	DK_BTN3_MSK
+/* Key used to move cursor down */
+#define KEY_DOWN_MASK	DK_BTN4_MSK
+#define HIDS_QUEUE_SIZE 10
+K_MSGQ_DEFINE(hids_queue, sizeof(struct mouse_pos), HIDS_QUEUE_SIZE, 4);
 
 #define configured_stream_count (configured_sink_stream_count + \
 				 configured_source_stream_count)
@@ -142,7 +158,7 @@ static bool check_audio_support_and_connect(struct bt_data *data,
 	size_t min_size;
 	int err;
 
-	printk("[AD]: %u data_len %u\n", data->type, data->data_len);
+	//printk("[AD]: %u data_len %u\n", data->type, data->data_len);
 
 	if (data->type != BT_DATA_SVC_DATA16) {
 		return true; /* Continue parsing to next AD data type */
@@ -585,9 +601,68 @@ int lc3_dec_init(void)
 	return 0;
 }
 
+
+static void button_changed(uint32_t button_state, uint32_t has_changed)
+{
+	bool data_to_send = false;
+	struct mouse_pos pos;
+	uint32_t buttons = button_state & has_changed;
+
+	memset(&pos, 0, sizeof(struct mouse_pos));
+
+	if (buttons & KEY_LEFT_MASK) {
+		pos.x_val -= MOVEMENT_SPEED;
+		printk("%s(): left\n", __func__);
+		data_to_send = true;
+	}
+	if (buttons & KEY_UP_MASK) {
+		pos.y_val -= MOVEMENT_SPEED;
+		printk("%s(): up\n", __func__);
+		data_to_send = true;
+	}
+	if (buttons & KEY_RIGHT_MASK) {
+		pos.x_val += MOVEMENT_SPEED;
+		printk("%s(): right\n", __func__);
+		data_to_send = true;
+	}
+	if (buttons & KEY_DOWN_MASK) {
+		pos.y_val += MOVEMENT_SPEED;
+		printk("%s(): down\n", __func__);
+		data_to_send = true;
+	}
+
+	if (data_to_send) {
+		int err;
+
+		err = k_msgq_put(&hids_queue, &pos, K_NO_WAIT);
+		if (err) {
+			printk("No space in the queue for button pressed\n");
+			return;
+		}
+		if (k_msgq_num_used_get(&hids_queue) == 1) {
+			k_work_submit(&hids_work);
+		}
+	}
+}
+
+static void mouse_handler(struct k_work *work)
+{
+	struct mouse_pos pos;
+
+	while (!k_msgq_get(&hids_queue, &pos, K_NO_WAIT)) {
+		usb_mouse_movement_send(pos.x_val, pos.y_val);
+		printk("Mouse move x: %d, y: %d\n", pos.x_val, pos.y_val);
+	}
+}
+
 static int init(void)
 {
 	int err;
+
+	err = dk_buttons_init(button_changed);
+	if (err) {
+		printk("Cannot init buttons (err: %d)", err);
+	}
 
 	err = bt_enable(NULL);
 	if (err != 0) {
@@ -606,7 +681,7 @@ static int init(void)
 	}
 	lc3_dec_init();
 	usb_init();
-
+	k_work_init(&hids_work, mouse_handler);
 	return 0;
 }
 
@@ -953,8 +1028,6 @@ static void reset_data(void)
 	memset(sinks, 0, sizeof(sinks));
 	memset(sources, 0, sizeof(sources));
 }
-
-
 
 int main(void)
 {

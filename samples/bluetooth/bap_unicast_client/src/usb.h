@@ -59,6 +59,13 @@ int usb_add_frame_to_usb(enum bt_audio_location chan_allocation, const int16_t *
 void usb_clear_frames_to_usb(void);
 
 /**
+ * @brief Send mouse movement over USB HID
+ *
+ * @param x_val Movement in X direction
+ * @param y_val Movement in Y direction
+ */
+void usb_mouse_movement_send(int8_t x_val, int8_t y_val);
+/**
  * @brief Initialize the USB module
  *
  * This will start the USB thread if not already initialized

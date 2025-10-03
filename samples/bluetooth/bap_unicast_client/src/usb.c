@@ -31,6 +31,8 @@
 #include <zephyr/toolchain.h>
 #include <zephyr/usb/class/usbd_uac2.h>
 #include <zephyr/usb/usbd.h>
+#include <zephyr/usb/usb_device.h>
+#include <zephyr/usb/class/usb_hid.h>
 
 #include <sample_usbd.h>
 
@@ -53,8 +55,8 @@ LOG_MODULE_REGISTER(usb, 4);
 #define IN_TERMINAL_ID UAC2_ENTITY_ID(DT_NODELABEL(in_terminal))
 #define CONFIG_MAX_CODEC_FRAMES_PER_SDU 1
 
-
-
+const struct device *mic_dev = DEVICE_DT_GET(DT_NODELABEL(uac2_microphone));
+const struct device *hid_dev = DEVICE_DT_GET_ONE(zephyr_hid_device);
 struct decoded_sdu {
 	int16_t right_frames[CONFIG_MAX_CODEC_FRAMES_PER_SDU][LC3_MAX_NUM_SAMPLES_MONO];
 	int16_t left_frames[CONFIG_MAX_CODEC_FRAMES_PER_SDU][LC3_MAX_NUM_SAMPLES_MONO];
@@ -340,9 +342,63 @@ void usb_clear_frames_to_usb(void)
 	decoded_sdu.ts = 0U;
 }
 
+static const uint8_t hid_report_desc[] = HID_MOUSE_REPORT_DESC(2);
+static enum usb_dc_status_code usb_status;
+
+#define MOUSE_BTN_LEFT		0
+#define MOUSE_BTN_RIGHT		1
+
+enum mouse_report_idx {
+	MOUSE_BTN_REPORT_IDX = 0,
+	MOUSE_X_REPORT_IDX = 1,
+	MOUSE_Y_REPORT_IDX = 2,
+	MOUSE_WHEEL_REPORT_IDX = 3,
+	MOUSE_REPORT_COUNT = 4,
+};
+
+static K_SEM_DEFINE(ep_write_sem, 0, 1);
+
+static inline void status_cb(enum usb_dc_status_code status, const uint8_t *param)
+{
+	usb_status = status;
+}
+
+static ALWAYS_INLINE void rwup_if_suspended(void)
+{
+	if (IS_ENABLED(CONFIG_USB_DEVICE_REMOTE_WAKEUP)) {
+		if (usb_status == USB_DC_SUSPEND) {
+			usb_wakeup_request();
+			return;
+		}
+	}
+}
+
+static void int_in_ready_cb(const struct device *dev)
+{
+	ARG_UNUSED(dev);
+	k_sem_give(&ep_write_sem);
+}
+
+static const struct hid_ops ops = {
+	.int_in_ready = int_in_ready_cb,
+};
+
+void usb_mouse_movement_send(int8_t x_val, int8_t y_val)
+{
+	int ret;
+	UDC_STATIC_BUF_DEFINE(report, MOUSE_REPORT_COUNT);
+	report[MOUSE_X_REPORT_IDX] = x_val;
+	report[MOUSE_Y_REPORT_IDX] = y_val;
+	ret = hid_int_ep_write(hid_dev, report, MOUSE_REPORT_COUNT, NULL);
+	if (ret) {
+		LOG_ERR("HID write error, %d", ret);
+	} else {
+		k_sem_take(&ep_write_sem, K_FOREVER);
+	}
+}
+
 int usb_init(void)
 {
-	const struct device *mic_dev = DEVICE_DT_GET(DT_NODELABEL(uac2_microphone));
 	static struct uac2_ops usb_audio_ops = {
 		.sof_cb = uac2_sof_cb,
 		.buf_release_cb = uac2_buf_release_cb,
@@ -351,6 +407,16 @@ int usb_init(void)
 	struct usbd_context *sample_usbd;
 	static bool initialized;
 	int err;
+
+	if (mic_dev == NULL) {
+		printk("Cannot get MIC Device\n");
+		return 0;
+	}
+
+	if (hid_dev == NULL) {
+		printk("Cannot get USB HID Device\n");
+		return 0;
+	}
 
 	if (initialized) {
 		return -EALREADY;
@@ -362,6 +428,12 @@ int usb_init(void)
 	}
 
 	usbd_uac2_set_ops(mic_dev, &usb_audio_ops, NULL);
+
+	usb_hid_register_device(hid_dev,
+				hid_report_desc, sizeof(hid_report_desc),
+				&ops);
+
+	usb_hid_init(hid_dev);
 
 	sample_usbd = sample_usbd_init_device(NULL);
 	if (sample_usbd == NULL) {
