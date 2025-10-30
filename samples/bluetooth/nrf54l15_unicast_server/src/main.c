@@ -48,6 +48,8 @@
 #include <zephyr/kernel.h>
 #include <zephyr/sys/printk.h>
 #include "lc3.h"
+#include <zephyr/bluetooth/audio/mcc.h>
+#include <zephyr/bluetooth/audio/media_proxy.h>
 #include <zephyr/logging/log.h>
 LOG_MODULE_REGISTER(main, LOG_LEVEL_INF);
 
@@ -147,6 +149,7 @@ static lc3_decoder_mem_48k_t lc3_decoder_mem[2];
 static int frames_per_sdu;
 
 static struct bt_vcp_included vcp_included;
+int mcp_send_cmd(uint8_t mcp_opcode);
 
 void audio_i2s_set_next_buf(const uint8_t *tx_buf, uint32_t *rx_buf)
 {
@@ -783,6 +786,69 @@ static void advertising_process(struct k_work *work)
 	LOG_INF("Advertising successfully started");
 }
 
+static void mcc_discover_mcs_cb(struct bt_conn *conn, int err)
+{
+	LOG_WRN("MCP: MCS discovery complete callback");
+	if (err) {
+		printk("MCP: Discovery of MCS failed (%d)\n", err);
+	} else {
+		printk("MCP: Discovered MCS\n");
+	}
+}
+
+static void mcc_send_command_cb(struct bt_conn *conn, int err, const struct mpl_cmd *cmd)
+{
+	if (err) {
+		printk("MCP: Command send failed (%d) - opcode: %u, param: %d\n",
+			err, cmd->opcode, cmd->param);
+	} else {
+		printk("MCP: Successfully sent command (%d) - opcode: %u, param: %d\n",
+			err, cmd->opcode, cmd->param);
+	}
+}
+
+static struct bt_mcc_cb mcc_cb = {
+	.discover_mcs = mcc_discover_mcs_cb,
+	.send_cmd = mcc_send_command_cb,
+};
+
+int mcp_ctlr_init(struct bt_conn *conn)
+{
+	int err;
+
+	default_conn = bt_conn_ref(conn);
+
+	err = bt_mcc_init(&mcc_cb);
+	if (err != 0) {
+		return err;
+	}
+
+	err = bt_mcc_discover_mcs(default_conn, true);
+
+	return err;
+}
+
+int mcp_send_cmd(uint8_t mcp_opcode)
+{
+	int err;
+	struct mpl_cmd cmd;
+
+	cmd.opcode = mcp_opcode;
+	cmd.use_param = false;
+
+	if (default_conn == NULL) {
+		printk("MCP: No connection\n");
+		return -EINVAL;
+	}
+
+	err = bt_mcc_send_cmd(default_conn, &cmd);
+	if (err != 0) {
+		printk("MCP: Command failed: %d\n", err);
+	}
+
+	return err;
+}
+
 static void connected(struct bt_conn *conn, uint8_t err)
 {
 	char addr[BT_ADDR_LE_STR_LEN];
@@ -797,6 +863,7 @@ static void connected(struct bt_conn *conn, uint8_t err)
 	}
 
 	LOG_INF("Connected: %s", addr);
+
 	default_conn = bt_conn_ref(conn);
 }
 
@@ -821,9 +888,27 @@ static void disconnected(struct bt_conn *conn, uint8_t reason)
 	k_work_submit(&adv_work);
 }
 
+static void security_changed_cb(struct bt_conn *conn, bt_security_t level, enum bt_security_err err)
+{
+	int ret;
+
+	if (err) {
+		LOG_WRN("Security failed: level %d err %d %s", level, err,
+			bt_security_err_to_str(err));
+		ret = bt_conn_disconnect(conn, BT_HCI_ERR_AUTH_FAIL);
+		if (ret) {
+			LOG_WRN("Failed to disconnect %d", ret);
+		}
+	} else {
+		LOG_INF("Security changed: level %d", level);
+		mcp_ctlr_init(conn);
+	}
+}
+
 BT_CONN_CB_DEFINE(conn_callbacks) = {
 	.connected = connected,
 	.disconnected = disconnected,
+	.security_changed = security_changed_cb,
 };
 
 static struct bt_pacs_cap cap_sink = {
@@ -927,9 +1012,11 @@ static void button_changed(uint32_t button_state, uint32_t has_changed)
 
 	if (buttons & DK_BTN1_MSK) {
 		LOG_INF("Button 1 pressed");
+		mcp_send_cmd(MEDIA_PROXY_OP_PLAY);
 	}
 	if (buttons & DK_BTN2_MSK) {
 		LOG_INF("Button 2 pressed");
+		mcp_send_cmd(MEDIA_PROXY_OP_PAUSE);
 	}
 	if (buttons & DK_BTN3_MSK) {
 		LOG_INF("Button 3 pressed");
