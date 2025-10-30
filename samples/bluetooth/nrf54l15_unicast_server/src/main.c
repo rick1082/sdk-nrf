@@ -41,6 +41,12 @@
 #include <nrfx_clock.h>
 #include <pcm_mix.h>
 #include <dk_buttons_and_leds.h>
+#include <stdint.h>
+#include <string.h>
+#include <zephyr/bluetooth/audio/vcp.h>
+#include <zephyr/bluetooth/conn.h>
+#include <zephyr/kernel.h>
+#include <zephyr/sys/printk.h>
 #include "lc3.h"
 #include <zephyr/logging/log.h>
 LOG_MODULE_REGISTER(main, LOG_LEVEL_INF);
@@ -136,10 +142,11 @@ static struct k_work adv_work;
 #define MAX_FRAME_DURATION_US 10000
 #define MAX_NUM_SAMPLES	      ((MAX_FRAME_DURATION_US * MAX_SAMPLE_RATE) / USEC_PER_SEC)
 
-static int16_t audio_buf[MAX_NUM_SAMPLES * 2];
 static lc3_decoder_t lc3_decoder[2];
 static lc3_decoder_mem_48k_t lc3_decoder_mem[2];
 static int frames_per_sdu;
+
+static struct bt_vcp_included vcp_included;
 
 void audio_i2s_set_next_buf(const uint8_t *tx_buf, uint32_t *rx_buf)
 {
@@ -339,6 +346,56 @@ static bool print_cb(struct bt_data *data, void *user_data)
 	LOG_HEXDUMP_INF(data->data, data->data_len, "value:");
 
 	return true;
+}
+
+static void vcs_state_cb(struct bt_conn *conn, int err, uint8_t volume, uint8_t mute)
+{
+	if (err) {
+		printk("VCS state get failed (%d)\n", err);
+	} else {
+		printk("VCS volume %u, mute %u\n", volume, mute);
+		dac_i2c_write(&dev_i2c, 0x41, (int8_t)(volume-127));
+		dac_i2c_write(&dev_i2c, 0x42, (int8_t)(volume-127));
+	}
+}
+
+static void vcs_flags_cb(struct bt_conn *conn, int err, uint8_t flags)
+{
+	if (err) {
+		printk("VCS flags get failed (%d)\n", err);
+	} else {
+		printk("VCS flags 0x%02X\n", flags);
+	}
+}
+
+static struct bt_vcp_vol_rend_cb vcp_cbs = {
+	.state = vcs_state_cb,
+	.flags = vcs_flags_cb,
+};
+
+static int vcp_vol_renderer_init(void)
+{
+	int err;
+	struct bt_vcp_vol_rend_register_param vcp_register_param;
+
+	memset(&vcp_register_param, 0, sizeof(vcp_register_param));
+
+	vcp_register_param.step = 1;
+	vcp_register_param.mute = BT_VCP_STATE_UNMUTED;
+	vcp_register_param.volume = 100;
+	vcp_register_param.cb = &vcp_cbs;
+
+	err = bt_vcp_vol_rend_register(&vcp_register_param);
+	if (err) {
+		return err;
+	}
+
+	err = bt_vcp_vol_rend_included_get(&vcp_included);
+	if (err != 0) {
+		return err;
+	}
+
+	return 0;
 }
 
 static void print_codec_cfg(const struct bt_audio_codec_cfg *codec_cfg)
@@ -653,7 +710,7 @@ static void stream_recv_lc3_codec(struct bt_bap_stream *stream, const struct bt_
 		prev_buf_size = buf_size;
 		//LOG_INF("I2S TX ring buffer space: %d bytes", buf_size);
 		int16_t buf_size_percent = buf_size * 100 / (I2S_SAMPLES_NUM * 2 * sizeof(uint16_t) * BUFFER_SPACE);
-		LOG_INF("%d", buf_size_percent);
+		//LOG_INF("FIFO state%d", buf_size_percent);
 		if (buf_size_percent < 45) {
 			dac_i2c_write(&dev_i2c, 0x07, 0x0E); // D[13:8] for D=3760
 		    dac_i2c_write(&dev_i2c, 0x08, 0xDA); // D[7:0] for D=3760
@@ -869,29 +926,16 @@ static void button_changed(uint32_t button_state, uint32_t has_changed)
 	uint32_t buttons = button_state & has_changed;
 
 	if (buttons & DK_BTN1_MSK) {
-		LOG_INF("Button 1 pressed, 48000");
-		//k_sleep(K_MSEC(100));
-		dac_i2c_write(&dev_i2c, 0x07, 0x0E); // D[13:8] for D=3760
-		dac_i2c_write(&dev_i2c, 0x08, 0xB0); // D[7:0] for D=3760
+		LOG_INF("Button 1 pressed");
 	}
 	if (buttons & DK_BTN2_MSK) {
 		LOG_INF("Button 2 pressed");
 	}
 	if (buttons & DK_BTN3_MSK) {
-		LOG_INF("Button 3 pressed, 47995");
-		dac_i2c_write(&dev_i2c, 0x07, 0x0E); // D[13:8] for D=3760
-		dac_i2c_write(&dev_i2c, 0x08, 0x9C); // D[7:0] for D=3760
-		//k_sleep(K_MSEC(100));
-		//dac_i2c_write(&dev_i2c, 0x07, 0x0E); // D[13:8] for D=3760
-		//dac_i2c_write(&dev_i2c, 0x08, 0xB0); // D[7:0] for D=3760
+		LOG_INF("Button 3 pressed");
 	}
 	if (buttons & DK_BTN4_MSK) {
-		LOG_INF("Button 4 pressed, 48005");
-		dac_i2c_write(&dev_i2c, 0x07, 0x0E); // D[13:8] for D=3760
-		dac_i2c_write(&dev_i2c, 0x08, 0xC4); // D[7:0] for D=3760
-		//k_sleep(K_MSEC(100));
-		//dac_i2c_write(&dev_i2c, 0x07, 0x0E); // D[13:8] for D=3760
-		//dac_i2c_write(&dev_i2c, 0x08, 0xB0); // D[7:0] for D=3760
+		LOG_INF("Button 4 pressed");
 	}
 
 }
@@ -972,7 +1016,7 @@ int main(void)
 	if (err != 0) {
 		return 0;
 	}
-
+	vcp_vol_renderer_init();
 	/* Create a connectable advertising set */
 	err = bt_le_ext_adv_create(BT_BAP_ADV_PARAM_CONN_QUICK, NULL, &adv);
 	if (err) {
