@@ -105,6 +105,7 @@ manifest:
           - open-amp
           - picolibc
           - segger
+          - tflite-micro
           - tinycrypt
           - tf-m-tests
           - uoscore-uedhoc
