@@ -14,6 +14,15 @@
 	};
 };
 
+&pinctrl {
+    pdm20_default_alt: pdm20_default_alt {
+        group1 {
+            psels = <NRF_PSEL(PDM_CLK, 1, 9)>,
+                <NRF_PSEL(PDM_DIN, 1, 8)>;
+        };
+    };
+};
+
 &uart30 {
 	status = "okay";
 };

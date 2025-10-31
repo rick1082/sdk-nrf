@@ -4,16 +4,42 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+/* --- Standard includes --- */
 #include <errno.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <string.h>
 
+/* --- Zephyr core includes --- */
 #include <zephyr/autoconf.h>
+#include <zephyr/kernel.h>
+#include <zephyr/net_buf.h>
+#include <zephyr/settings/settings.h>
+#include <zephyr/sys/__assert.h>
+#include <zephyr/sys/byteorder.h>
+#include <zephyr/sys/printk.h>
+#include <zephyr/sys/ring_buffer.h>
+#include <zephyr/sys/util.h>
+#include <zephyr/sys/util_macro.h>
+#include <zephyr/sys_clock.h>
+#include <zephyr/types.h>
+#include <zephyr/logging/log.h>
+
+/* --- Zephyr driver includes --- */
+#include <zephyr/drivers/clock_control/nrf_clock_control.h>
+#include <zephyr/drivers/gpio.h>
+#include <zephyr/drivers/i2c.h>
+#include <zephyr/drivers/pinctrl.h>
+
+/* --- Bluetooth includes --- */
 #include <zephyr/bluetooth/addr.h>
 #include <zephyr/bluetooth/audio/audio.h>
 #include <zephyr/bluetooth/audio/bap.h>
 #include <zephyr/bluetooth/audio/lc3.h>
+#include <zephyr/bluetooth/audio/mcc.h>
+#include <zephyr/bluetooth/audio/media_proxy.h>
 #include <zephyr/bluetooth/audio/pacs.h>
+#include <zephyr/bluetooth/audio/vcp.h>
 #include <zephyr/bluetooth/bluetooth.h>
 #include <zephyr/bluetooth/byteorder.h>
 #include <zephyr/bluetooth/conn.h>
@@ -22,44 +48,55 @@
 #include <zephyr/bluetooth/hci_types.h>
 #include <zephyr/bluetooth/iso.h>
 #include <zephyr/bluetooth/uuid.h>
-#include <zephyr/kernel.h>
-#include <zephyr/net_buf.h>
-#include <zephyr/sys/__assert.h>
-#include <zephyr/sys/byteorder.h>
-#include <zephyr/sys/printk.h>
-#include <zephyr/sys/util.h>
-#include <zephyr/sys/util_macro.h>
-#include <zephyr/sys_clock.h>
-#include <zephyr/types.h>
-#include <zephyr/sys/ring_buffer.h>
-#include <zephyr/drivers/pinctrl.h>
-#include <zephyr/drivers/gpio.h>
-#include <zephyr/settings/settings.h>
-#include <zephyr/drivers/clock_control/nrf_clock_control.h>
-#include <stdint.h>
-#include <nrfx_i2s.h>
-#include <nrfx_clock.h>
-#include <pcm_mix.h>
-#include <dk_buttons_and_leds.h>
-#include "lc3.h"
-#include <zephyr/logging/log.h>
-LOG_MODULE_REGISTER(main, LOG_LEVEL_INF);
 
+/* --- Nordic specific includes --- */
+#include <dk_buttons_and_leds.h>
+#include <nrfx_clock.h>
+#include <nrfx_i2s.h>
+#include <pcm_mix.h>
+#include "lc3.h"
 #include "nrf54l15.h"
+
 #if defined(NRF54L15_XXAA)
 #include <hal/nrf_clock.h>
-#endif /* defined(NRF54L15_XXAA) */
-#include <zephyr/drivers/i2c.h>
-#define I2C_NODE DT_NODELABEL(tlv320)
+#endif
 
+LOG_MODULE_REGISTER(main, LOG_LEVEL_INF);
+
+/* --- Hardware definitions --- */
+#define I2C_NODE DT_NODELABEL(tlv320)
+#define I2S_NL DT_NODELABEL(i2s20)
+
+/* --- Audio definitions --- */
+#define I2S_SAMPLES_NUM 48  // samples per 1ms block
+#define BUFFER_SPACE 20     // 20 buffers = 10ms total
+#define MAX_SAMPLE_RATE 48000
+#define MAX_FRAME_DURATION_US 10000
+#define MAX_NUM_SAMPLES ((MAX_FRAME_DURATION_US * MAX_SAMPLE_RATE) / USEC_PER_SEC)
+
+/* --- Button definitions --- */
+#define KEY_LEFT_MASK   DK_BTN1_MSK
+#define KEY_UP_MASK     DK_BTN2_MSK
+#define KEY_RIGHT_MASK  DK_BTN3_MSK
+#define KEY_DOWN_MASK   DK_BTN4_MSK
+
+/* --- Bluetooth Audio Context definitions --- */
+#define AVAILABLE_SINK_CONTEXT \
+	(BT_AUDIO_CONTEXT_TYPE_UNSPECIFIED | BT_AUDIO_CONTEXT_TYPE_CONVERSATIONAL | \
+	 BT_AUDIO_CONTEXT_TYPE_MEDIA | BT_AUDIO_CONTEXT_TYPE_GAME | \
+	 BT_AUDIO_CONTEXT_TYPE_INSTRUCTIONAL)
+
+#define AVAILABLE_SOURCE_CONTEXT BT_AUDIO_CONTEXT_TYPE_UNSPECIFIED
+
+/* --- GPIO declarations --- */
 static const struct gpio_dt_spec led = GPIO_DT_SPEC_GET(DT_ALIAS(led0), gpios);
 static const struct gpio_dt_spec rst = GPIO_DT_SPEC_GET(DT_ALIAS(led3), gpios);
+static const struct device *gpio;
 
-#define I2S_NL DT_NODELABEL(i2s20)
+/* --- I2S configuration --- */
 PINCTRL_DT_DEFINE(I2S_NL);
 static nrfx_i2s_t i2s_inst = NRFX_I2S_INSTANCE(20);
 static nrfx_i2s_config_t cfg = {
-	/* Pins are configured by pinctrl. */
 	.skip_gpio_cfg = true,
 	.skip_psel_cfg = true,
 	.irq_priority = DT_IRQ(I2S_NL, priority),
@@ -72,16 +109,17 @@ static nrfx_i2s_config_t cfg = {
 	.mck_setup = NRF_I2S_MCK_32MDIV2,
 };
 
-#include <zephyr/drivers/gpio.h>
-static const struct device *gpio;
+/* --- I2C configuration --- */
+static const struct i2c_dt_spec dev_i2c = I2C_DT_SPEC_GET(I2C_NODE);
 
-#define AVAILABLE_SINK_CONTEXT                                                                     \
-	(BT_AUDIO_CONTEXT_TYPE_UNSPECIFIED | BT_AUDIO_CONTEXT_TYPE_CONVERSATIONAL |                \
-	 BT_AUDIO_CONTEXT_TYPE_MEDIA | BT_AUDIO_CONTEXT_TYPE_GAME |                                \
-	 BT_AUDIO_CONTEXT_TYPE_INSTRUCTIONAL)
+/* --- Audio buffers --- */
+static uint16_t i2s_tx_buf_a[I2S_SAMPLES_NUM * 2] = {0}; // 2 channels, 16 bits each
+static uint16_t i2s_tx_buf_b[I2S_SAMPLES_NUM * 2] = {0};
+static uint16_t i2s_rx_buf_a[I2S_SAMPLES_NUM * 2] = {0};
+static uint16_t i2s_rx_buf_b[I2S_SAMPLES_NUM * 2] = {0};
+RING_BUF_DECLARE(i2s_tx_ring_buf, I2S_SAMPLES_NUM * 2 * sizeof(uint16_t) * BUFFER_SPACE);
 
-#define AVAILABLE_SOURCE_CONTEXT BT_AUDIO_CONTEXT_TYPE_UNSPECIFIED
-
+/* --- Bluetooth Audio variables --- */
 NET_BUF_POOL_FIXED_DEFINE(tx_pool, CONFIG_BT_ASCS_MAX_ASE_SRC_COUNT,
 			  BT_ISO_SDU_BUF_SIZE(CONFIG_BT_ISO_TX_MTU),
 			  CONFIG_BT_CONN_TX_USER_DATA_SIZE, NULL);
@@ -90,38 +128,42 @@ static const struct bt_audio_codec_cap lc3_codec_cap = BT_AUDIO_CODEC_CAP_LC3(
 	BT_AUDIO_CODEC_CAP_FREQ_48KHZ, BT_AUDIO_CODEC_CAP_DURATION_10,
 	BT_AUDIO_CODEC_CAP_CHAN_COUNT_SUPPORT(2), 80u, 240u, 1u, AVAILABLE_SINK_CONTEXT);
 
+static const struct bt_bap_qos_cfg_pref qos_pref =
+	BT_BAP_QOS_CFG_PREF(true, BT_GAP_LE_PHY_2M, 10, 10, 10000, 40000, 10000, 40000);
+
 static struct bt_conn *default_conn;
 static struct k_work_delayable audio_send_work;
 static struct bt_bap_stream sink_streams[CONFIG_BT_ASCS_MAX_ASE_SNK_COUNT];
+
 static struct audio_source {
 	struct bt_bap_stream stream;
 	uint16_t seq_num;
 	uint16_t max_sdu;
 	size_t len_to_send;
 } source_streams[CONFIG_BT_ASCS_MAX_ASE_SRC_COUNT];
+
 static size_t configured_source_stream_count;
 
-#define I2S_SAMPLES_NUM 48 // samples per 1ms block
-// 20 buffers of size I2S_SAMPLES_NUM * 2 * sizeof(uint16_t) = 10ms
-static uint16_t i2s_tx_buf_a[I2S_SAMPLES_NUM * 2] = {0}; // 2 channels, 16 bits each
-static uint16_t i2s_tx_buf_b[I2S_SAMPLES_NUM * 2] = {0}; // 2 channels, 16 bits each
-static uint16_t i2s_rx_buf_a[I2S_SAMPLES_NUM * 2] = {0}; // 2 channels, 16 bits each
-static uint16_t i2s_rx_buf_b[I2S_SAMPLES_NUM * 2] = {0}; // 2 channels, 16 bits each
-#define BUFFER_SPACE 20 // 20 buffers of size I2S_SAMPLES_NUM * 2 * sizeof(uint16_t) = 10ms
-RING_BUF_DECLARE(i2s_tx_ring_buf, I2S_SAMPLES_NUM * 2 * sizeof(uint16_t) * BUFFER_SPACE);
+/* --- LC3 decoder variables --- */
+static lc3_decoder_t lc3_decoder[2];
+static lc3_decoder_mem_48k_t lc3_decoder_mem[2];
+static int frames_per_sdu;
 
-static const struct bt_bap_qos_cfg_pref qos_pref =
-	BT_BAP_QOS_CFG_PREF(true, BT_GAP_LE_PHY_2M, 10, 10, 10000, 40000, 10000, 40000);
+/* --- Volume Control variables --- */
+static struct bt_vcp_included vcp_included;
+
+/* --- Advertising variables --- */
+static struct bt_le_ext_adv *adv;
+static struct k_work adv_work;
 
 static uint8_t unicast_server_addata[] = {
-	BT_UUID_16_ENCODE(BT_UUID_ASCS_VAL),	/* ASCS UUID */
-	BT_AUDIO_UNICAST_ANNOUNCEMENT_TARGETED, /* Target Announcement */
+	BT_UUID_16_ENCODE(BT_UUID_ASCS_VAL),
+	BT_AUDIO_UNICAST_ANNOUNCEMENT_TARGETED,
 	BT_BYTES_LIST_LE16(AVAILABLE_SINK_CONTEXT),
 	BT_BYTES_LIST_LE16(AVAILABLE_SOURCE_CONTEXT),
 	0x00, /* Metadata length */
 };
 
-/* TODO: Expand with BAP data */
 static const struct bt_data ad[] = {
 	BT_DATA_BYTES(BT_DATA_FLAGS, (BT_LE_AD_GENERAL | BT_LE_AD_NO_BREDR)),
 	BT_DATA_BYTES(BT_DATA_UUID16_ALL, BT_UUID_16_ENCODE(BT_UUID_ASCS_VAL)),
@@ -129,18 +171,81 @@ static const struct bt_data ad[] = {
 	BT_DATA(BT_DATA_NAME_COMPLETE, CONFIG_BT_DEVICE_NAME, sizeof(CONFIG_BT_DEVICE_NAME) - 1),
 };
 
-static struct bt_le_ext_adv *adv;
-static struct k_work adv_work;
+/* --- Function prototypes --- */
+int mcp_send_cmd(uint8_t mcp_opcode);
 
-#define MAX_SAMPLE_RATE	      48000
-#define MAX_FRAME_DURATION_US 10000
-#define MAX_NUM_SAMPLES	      ((MAX_FRAME_DURATION_US * MAX_SAMPLE_RATE) / USEC_PER_SEC)
+/* --- I2C helper functions --- */
+void dac_i2c_write(const struct i2c_dt_spec *dev_i2c, uint8_t reg, uint8_t value)
+{
+	int ret;
+	uint8_t config[2] = {reg, value};
 
-static int16_t audio_buf[MAX_NUM_SAMPLES * 2];
-static lc3_decoder_t lc3_decoder[2];
-static lc3_decoder_mem_48k_t lc3_decoder_mem[2];
-static int frames_per_sdu;
+	ret = i2c_write_dt(dev_i2c, config, sizeof(config));
+	if (ret != 0) {
+		printf("Failed to write to I2C device address %x at reg. %x\n", dev_i2c->addr, reg);
+	} else {
+		// printf("I2C device address %x at reg. %x written successfully\n", dev_i2c->addr,
+		//        reg);
+	}
+}
 
+void tlv320_setup(void)
+{
+
+	if (!device_is_ready(dev_i2c.bus)) {
+		printf("I2C bus %s is not ready!\n", dev_i2c.bus->name);
+		return;
+	} else {
+		printf("I2C bus %s is ready!\n", dev_i2c.bus->name);
+	}
+
+	dac_i2c_write(&dev_i2c, 0x00, 0x00);
+
+	dac_i2c_write(&dev_i2c, 0x01, 0x01);
+	k_sleep(K_MSEC(10));
+
+	dac_i2c_write(&dev_i2c, 0x04, 0x03 | (0b11 << 0));
+	dac_i2c_write(&dev_i2c, 0x05, (0b001 << 4) | (0b0001 << 0));
+	dac_i2c_write(&dev_i2c, 0x06, 0x05);
+	dac_i2c_write(&dev_i2c, 0x07, 0x0E);
+	dac_i2c_write(&dev_i2c, 0x08, 0xB0);
+
+	dac_i2c_write(&dev_i2c, 0x05, (1 << 7) | (0b001 << 4) | (0b0001 << 0));
+	k_sleep(K_MSEC(15));
+
+	dac_i2c_write(&dev_i2c, 0x0B, 0x87);
+	dac_i2c_write(&dev_i2c, 0x0C, 0x82);
+	dac_i2c_write(&dev_i2c, 0x0D, 0x00);
+	dac_i2c_write(&dev_i2c, 0x0E, 0x80);
+
+	dac_i2c_write(&dev_i2c, 0x1B, 0x0C);
+	dac_i2c_write(&dev_i2c, 0x1E, 0x84);
+	dac_i2c_write(&dev_i2c, 0x1D, (0b01 << 0));
+	dac_i2c_write(&dev_i2c, 0x3C, 0x01);
+	dac_i2c_write(&dev_i2c, 0x74, 0x00);
+
+	dac_i2c_write(&dev_i2c, 0x00, 0x01);
+	dac_i2c_write(&dev_i2c, 0x1F, (0b00 << 3));
+	dac_i2c_write(&dev_i2c, 0x21, (0b0111 << 3) | (0b11 << 1));
+	dac_i2c_write(&dev_i2c, 0x23, 0x44);
+	dac_i2c_write(&dev_i2c, 0x24, 0x80);
+	dac_i2c_write(&dev_i2c, 0x25, 0x80);
+	dac_i2c_write(&dev_i2c, 0x28, 0x06);
+	dac_i2c_write(&dev_i2c, 0x29, 0x06);
+	dac_i2c_write(&dev_i2c, 0x1F, 0xC0 | (0b00 << 3));
+	// dac_i2c_write(&dev_i2c, 0x20, 0x80);
+
+	k_sleep(K_MSEC(300));
+
+	dac_i2c_write(&dev_i2c, 0x00, 0x00);
+	dac_i2c_write(&dev_i2c, 0x3F, 0xD4);
+	dac_i2c_write(&dev_i2c, 0x41, -60);
+	dac_i2c_write(&dev_i2c, 0x42, -60);
+	dac_i2c_write(&dev_i2c, 0x40, 0x00);
+	dac_i2c_write(&dev_i2c, 0x00, 0x00);
+}
+
+/* --- I2S functions --- */
 void audio_i2s_set_next_buf(const uint8_t *tx_buf, uint32_t *rx_buf)
 {
 	const nrfx_i2s_buffers_t i2s_buf = {.p_rx_buffer = rx_buf,
@@ -216,6 +321,7 @@ void audio_i2s_init(void)
 	}
 }
 
+/* --- Clock management --- */
 static int clocks_start(void)
 {
 	int err;
@@ -254,76 +360,7 @@ static int clocks_start(void)
 	return 0;
 }
 
-void dac_i2c_write(const struct i2c_dt_spec *dev_i2c, uint8_t reg, uint8_t value)
-{
-	int ret;
-	uint8_t config[2] = {reg, value};
-
-	ret = i2c_write_dt(dev_i2c, config, sizeof(config));
-	if (ret != 0) {
-		printf("Failed to write to I2C device address %x at reg. %x\n", dev_i2c->addr, reg);
-	} else {
-		// printf("I2C device address %x at reg. %x written successfully\n", dev_i2c->addr,
-		//        reg);
-	}
-}
-static const struct i2c_dt_spec dev_i2c = I2C_DT_SPEC_GET(I2C_NODE);
-void tlv320_setup(void)
-{
-
-	if (!device_is_ready(dev_i2c.bus)) {
-		printf("I2C bus %s is not ready!\n", dev_i2c.bus->name);
-		return;
-	} else {
-		printf("I2C bus %s is ready!\n", dev_i2c.bus->name);
-	}
-
-	dac_i2c_write(&dev_i2c, 0x00, 0x00);
-
-	dac_i2c_write(&dev_i2c, 0x01, 0x01);
-	k_sleep(K_MSEC(10));
-
-	dac_i2c_write(&dev_i2c, 0x04, 0x03 | (0b11 << 0));
-	dac_i2c_write(&dev_i2c, 0x05, (0b001 << 4) | (0b0001 << 0));
-	dac_i2c_write(&dev_i2c, 0x06, 0x05);
-	dac_i2c_write(&dev_i2c, 0x07, 0x0E);
-	dac_i2c_write(&dev_i2c, 0x08, 0xB0);
-
-	dac_i2c_write(&dev_i2c, 0x05, (1 << 7) | (0b001 << 4) | (0b0001 << 0));
-	k_sleep(K_MSEC(15));
-
-	dac_i2c_write(&dev_i2c, 0x0B, 0x87);
-	dac_i2c_write(&dev_i2c, 0x0C, 0x82);
-	dac_i2c_write(&dev_i2c, 0x0D, 0x00);
-	dac_i2c_write(&dev_i2c, 0x0E, 0x80);
-
-	dac_i2c_write(&dev_i2c, 0x1B, 0x0C);
-	dac_i2c_write(&dev_i2c, 0x1E, 0x84);
-	dac_i2c_write(&dev_i2c, 0x1D, (0b01 << 0));
-	dac_i2c_write(&dev_i2c, 0x3C, 0x01);
-	dac_i2c_write(&dev_i2c, 0x74, 0x00);
-
-	dac_i2c_write(&dev_i2c, 0x00, 0x01);
-	dac_i2c_write(&dev_i2c, 0x1F, (0b00 << 3));
-	dac_i2c_write(&dev_i2c, 0x21, (0b0111 << 3) | (0b11 << 1));
-	dac_i2c_write(&dev_i2c, 0x23, 0x44);
-	dac_i2c_write(&dev_i2c, 0x24, 0x80);
-	dac_i2c_write(&dev_i2c, 0x25, 0x80);
-	dac_i2c_write(&dev_i2c, 0x28, 0x06);
-	dac_i2c_write(&dev_i2c, 0x29, 0x06);
-	dac_i2c_write(&dev_i2c, 0x1F, 0xC0 | (0b00 << 3));
-	// dac_i2c_write(&dev_i2c, 0x20, 0x80);
-
-	k_sleep(K_MSEC(300));
-
-	dac_i2c_write(&dev_i2c, 0x00, 0x00);
-	dac_i2c_write(&dev_i2c, 0x3F, 0xD4);
-	dac_i2c_write(&dev_i2c, 0x41, -60);
-	dac_i2c_write(&dev_i2c, 0x42, -60);
-	dac_i2c_write(&dev_i2c, 0x40, 0x00);
-	dac_i2c_write(&dev_i2c, 0x00, 0x00);
-}
-
+/* --- Utility functions --- */
 void print_hex(const uint8_t *ptr, size_t len)
 {
 	while (len-- != 0) {
@@ -388,6 +425,58 @@ static void print_qos(const struct bt_bap_qos_cfg *qos)
 		qos->interval, qos->framing, qos->phy, qos->sdu, qos->rtn, qos->latency, qos->pd);
 }
 
+/* --- Volume Control callbacks --- */
+static void vcs_state_cb(struct bt_conn *conn, int err, uint8_t volume, uint8_t mute)
+{
+	if (err) {
+		printk("VCS state get failed (%d)\n", err);
+	} else {
+		printk("VCS volume %u, mute %u\n", volume, mute);
+		dac_i2c_write(&dev_i2c, 0x41, (int8_t)(volume-127));
+		dac_i2c_write(&dev_i2c, 0x42, (int8_t)(volume-127));
+	}
+}
+
+static void vcs_flags_cb(struct bt_conn *conn, int err, uint8_t flags)
+{
+	if (err) {
+		printk("VCS flags get failed (%d)\n", err);
+	} else {
+		printk("VCS flags 0x%02X\n", flags);
+	}
+}
+
+static struct bt_vcp_vol_rend_cb vcp_cbs = {
+	.state = vcs_state_cb,
+	.flags = vcs_flags_cb,
+};
+
+static int vcp_vol_renderer_init(void)
+{
+	int err;
+	struct bt_vcp_vol_rend_register_param vcp_register_param;
+
+	memset(&vcp_register_param, 0, sizeof(vcp_register_param));
+
+	vcp_register_param.step = 1;
+	vcp_register_param.mute = BT_VCP_STATE_UNMUTED;
+	vcp_register_param.volume = 100;
+	vcp_register_param.cb = &vcp_cbs;
+
+	err = bt_vcp_vol_rend_register(&vcp_register_param);
+	if (err) {
+		return err;
+	}
+
+	err = bt_vcp_vol_rend_included_get(&vcp_included);
+	if (err != 0) {
+		return err;
+	}
+
+	return 0;
+}
+
+/* --- Stream management functions --- */
 static enum bt_audio_dir stream_dir(const struct bt_bap_stream *stream)
 {
 	for (size_t i = 0U; i < ARRAY_SIZE(source_streams); i++) {
@@ -429,6 +518,7 @@ static struct bt_bap_stream *stream_alloc(enum bt_audio_dir dir)
 	return NULL;
 }
 
+/* --- BAP unicast server callbacks --- */
 static int lc3_config(struct bt_conn *conn, const struct bt_bap_ep *ep, enum bt_audio_dir dir,
 		      const struct bt_audio_codec_cfg *codec_cfg, struct bt_bap_stream **stream,
 		      struct bt_bap_qos_cfg_pref *const pref, struct bt_bap_ascs_rsp *rsp)
@@ -606,8 +696,10 @@ static int lc3_release(struct bt_bap_stream *stream, struct bt_bap_ascs_rsp *rsp
 	return 0;
 }
 
-static struct bt_bap_unicast_server_register_param param = {CONFIG_BT_ASCS_MAX_ASE_SNK_COUNT,
-							    CONFIG_BT_ASCS_MAX_ASE_SRC_COUNT};
+static struct bt_bap_unicast_server_register_param param = {
+	CONFIG_BT_ASCS_MAX_ASE_SNK_COUNT,
+	CONFIG_BT_ASCS_MAX_ASE_SRC_COUNT
+};
 
 static const struct bt_bap_unicast_server_cb unicast_server_cb = {
 	.config = lc3_config,
@@ -621,6 +713,7 @@ static const struct bt_bap_unicast_server_cb unicast_server_cb = {
 	.release = lc3_release,
 };
 
+/* --- Stream operations --- */
 static void stream_recv_lc3_codec(struct bt_bap_stream *stream, const struct bt_iso_recv_info *info,
 				  struct net_buf *buf)
 {
@@ -653,7 +746,7 @@ static void stream_recv_lc3_codec(struct bt_bap_stream *stream, const struct bt_
 		prev_buf_size = buf_size;
 		//LOG_INF("I2S TX ring buffer space: %d bytes", buf_size);
 		int16_t buf_size_percent = buf_size * 100 / (I2S_SAMPLES_NUM * 2 * sizeof(uint16_t) * BUFFER_SPACE);
-		LOG_INF("%d", buf_size_percent);
+		//LOG_INF("FIFO state%d", buf_size_percent);
 		if (buf_size_percent < 45) {
 			dac_i2c_write(&dev_i2c, 0x07, 0x0E); // D[13:8] for D=3760
 		    dac_i2c_write(&dev_i2c, 0x08, 0xDA); // D[7:0] for D=3760
@@ -716,6 +809,7 @@ static struct bt_bap_stream_ops stream_ops = {
 	.enabled = stream_enabled_cb,
 };
 
+/* --- Advertising functions --- */
 static void advertising_process(struct k_work *work)
 {
 	int err;
@@ -726,6 +820,71 @@ static void advertising_process(struct k_work *work)
 	LOG_INF("Advertising successfully started");
 }
 
+/* --- Media Control functions --- */
+static void mcc_discover_mcs_cb(struct bt_conn *conn, int err)
+{
+	LOG_WRN("MCP: MCS discovery complete callback");
+	if (err) {
+		printk("MCP: Discovery of MCS failed (%d)\n", err);
+	} else {
+		printk("MCP: Discovered MCS\n");
+	}
+}
+
+static void mcc_send_command_cb(struct bt_conn *conn, int err, const struct mpl_cmd *cmd)
+{
+	if (err) {
+		printk("MCP: Command send failed (%d) - opcode: %u, param: %d\n",
+			err, cmd->opcode, cmd->param);
+	} else {
+		printk("MCP: Successfully sent command (%d) - opcode: %u, param: %d\n",
+			err, cmd->opcode, cmd->param);
+	}
+}
+
+static struct bt_mcc_cb mcc_cb = {
+	.discover_mcs = mcc_discover_mcs_cb,
+	.send_cmd = mcc_send_command_cb,
+};
+
+int mcp_ctlr_init(struct bt_conn *conn)
+{
+	int err;
+
+	default_conn = bt_conn_ref(conn);
+
+	err = bt_mcc_init(&mcc_cb);
+	if (err != 0) {
+		return err;
+	}
+
+	err = bt_mcc_discover_mcs(default_conn, true);
+
+	return err;
+}
+
+int mcp_send_cmd(uint8_t mcp_opcode)
+{
+	int err;
+	struct mpl_cmd cmd;
+
+	cmd.opcode = mcp_opcode;
+	cmd.use_param = false;
+
+	if (default_conn == NULL) {
+		printk("MCP: No connection\n");
+		return -EINVAL;
+	}
+
+	err = bt_mcc_send_cmd(default_conn, &cmd);
+	if (err != 0) {
+		printk("MCP: Command failed: %d\n", err);
+	}
+
+	return err;
+}
+
+/* --- Connection callbacks --- */
 static void connected(struct bt_conn *conn, uint8_t err)
 {
 	char addr[BT_ADDR_LE_STR_LEN];
@@ -740,6 +899,7 @@ static void connected(struct bt_conn *conn, uint8_t err)
 	}
 
 	LOG_INF("Connected: %s", addr);
+
 	default_conn = bt_conn_ref(conn);
 }
 
@@ -764,11 +924,30 @@ static void disconnected(struct bt_conn *conn, uint8_t reason)
 	k_work_submit(&adv_work);
 }
 
+static void security_changed_cb(struct bt_conn *conn, bt_security_t level, enum bt_security_err err)
+{
+	int ret;
+
+	if (err) {
+		LOG_WRN("Security failed: level %d err %d %s", level, err,
+			bt_security_err_to_str(err));
+		ret = bt_conn_disconnect(conn, BT_HCI_ERR_AUTH_FAIL);
+		if (ret) {
+			LOG_WRN("Failed to disconnect %d", ret);
+		}
+	} else {
+		LOG_INF("Security changed: level %d", level);
+		mcp_ctlr_init(conn);
+	}
+}
+
 BT_CONN_CB_DEFINE(conn_callbacks) = {
 	.connected = connected,
 	.disconnected = disconnected,
+	.security_changed = security_changed_cb,
 };
 
+/* --- PACS capabilities --- */
 static struct bt_pacs_cap cap_sink = {
 	.codec_cap = &lc3_codec_cap,
 };
@@ -777,6 +956,7 @@ static struct bt_pacs_cap cap_source = {
 	.codec_cap = &lc3_codec_cap,
 };
 
+/* --- PACS setup functions --- */
 static int set_location(void)
 {
 	int err;
@@ -855,43 +1035,24 @@ static int set_available_contexts(void)
 	return 0;
 }
 
-#define KEY_LEFT_MASK	DK_BTN1_MSK
-/* Key used to move cursor up */
-#define KEY_UP_MASK	DK_BTN2_MSK
-/* Key used to move cursor right */
-#define KEY_RIGHT_MASK	DK_BTN3_MSK
-/* Key used to move cursor down */
-#define KEY_DOWN_MASK	DK_BTN4_MSK
-
-/* Handles button state changes and adjusts PDM gain accordingly */
+/* --- Button handling --- */
 static void button_changed(uint32_t button_state, uint32_t has_changed)
 {
 	uint32_t buttons = button_state & has_changed;
 
 	if (buttons & DK_BTN1_MSK) {
-		LOG_INF("Button 1 pressed, 48000");
-		//k_sleep(K_MSEC(100));
-		dac_i2c_write(&dev_i2c, 0x07, 0x0E); // D[13:8] for D=3760
-		dac_i2c_write(&dev_i2c, 0x08, 0xB0); // D[7:0] for D=3760
+		LOG_INF("Button 1 pressed");
+		mcp_send_cmd(MEDIA_PROXY_OP_PLAY);
 	}
 	if (buttons & DK_BTN2_MSK) {
 		LOG_INF("Button 2 pressed");
+		mcp_send_cmd(MEDIA_PROXY_OP_PAUSE);
 	}
 	if (buttons & DK_BTN3_MSK) {
-		LOG_INF("Button 3 pressed, 47995");
-		dac_i2c_write(&dev_i2c, 0x07, 0x0E); // D[13:8] for D=3760
-		dac_i2c_write(&dev_i2c, 0x08, 0x9C); // D[7:0] for D=3760
-		//k_sleep(K_MSEC(100));
-		//dac_i2c_write(&dev_i2c, 0x07, 0x0E); // D[13:8] for D=3760
-		//dac_i2c_write(&dev_i2c, 0x08, 0xB0); // D[7:0] for D=3760
+		LOG_INF("Button 3 pressed");
 	}
 	if (buttons & DK_BTN4_MSK) {
-		LOG_INF("Button 4 pressed, 48005");
-		dac_i2c_write(&dev_i2c, 0x07, 0x0E); // D[13:8] for D=3760
-		dac_i2c_write(&dev_i2c, 0x08, 0xC4); // D[7:0] for D=3760
-		//k_sleep(K_MSEC(100));
-		//dac_i2c_write(&dev_i2c, 0x07, 0x0E); // D[13:8] for D=3760
-		//dac_i2c_write(&dev_i2c, 0x08, 0xB0); // D[7:0] for D=3760
+		LOG_INF("Button 4 pressed");
 	}
 
 }
@@ -900,41 +1061,38 @@ int main(void)
 {
 	int err;
 
+	/* Hardware initialization */
 	gpio = DEVICE_DT_GET(DT_NODELABEL(gpio0));
 	gpio_pin_configure_dt(&led, GPIO_OUTPUT);
 	gpio_pin_configure_dt(&rst, GPIO_OUTPUT);
 
 	clocks_start();
-	gpio_pin_set_dt(&rst, 0); // Reset high
-	k_sleep(K_MSEC(1000));	  // Wait for reset to take effect
-	gpio_pin_set_dt(&rst, 1); // Reset high
+	gpio_pin_set_dt(&rst, 0);
+	k_sleep(K_MSEC(1000));
+	gpio_pin_set_dt(&rst, 1);
 
-	err = dk_buttons_init(button_changed);
-	if (err) {
-		LOG_ERR("Cannot init buttons (err: %d)", err);
-	}
-
+	/* Audio hardware setup */
 	tlv320_setup();
-
 	audio_i2s_init();
-
 	audio_i2s_start((uint8_t *)i2s_tx_buf_a, (uint32_t *)i2s_rx_buf_a);
 	audio_i2s_set_next_buf((const uint8_t *)i2s_tx_buf_b, (uint32_t *)i2s_rx_buf_b);
 
+	/* Bluetooth initialization */
 	err = bt_enable(NULL);
 	if (err != 0) {
 		LOG_INF("Bluetooth init failed (err %d)", err);
 		return 0;
 	}
+
 	if (IS_ENABLED(CONFIG_SETTINGS)) {
 		settings_load();
 	}
 
+	/* Check for bond clearing */
 	err = gpio_pin_get(gpio, 4);
 	if (err == 1) {
 		if (IS_ENABLED(CONFIG_SETTINGS)) {
 			LOG_WRN("Clearing all bonds");
-
 			err = bt_unpair(BT_ID_DEFAULT, NULL);
 			if (err) {
 				LOG_ERR("Failed to clear bonding: %d", err);
@@ -942,8 +1100,10 @@ int main(void)
 			}
 		}
 	}
+
 	LOG_INF("Bluetooth initialized");
 
+	/* BAP server setup */
 	bt_bap_unicast_server_register(&param);
 	bt_bap_unicast_server_register_cb(&unicast_server_cb);
 
@@ -958,6 +1118,7 @@ int main(void)
 		bt_bap_stream_cb_register(&source_streams[i].stream, &stream_ops);
 	}
 
+	/* PACS configuration */
 	err = set_location();
 	if (err != 0) {
 		return 0;
@@ -973,7 +1134,10 @@ int main(void)
 		return 0;
 	}
 
-	/* Create a connectable advertising set */
+	/* Volume control setup */
+	vcp_vol_renderer_init();
+
+	/* Advertising setup */
 	err = bt_le_ext_adv_create(BT_BAP_ADV_PARAM_CONN_QUICK, NULL, &adv);
 	if (err) {
 		LOG_INF("Failed to create advertising set (err %d)", err);
@@ -989,8 +1153,10 @@ int main(void)
 	k_work_init(&adv_work, advertising_process);
 	k_work_submit(&adv_work);
 
+	/* Main loop */
 	while (true) {
 		k_sleep(K_SECONDS(1));
 	}
+
 	return 0;
 }
