@@ -6,6 +6,10 @@ project(bap_unicast_server)
 
 target_sources(app PRIVATE
   src/main.c
+  src/ml_main.cc
+  src/mfcc_data.c
+  src/kws_model_data.cc
+  src/cpu_based_blocks.cc
 )
 
 zephyr_library_include_directories(${ZEPHYR_BASE}/samples/bluetooth)

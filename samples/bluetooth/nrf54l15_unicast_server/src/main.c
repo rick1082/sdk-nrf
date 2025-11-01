@@ -56,6 +56,7 @@
 #include <pcm_mix.h>
 #include "lc3.h"
 #include "nrf54l15.h"
+#include "ml_main.h"
 
 #if defined(NRF54L15_XXAA)
 #include <hal/nrf_clock.h>
@@ -173,6 +174,7 @@ static const struct bt_data ad[] = {
 
 /* --- Function prototypes --- */
 int mcp_send_cmd(uint8_t mcp_opcode);
+static int pdm_mic_init(uint16_t sampling_rate);
 
 /* --- I2C helper functions --- */
 void dac_i2c_write(const struct i2c_dt_spec *dev_i2c, uint8_t reg, uint8_t value)
@@ -182,9 +184,9 @@ void dac_i2c_write(const struct i2c_dt_spec *dev_i2c, uint8_t reg, uint8_t value
 
 	ret = i2c_write_dt(dev_i2c, config, sizeof(config));
 	if (ret != 0) {
-		printf("Failed to write to I2C device address %x at reg. %x\n", dev_i2c->addr, reg);
+		printk("Failed to write to I2C device address %x at reg. %x\n", dev_i2c->addr, reg);
 	} else {
-		// printf("I2C device address %x at reg. %x written successfully\n", dev_i2c->addr,
+		// printk("I2C device address %x at reg. %x written successfully\n", dev_i2c->addr,
 		//        reg);
 	}
 }
@@ -193,10 +195,10 @@ void tlv320_setup(void)
 {
 
 	if (!device_is_ready(dev_i2c.bus)) {
-		printf("I2C bus %s is not ready!\n", dev_i2c.bus->name);
+		printk("I2C bus %s is not ready!\n", dev_i2c.bus->name);
 		return;
 	} else {
-		printf("I2C bus %s is ready!\n", dev_i2c.bus->name);
+		printk("I2C bus %s is ready!\n", dev_i2c.bus->name);
 	}
 
 	dac_i2c_write(&dev_i2c, 0x00, 0x00);
@@ -256,7 +258,7 @@ void audio_i2s_set_next_buf(const uint8_t *tx_buf, uint32_t *rx_buf)
 
 	ret = nrfx_i2s_next_buffers_set(&i2s_inst, &i2s_buf);
 	if (ret != NRFX_SUCCESS) {
-		printf("Failed to set next buffers: %x\n", ret);
+		printk("Failed to set next buffers: %x\n", ret);
 	}
 }
 
@@ -296,7 +298,7 @@ void audio_i2s_start(const uint8_t *tx_buf, uint32_t *rx_buf)
 	/* Buffer size in 32-bit words */
 	ret = nrfx_i2s_start(&i2s_inst, &i2s_buf, 0);
 	if (ret != NRFX_SUCCESS) {
-		printf("Failed to start I2S: %d\n", ret);
+		printk("Failed to start I2S: %d\n", ret);
 	}
 }
 
@@ -306,7 +308,7 @@ void audio_i2s_init(void)
 
 	ret = pinctrl_apply_state(PINCTRL_DT_DEV_CONFIG_GET(I2S_NL), PINCTRL_STATE_DEFAULT);
 	if (ret != 0) {
-		printf("Failed to apply pinctrl state: %d\n", ret);
+		printk("Failed to apply pinctrl state: %d\n", ret);
 		return;
 	}
 
@@ -316,7 +318,7 @@ void audio_i2s_init(void)
 
 	ret = nrfx_i2s_init(&i2s_inst, &cfg, i2s_comp_handler);
 	if (ret != NRFX_SUCCESS) {
-		printf("Failed to initialize I2S: %x\n", ret);
+		printk("Failed to initialize I2S: %x\n", ret);
 		return;
 	}
 }
@@ -331,7 +333,7 @@ static int clocks_start(void)
 
 	clk_mgr = z_nrf_clock_control_get_onoff(CLOCK_CONTROL_NRF_SUBSYS_HF);
 	if (!clk_mgr) {
-		printf("Unable to get the Clock manager\n");
+		printk("Unable to get the Clock manager\n");
 		return -ENXIO;
 	}
 
@@ -339,14 +341,14 @@ static int clocks_start(void)
 
 	err = onoff_request(clk_mgr, &clk_cli);
 	if (err < 0) {
-		printf("Clock request failed: %d\n", err);
+		printk("Clock request failed: %d\n", err);
 		return err;
 	}
 
 	do {
 		err = sys_notify_fetch_result(&clk_cli.notify, &res);
 		if (!err && res) {
-			printf("Clock could not be started: %d\n", res);
+			printk("Clock could not be started: %d\n", res);
 			return res;
 		}
 	} while (err);
@@ -356,7 +358,7 @@ static int clocks_start(void)
 	nrf_clock_task_trigger(NRF_CLOCK, NRF_CLOCK_TASK_PLLSTART);
 #endif /* defined(NRF54L15_XXAA) */
 
-	printf("HF clock started\n");
+	printk("HF clock started\n");
 	return 0;
 }
 
@@ -372,16 +374,16 @@ static bool print_cb(struct bt_data *data, void *user_data)
 {
 	const char *str = (const char *)user_data;
 
-	LOG_INF("%s: type 0x%02x value_len %u", str, data->type, data->data_len);
-	LOG_HEXDUMP_INF(data->data, data->data_len, "value:");
+	//LOG_INF("%s: type 0x%02x value_len %u", str, data->type, data->data_len);
+	//LOG_HEXDUMP_INF(data->data, data->data_len, "value:");
 
 	return true;
 }
 
 static void print_codec_cfg(const struct bt_audio_codec_cfg *codec_cfg)
 {
-	LOG_INF("codec_cfg 0x%02x cid 0x%04x vid 0x%04x count %u", codec_cfg->id, codec_cfg->cid,
-		codec_cfg->vid, codec_cfg->data_len);
+	//LOG_INF("codec_cfg 0x%02x cid 0x%04x vid 0x%04x count %u", codec_cfg->id, codec_cfg->cid,
+	//	codec_cfg->vid, codec_cfg->data_len);
 
 	if (codec_cfg->id == BT_HCI_CODING_FORMAT_LC3) {
 		enum bt_audio_location chan_allocation;
@@ -648,7 +650,7 @@ static int lc3_start(struct bt_bap_stream *stream, struct bt_bap_ascs_rsp *rsp)
 	if (configured_source_stream_count > 0 && !k_work_delayable_is_pending(&audio_send_work)) {
 
 		/* Start send timer */
-		k_work_schedule(&audio_send_work, K_MSEC(0));
+		//k_work_schedule(&audio_send_work, K_MSEC(0));
 	}
 
 	return 0;
@@ -728,12 +730,12 @@ static void stream_recv_lc3_codec(struct bt_bap_stream *stream, const struct bt_
 	}
 
 	if (buf->len == 0) {
-		LOG_INF("Received empty buffer");
+		//LOG_INF("Received empty buffer");
 		valid_data = false;
 	}
 
 	if (!valid_data) {
-		LOG_INF("Bad packet: 0x%02X", info->flags);
+		//LOG_INF("Bad packet: 0x%02X", info->flags);
 	}
 
 	int16_t audio_buf_test[2 * 480];
@@ -780,12 +782,13 @@ static void stream_stopped(struct bt_bap_stream *stream, uint8_t reason)
 	LOG_INF("Audio Stream %p stopped with reason 0x%02X", (void *)stream, reason);
 
 	/* Stop send timer */
-	k_work_cancel_delayable(&audio_send_work);
+	//k_work_cancel_delayable(&audio_send_work);
 }
 
 static void stream_started(struct bt_bap_stream *stream)
 {
 	LOG_INF("Audio Stream %p started", (void *)stream);
+
 }
 
 static void stream_enabled_cb(struct bt_bap_stream *stream)
@@ -919,7 +922,7 @@ static void disconnected(struct bt_conn *conn, uint8_t reason)
 	default_conn = NULL;
 
 	configured_source_stream_count = 0;
-	k_work_cancel_delayable(&audio_send_work);
+	//k_work_cancel_delayable(&audio_send_work);
 
 	k_work_submit(&adv_work);
 }
@@ -1056,13 +1059,126 @@ static void button_changed(uint32_t button_state, uint32_t has_changed)
 	}
 
 }
+#include "hal/nrf_pdm.h"
+#include <zephyr/audio/dmic.h>
+
+
+#define GAIN_DEFAULT	      0x20 //0x50
+#define MAX_FRAME_DURATION_US 10000
+#define MAX_NUM_SAMPLES	      ((MAX_FRAME_DURATION_US * MAX_SAMPLE_RATE) / USEC_PER_SEC)
+#define TOTAL_BUF_NEEDED      4
+static K_SEM_DEFINE(lc3_encoder_sem, 0U, TOTAL_BUF_NEEDED);
+#define SAMPLE_BIT_WIDTH 16
+#define BYTES_PER_SAMPLE sizeof(int16_t)
+/* Milliseconds to wait for a block to be read. */
+#define READ_TIMEOUT	 1000
+/* Size of a block for 10 ms of audio data. */
+#define BLOCK_SIZE(_sample_rate, _number_of_channels)                                              \
+	(BYTES_PER_SAMPLE * (_sample_rate / 100) * _number_of_channels)
+
+/* Driver will allocate blocks from this slab to receive audio data into them.
+ * Application, after getting a given block from the driver and processing its
+ * data, needs to free that block.
+ */
+#define MAX_BLOCK_SIZE BLOCK_SIZE(16000, 2)
+#define BLOCK_COUNT    8
+K_MEM_SLAB_DEFINE_STATIC(mem_slab, MAX_BLOCK_SIZE, BLOCK_COUNT, 8);
+static const struct device *const dmic_dev = DEVICE_DT_GET(DT_NODELABEL(dmic_dev));
+
+#define LC3_ENCODER_STACK_SIZE 2048
+#define LC3_ENCODER_PRIORITY   4
+static void dmic_fetch_thread(void *arg1, void *arg2, void *arg3);
+K_THREAD_DEFINE(dmic_fetch, LC3_ENCODER_STACK_SIZE, dmic_fetch_thread, NULL, NULL, NULL,
+		LC3_ENCODER_PRIORITY, 0, -1);
+
+static void dmic_fetch_thread(void *arg1, void *arg2, void *arg3)
+{
+	int ret, err;
+	void *buffer;
+	uint32_t size;
+	static int i = 0;
+	uint8_t ml_buffer[320];
+	err = dmic_trigger(dmic_dev, DMIC_TRIGGER_START);
+	if (err < 0) {
+		LOG_INF("DMIC start trigger failed: %d", err);
+	} else {
+		LOG_INF("DMIC start trigger success");
+	}
+	
+	while (true) {
+		ret = dmic_read(dmic_dev, 0, &buffer, &size, 20);
+		if (ret < 0) {
+			LOG_INF("DMIC read failed: %d", ret);
+			k_mem_slab_free(&mem_slab, buffer);
+			dmic_trigger(dmic_dev, DMIC_TRIGGER_STOP);
+			//dmic_trigger(dmic_dev, DMIC_TRIGGER_RESET);
+			k_yield();
+			k_sleep(K_MSEC(1000));
+			dmic_trigger(dmic_dev, DMIC_TRIGGER_START);
+		} else {
+			memcpy(ml_buffer, buffer,size);
+			k_mem_slab_free(&mem_slab, buffer);
+			ml_process(ml_buffer, size);
+		}
+	}
+}
+
+static int pdm_mic_init(uint16_t sampling_rate)
+{
+	int err;
+	struct pcm_stream_cfg stream = {
+		.pcm_width = SAMPLE_BIT_WIDTH,
+		.mem_slab = &mem_slab,
+	};
+	struct dmic_cfg cfg = {
+		.io =
+			{
+				/* These fields can be used to limit the PDM clock
+				 * configurations that the driver is allowed to use
+				 * to those supported by the microphone.
+				 */
+				.min_pdm_clk_freq = 1000000,
+				.max_pdm_clk_freq = 3250000,
+				.min_pdm_clk_dc = 40,
+				.max_pdm_clk_dc = 60,
+			},
+		.streams = &stream,
+		.channel =
+			{
+				.req_num_streams = 1,
+			},
+	};
+
+	err = device_is_ready(dmic_dev);
+	if (err < 0) {
+		LOG_INF("DMIC device is not ready: %d", err);
+		return err;
+	}
+
+	cfg.channel.req_num_chan = 1;
+	cfg.channel.req_chan_map_lo = dmic_build_channel_map(0, 0, PDM_CHAN_LEFT);
+	cfg.streams[0].pcm_rate = sampling_rate;
+	cfg.streams[0].block_size = BLOCK_SIZE(cfg.streams[0].pcm_rate, cfg.channel.req_num_chan);
+
+	err = dmic_configure(dmic_dev, &cfg);
+	if (err < 0) {
+		LOG_INF("Failed to configure the driver: %d", err);
+		return err;
+	}
+
+	nrf_pdm_gain_set(NRF_PDM20_S, GAIN_DEFAULT, GAIN_DEFAULT);
+	k_thread_start(dmic_fetch);
+
+	return 0;
+}
 
 int main(void)
 {
 	int err;
 
 	/* Hardware initialization */
-	gpio = DEVICE_DT_GET(DT_NODELABEL(gpio0));
+	gpio = DEVICE_DT_GET(DT_NODELABEL(gpio1));
+	gpio_pin_configure(gpio, 13, GPIO_INPUT | GPIO_PULL_UP);
 	gpio_pin_configure_dt(&led, GPIO_OUTPUT);
 	gpio_pin_configure_dt(&rst, GPIO_OUTPUT);
 
@@ -1089,8 +1205,9 @@ int main(void)
 	}
 
 	/* Check for bond clearing */
-	err = gpio_pin_get(gpio, 4);
-	if (err == 1) {
+	
+	err = gpio_pin_get(gpio, 13);
+	if (err == 0) {
 		if (IS_ENABLED(CONFIG_SETTINGS)) {
 			LOG_WRN("Clearing all bonds");
 			err = bt_unpair(BT_ID_DEFAULT, NULL);
@@ -1149,6 +1266,9 @@ int main(void)
 		LOG_INF("Failed to set advertising data (err %d)", err);
 		return 0;
 	}
+
+	ml_init();	
+	pdm_mic_init(16000);
 
 	k_work_init(&adv_work, advertising_process);
 	k_work_submit(&adv_work);
