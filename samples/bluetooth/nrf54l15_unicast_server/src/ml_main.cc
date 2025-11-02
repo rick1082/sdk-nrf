@@ -5,7 +5,9 @@
 #include <zephyr/sys/ring_buffer.h>
 #include <math.h>
 #include <dk_buttons_and_leds.h>
-
+#include <zephyr/bluetooth/audio/vcp.h>
+#include <zephyr/bluetooth/audio/mcc.h>
+#include "main.h"
 #include "ml_main.h"
 
 #define SAMPLE_LENGTH_IN_MS 100
@@ -98,38 +100,51 @@ void inference_thread(void *, void *, void *) {
 				switch (max_idx) {
 					case KWS_LABEL_UP:
 						// Handle "Up" command
+						bt_vcp_vol_rend_unmute_vol_up();
 						printk("up\n");
 						break;
 					case KWS_LABEL_DOWN:
 						// Handle "Down" command
+						bt_vcp_vol_rend_unmute_vol_down();
 						printk("down\n");
 						break;
 					case KWS_LABEL_LEFT:
 						// Handle "Left" command
+						printk("left\n");
 						break;
 					case KWS_LABEL_RIGHT:
 						// Handle "Right" command
+						printk("right\n");
 						break;
 					case KWS_LABEL_GO:
 						// Handle "Go" command
+						printk("Go\n");
+						mcp_send_cmd(MEDIA_PROXY_OP_PLAY);
 						break;
 					case KWS_LABEL_NO:
 						// Handle "No" command
+						printk("No\n");
 						break;
 					case KWS_LABEL_OFF:
 						// Handle "Off" command
+						printk("Off\n");
 						break;
 					case KWS_LABEL_ON:
 						// Handle "On" command
+						printk("On\n");
 						break;
 					case KWS_LABEL_STOP:
 						// Handle "Stop" command
+						mcp_send_cmd(MEDIA_PROXY_OP_STOP);
+						printk("Stop\n");
 						break;
 					case KWS_LABEL_YES:
 						// Handle "Yes" command
+						printk("Yes\n");
 						break;
 					case KWS_LABEL_SILENCE:
 						// Handle "Silence" command
+						printk("Silence\n");
 						break;
 					case KWS_LABEL_UNKNOWN:
 						// Handle "Unknown" command
@@ -180,7 +195,7 @@ int ml_init(void) {
                                  inference_thread,
                                  NULL, NULL, NULL,
                                  INFERENCE_PRIORITY, 0, K_NO_WAIT);
-	printk("inference thread id %d\n", my_tid);
+	printk("inference thread id %d\n", (int)my_tid);
 
 	mfcc_input_tail = 0;
 	return 0;

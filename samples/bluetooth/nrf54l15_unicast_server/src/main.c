@@ -57,6 +57,7 @@
 #include "lc3.h"
 #include "nrf54l15.h"
 #include "ml_main.h"
+#include "main.h"
 
 #if defined(NRF54L15_XXAA)
 #include <hal/nrf_clock.h>
@@ -460,7 +461,7 @@ static int vcp_vol_renderer_init(void)
 
 	memset(&vcp_register_param, 0, sizeof(vcp_register_param));
 
-	vcp_register_param.step = 1;
+	vcp_register_param.step = 10;
 	vcp_register_param.mute = BT_VCP_STATE_UNMUTED;
 	vcp_register_param.volume = 100;
 	vcp_register_param.cb = &vcp_cbs;
@@ -1063,7 +1064,7 @@ static void button_changed(uint32_t button_state, uint32_t has_changed)
 #include <zephyr/audio/dmic.h>
 
 
-#define GAIN_DEFAULT	      0x20 //0x50
+#define GAIN_DEFAULT	      0x80 //0x50
 #define MAX_FRAME_DURATION_US 10000
 #define MAX_NUM_SAMPLES	      ((MAX_FRAME_DURATION_US * MAX_SAMPLE_RATE) / USEC_PER_SEC)
 #define TOTAL_BUF_NEEDED      4
