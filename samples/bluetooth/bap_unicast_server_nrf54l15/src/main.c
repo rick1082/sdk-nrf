@@ -916,13 +916,6 @@ static int set_available_contexts(void)
 {
 	int err;
 
-	if (IS_ENABLED(CONFIG_BT_PAC_SNK)) {
-		err = bt_pacs_set_available_contexts(BT_AUDIO_DIR_SINK, AVAILABLE_SINK_CONTEXT);
-		if (err != 0) {
-			LOG_INF("Failed to set sink available contexts (err %d)", err);
-			return err;
-		}
-	}
 
 	if (IS_ENABLED(CONFIG_BT_PAC_SRC)) {
 		err = bt_pacs_set_available_contexts(BT_AUDIO_DIR_SOURCE, AVAILABLE_SOURCE_CONTEXT);
