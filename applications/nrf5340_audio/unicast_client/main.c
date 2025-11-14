@@ -435,18 +435,18 @@ static uint8_t hogp_notify_cb(struct bt_hogp *hogp, struct bt_hogp_rep_info *rep
 	if (!data) {
 		return BT_GATT_ITER_STOP;
 	}
-	//printk("Notification, id: %u, size: %u, data:", bt_hogp_rep_id(rep), size);
+	printk("Notification, id: %u, size: %u, data:", bt_hogp_rep_id(rep), size);
 	for (i = 0; i < size; ++i) {
-		//printk(" 0x%x", data[i]);
+		printk(" 0x%x", data[i]);
 	}
-	//printk("\n");
+	printk("\n");
 	if (bt_hogp_rep_id(rep) == 1){
 		if (keyboard_led_set == false) {
 			led_blink(LED_APP_2_GREEN);
 			keyboard_conn = hogp->conn;
 			keyboard_led_set = true;
 		}
-		k_msgq_put(&mouse_msgq, data, K_NO_WAIT);
+		//k_msgq_put(&mouse_msgq, data, K_NO_WAIT);
 	} 
 	if (bt_hogp_rep_id(rep) == 2){
 		if (mouse_led_set == false) {
@@ -454,7 +454,7 @@ static uint8_t hogp_notify_cb(struct bt_hogp *hogp, struct bt_hogp_rep_info *rep
 			mouse_conn = hogp->conn;
 			mouse_led_set = true;
 		}
-		k_msgq_put(&keyboard_msgq, data, K_NO_WAIT);
+		//k_msgq_put(&keyboard_msgq, data, K_NO_WAIT);
 	} 
 	return BT_GATT_ITER_CONTINUE;
 }
@@ -468,11 +468,11 @@ static uint8_t hogp_boot_mouse_report(struct bt_hogp *hogp, struct bt_hogp_rep_i
 	if (!data) {
 		return BT_GATT_ITER_STOP;
 	}
-	//printk("Notification, mouse boot, size: %u, data:", size);
+	printk("Notification, mouse boot, size: %u, data:", size);
 	for (i = 0; i < size; ++i) {
-		//printk(" 0x%x", data[i]);
+		printk(" 0x%x", data[i]);
 	}
-	//printk("\n");
+	printk("\n");
 	k_msgq_put(&mouse_msgq, data, K_NO_WAIT);
 	return BT_GATT_ITER_CONTINUE;
 }
@@ -507,7 +507,8 @@ static void hogp_ready_cb(struct bt_hogp *hogp)
 	if (err) {
 		printk("Cannot change protocol mode (err %d)\n", err);
 	}
-		*/
+	*/	
+	
 	while (NULL != (rep = bt_hogp_rep_next(hogp, rep))) {
 		if (bt_hogp_rep_type(rep) ==
 		    BT_HIDS_REPORT_TYPE_INPUT) {
@@ -544,8 +545,8 @@ static void hogp_ready_cb(struct bt_hogp *hogp)
 		if (err) {
 			LOG_INF("Subscribe error (%d)", err);
 		}
-	}*/
-
+	}
+*/
 }
 
 static void hogp_prep_fail_cb(struct bt_hogp *hogp, int err)
@@ -600,21 +601,18 @@ static void bt_mgmt_evt_handler(const struct zbus_channel *chan)
 	case BT_MGMT_SECURITY_CHANGED:
 		LOG_INF("Security changed");
 
-		ret = bt_r_and_c_discover(msg->conn);
-		LOG_WRN("msg->conn %p", (void *)msg->conn);
-		if (ret) {
-			LOG_WRN("Failed to discover rendering services");
-		}
+		ret = unicast_client_discover(msg->conn, BT_AUDIO_DIR_SOURCE);
+		led_blink(LED_APP_RGB, LED_COLOR_GREEN);
 
-		if (num_conn < CONFIG_BT_MAX_CONN) {
-			/* Room for more connections, start scanning again */
-			LOG_INF("Room for more connections, start scanning again");
-			ret = bt_mgmt_scan_start(0, 0, BT_MGMT_SCAN_TYPE_CONN, NULL,
-						 BRDCAST_ID_NOT_USED);
-			if (ret) {
-				LOG_ERR("Failed to resume scanning: %d", ret);
+		LOG_WRN("BT_MGMT_HID_DEVICE_CONNECTED msg->conn %p", (void *)msg->conn);
+		for (int i = 0; i < ARRAY_SIZE(hid_conn); i++) {
+			if (hid_conn[i] == NULL) {
+				hid_conn[i] = msg->conn;
+				LOG_INF("HID device connected, index %d", i);
+				break;
 			}
 		}
+		hid_gatt_discover(msg->conn);
 		break;
 
 	case BT_MGMT_AUDIO_DEVICE_CONNECTED:
@@ -622,7 +620,7 @@ static void bt_mgmt_evt_handler(const struct zbus_channel *chan)
 		LOG_WRN("BT_MGMT_AUDIO_DEVICE_CONNECTED msg->conn %p", (void *)msg->conn);
 		headset_conn = msg->conn;
 		if (audio_system_get_stream_mode() == AUDIO_SYSTEM_STREAM_MODE_CONVERSATION) {
-			ret = unicast_client_discover(msg->conn, UNICAST_SERVER_BIDIR);
+			ret = unicast_client_discover(msg->conn, BT_AUDIO_DIR_SOURCE);
 			led_blink(LED_APP_RGB, LED_COLOR_GREEN);
 		} else {
 			ret = unicast_client_discover(msg->conn, UNICAST_SERVER_SINK);

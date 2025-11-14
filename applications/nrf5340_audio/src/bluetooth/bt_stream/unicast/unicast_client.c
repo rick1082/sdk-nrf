@@ -668,7 +668,7 @@ static bool source_parse_cb(struct bt_data *data, void *user_data)
 		switch (pref_sampling_rate) {
 		case BT_AUDIO_CODEC_CFG_FREQ_48KHZ:
 			if (lc3_freq_bit & BT_AUDIO_CODEC_CAP_FREQ_48KHZ) {
-				lc3_preset_source = lc3_preset_source_48_1_1;
+				lc3_preset_source = lc3_preset_source_48_4_1;
 				*(bool *)user_data = true;
 				/* Found what we were looking for, stop parsing LTV */
 				return false;
@@ -678,7 +678,7 @@ static bool source_parse_cb(struct bt_data *data, void *user_data)
 
 		case BT_AUDIO_CODEC_CFG_FREQ_24KHZ:
 			if (lc3_freq_bit & BT_AUDIO_CODEC_CAP_FREQ_24KHZ) {
-				lc3_preset_source = lc3_preset_source_24_1_1;
+				lc3_preset_source = lc3_preset_source_24_2_1;
 				*(bool *)user_data = true;
 				/* Found what we were looking for, stop parsing LTV */
 				return false;
@@ -688,7 +688,7 @@ static bool source_parse_cb(struct bt_data *data, void *user_data)
 
 		case BT_AUDIO_CODEC_CFG_FREQ_16KHZ:
 			if (lc3_freq_bit & BT_AUDIO_CODEC_CAP_FREQ_16KHZ) {
-				lc3_preset_source = lc3_preset_source_16_1_1;
+				lc3_preset_source = lc3_preset_source_16_2_1;
 				*(bool *)user_data = true;
 				/* Found what we were looking for, stop parsing LTV */
 				return false;
@@ -699,13 +699,13 @@ static bool source_parse_cb(struct bt_data *data, void *user_data)
 
 		/* If no match with the preferred, revert to trying highest first */
 		if (lc3_freq_bit & BT_AUDIO_CODEC_CAP_FREQ_48KHZ) {
-			lc3_preset_source = lc3_preset_source_48_1_1;
+			lc3_preset_source = lc3_preset_source_48_4_1;
 			*(bool *)user_data = true;
 		} else if (lc3_freq_bit & BT_AUDIO_CODEC_CAP_FREQ_24KHZ) {
-			lc3_preset_source = lc3_preset_source_24_1_1;
+			lc3_preset_source = lc3_preset_source_24_2_1;
 			*(bool *)user_data = true;
 		} else if (lc3_freq_bit & BT_AUDIO_CODEC_CAP_FREQ_16KHZ) {
-			lc3_preset_source = lc3_preset_source_16_1_1;
+			lc3_preset_source = lc3_preset_source_16_2_1;
 			*(bool *)user_data = true;
 		}
 
@@ -1106,6 +1106,8 @@ static void discover_cb(struct bt_conn *conn, int err, enum bt_audio_dir dir)
 	} else if (dir == BT_AUDIO_DIR_SOURCE) {
 		unicast_server->waiting_for_source_disc = false;
 	}
+
+	LOG_WRN("Audio discovered");
 
 	if (!playing_state) {
 		/* Since we are not in a playing state we return before starting the new streams */
