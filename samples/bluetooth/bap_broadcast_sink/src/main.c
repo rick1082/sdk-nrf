@@ -70,6 +70,13 @@ static nrfx_i2s_config_t cfg = {
 	.mck_setup = NRF_I2S_MCK_32MDIV2,
 };
 
+#include <dk_buttons_and_leds.h>
+#define VOLUME_MAX 0
+#define VOLUME_MIN -100
+#define DEFAULT_VOLUME -60
+#define VOLUME_STEP 5
+static int8_t volume = DEFAULT_VOLUME;
+
 #define I2S_SAMPLES_NUM 48 // samples per 1ms block
 // 20 buffers of size I2S_SAMPLES_NUM * 2 * sizeof(uint16_t) = 10ms
 static uint16_t i2s_tx_buf_a[I2S_SAMPLES_NUM * 2] = {0}; // 2 channels, 16 bits each
@@ -266,6 +273,34 @@ void dac_i2c_write(const struct i2c_dt_spec *dev_i2c, uint8_t reg, uint8_t value
 	}
 }
 static const struct i2c_dt_spec dev_i2c = I2C_DT_SPEC_GET(I2C_NODE);
+
+static void button_handler(uint32_t button_state, uint32_t has_changed)
+{
+	if (has_changed) {
+		if ((button_state & DK_BTN1_MSK) == DK_BTN1_MSK) {
+			
+			volume += VOLUME_STEP;
+			if (volume >= VOLUME_MAX) {
+				volume = VOLUME_MAX;
+			}
+			printk("Button1 pressed, volume = %d\n", volume);
+			dac_i2c_write(&dev_i2c, 0x41, volume);
+			dac_i2c_write(&dev_i2c, 0x42, volume);
+		}
+		if ((button_state & DK_BTN2_MSK) == DK_BTN2_MSK) {
+			
+			volume -= VOLUME_STEP;
+			if (volume <= VOLUME_MIN) {
+				volume = VOLUME_MIN;
+			}
+			printk("Button2 pressed, volume = %d\n", volume);
+			dac_i2c_write(&dev_i2c, 0x41, volume);
+			dac_i2c_write(&dev_i2c, 0x42, volume);			
+		}
+		
+	}
+}
+
 void tlv320_setup(void)
 {
 
@@ -316,8 +351,8 @@ void tlv320_setup(void)
 
 	dac_i2c_write(&dev_i2c, 0x00, 0x00);
 	dac_i2c_write(&dev_i2c, 0x3F, 0xD4);
-	dac_i2c_write(&dev_i2c, 0x41, -20);
-	dac_i2c_write(&dev_i2c, 0x42, -20);
+	dac_i2c_write(&dev_i2c, 0x41, DEFAULT_VOLUME);
+	dac_i2c_write(&dev_i2c, 0x42, DEFAULT_VOLUME);
 	dac_i2c_write(&dev_i2c, 0x40, 0x00);
 	dac_i2c_write(&dev_i2c, 0x00, 0x00);
 }
@@ -1534,6 +1569,7 @@ int main(void)
 
 	audio_i2s_start((uint8_t *)i2s_tx_buf_a, (uint32_t *)i2s_rx_buf_a);
 	audio_i2s_set_next_buf((const uint8_t *)i2s_tx_buf_b, (uint32_t *)i2s_rx_buf_b);
+	dk_buttons_init(button_handler);
 
 	while (true) {
 		uint8_t stream_count;
