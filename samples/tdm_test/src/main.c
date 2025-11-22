@@ -23,7 +23,15 @@
 
 /* Pre-allocate several fixed-size TX buffers using k_mem_slab */
 #define NUM_BLOCKS          8
+
+#if defined(CONFIG_SOC_NRF54H20_CPUAPP)
+#include <dmm.h>
+struct k_mem_slab tx_slab;
+char __aligned(WB_UP(4)) mem_slab_buffer[NUM_BLOCKS * WB_UP(BLOCK_SIZE)]
+					 DMM_MEMORY_SECTION(DT_ALIAS(i2s_node0));
+#else
 K_MEM_SLAB_DEFINE(tx_slab, BLOCK_SIZE, NUM_BLOCKS, 4);
+#endif
 
 static int16_t sine_table[SINE_TABLE_LEN];
 
@@ -49,13 +57,23 @@ static void fill_block_16bit_stereo(int16_t *dst_lr)
 
 int main(void)
 {
+    int ret;
     const struct device *i2s = DEVICE_DT_GET(DT_ALIAS(i2s_node0));
+
     if (!device_is_ready(i2s)) {
         printk("I2S device not ready\n");
         return -1;
     }
 
     build_sine_table();
+
+    #if defined(CONFIG_SOC_NRF54H20_CPUAPP)
+    ret = k_mem_slab_init(&tx_slab, mem_slab_buffer, WB_UP(BLOCK_SIZE), NUM_BLOCKS);
+    if(ret != 0) {
+        printk("k_mem_slab_init failed: %d\n", ret);
+        return -1;
+    }
+    #endif
 
     /* ---------------- I2S TX Configuration ---------------- */
     struct i2s_config cfg = {
@@ -73,7 +91,7 @@ int main(void)
     /* Enable MCLK if required by the external codec */
     // cfg.options |= I2S_OPT_MCLK_MASTER;
 
-    int ret = i2s_configure(i2s, I2S_DIR_TX, &cfg);
+    ret = i2s_configure(i2s, I2S_DIR_TX, &cfg);
     if (ret) {
         printk("i2s_configure failed: %d\n", ret);
         return -1;

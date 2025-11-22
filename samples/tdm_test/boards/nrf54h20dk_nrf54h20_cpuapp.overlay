@@ -40,6 +40,7 @@
 	pinctrl-0 = <&tdm130_default_test>;
 	pinctrl-names = "default";
 	memory-regions = <&tdm_dma_ram>;
+	//memory-regions = <&cpuapp_dma_region>;
 	mck-clock-source = "ACLK";
 	sck-clock-source = "ACLK";
 	mck-frequency = <12288000>;
