@@ -22,15 +22,19 @@
 #define BLOCK_SIZE          (FRAMES_PER_BLOCK * FRAME_BYTES)
 
 /* Pre-allocate several fixed-size TX buffers using k_mem_slab */
-#define NUM_BLOCKS          8
+#define NUM_BLOCKS         8
 
 #if defined(CONFIG_SOC_NRF54H20_CPUAPP)
 #include <dmm.h>
 struct k_mem_slab tx_slab;
-char __aligned(WB_UP(4)) mem_slab_buffer[NUM_BLOCKS * WB_UP(BLOCK_SIZE)]
+struct k_mem_slab rx_slab;
+char __aligned(WB_UP(4)) mem_slab_tx_buffer[NUM_BLOCKS * WB_UP(BLOCK_SIZE)]
 					 DMM_MEMORY_SECTION(DT_ALIAS(i2s_node0));
+char __aligned(WB_UP(4)) mem_slab_rx_buffer[NUM_BLOCKS * WB_UP(BLOCK_SIZE)]
+					 DMM_MEMORY_SECTION(DT_ALIAS(i2s_node0));                     
 #else
 K_MEM_SLAB_DEFINE(tx_slab, BLOCK_SIZE, NUM_BLOCKS, 4);
+K_MEM_SLAB_DEFINE(rx_slab, BLOCK_SIZE, NUM_BLOCKS, 4);
 #endif
 
 static int16_t sine_table[SINE_TABLE_LEN];
@@ -58,6 +62,7 @@ static void fill_block_16bit_stereo(int16_t *dst_lr)
 int main(void)
 {
     int ret;
+    uint32_t block_count = 0;
     const struct device *i2s = DEVICE_DT_GET(DT_ALIAS(i2s_node0));
 
     if (!device_is_ready(i2s)) {
@@ -68,7 +73,12 @@ int main(void)
     build_sine_table();
 
     #if defined(CONFIG_SOC_NRF54H20_CPUAPP)
-    ret = k_mem_slab_init(&tx_slab, mem_slab_buffer, WB_UP(BLOCK_SIZE), NUM_BLOCKS);
+    ret = k_mem_slab_init(&tx_slab, mem_slab_tx_buffer, WB_UP(BLOCK_SIZE), NUM_BLOCKS);
+    if(ret != 0) {
+        printk("k_mem_slab_init failed: %d\n", ret);
+        return -1;
+    }
+    ret = k_mem_slab_init(&rx_slab, mem_slab_rx_buffer, WB_UP(BLOCK_SIZE), NUM_BLOCKS);
     if(ret != 0) {
         printk("k_mem_slab_init failed: %d\n", ret);
         return -1;
@@ -76,7 +86,7 @@ int main(void)
     #endif
 
     /* ---------------- I2S TX Configuration ---------------- */
-    struct i2s_config cfg = {
+    struct i2s_config tx_cfg = {
         .word_size       = WORD_BITS,
         .channels        = CHANNELS,
         .format          = I2S_FMT_DATA_FORMAT_I2S,
@@ -91,9 +101,29 @@ int main(void)
     /* Enable MCLK if required by the external codec */
     // cfg.options |= I2S_OPT_MCLK_MASTER;
 
-    ret = i2s_configure(i2s, I2S_DIR_TX, &cfg);
+    ret = i2s_configure(i2s, I2S_DIR_TX, &tx_cfg);
     if (ret) {
         printk("i2s_configure failed: %d\n", ret);
+        return -1;
+    }
+
+        /* ---------------- I2S RX Configuration ---------------- */
+    struct i2s_config rx_cfg = {
+        .word_size       = WORD_BITS,
+        .channels        = CHANNELS,
+        .format          = I2S_FMT_DATA_FORMAT_I2S,
+        /* RX will use the same clocks from TX (still master on SoC side) */
+        .options         = I2S_OPT_BIT_CLK_MASTER |
+                           I2S_OPT_FRAME_CLK_MASTER,
+        .frame_clk_freq  = SAMPLE_RATE_HZ,
+        .mem_slab        = &rx_slab,
+        .block_size      = BLOCK_SIZE,
+        .timeout         = SYS_FOREVER_MS,
+    };
+
+    ret = i2s_configure(i2s, I2S_DIR_RX, &rx_cfg);
+    if (ret) {
+        printk("i2s_configure RX failed: %d\n", ret);
         return -1;
     }
 
@@ -114,13 +144,13 @@ int main(void)
         }
     }
 
-    ret = i2s_trigger(i2s, I2S_DIR_TX, I2S_TRIGGER_START);
+    printk("I2S 400 Hz tone streaming at 48 kHz...\n");
+    
+    ret = i2s_trigger(i2s, I2S_DIR_BOTH, I2S_TRIGGER_START);
     if (ret) {
-        printk("i2s START failed: %d\n", ret);
+        printk("i2s RX START failed: %d\n", ret);
         return -1;
     }
-
-    printk("I2S 400 Hz tone streaming at 48 kHz...\n");
 
     /* ---------------- Main Loop: continuously feed blocks ---------------- */
     while (1) {
@@ -145,6 +175,26 @@ int main(void)
         }
 
         /* The I2S driver will release the buffer after transmission */
+        /* ---------- RX path: read one filled block ---------- */
+        size_t rx_size = 0U;
+        int16_t rx_block[BLOCK_SIZE*2];
+        ret = i2s_buf_read(i2s, rx_block, &rx_size);
+        if (ret) {
+            printk("i2s_read failed: %d\n", ret);
+            break;
+        }
+
+        if (rx_size != BLOCK_SIZE) {
+            printk("Unexpected RX block size: %zu (expected %d)\n",
+                   rx_size, BLOCK_SIZE);
+        } else {
+            /* Inspect RX samples (do not print too often) */
+            if ((block_count % 1000) == 0) {
+                printk("RX block %u: L0=%d, R0=%d L1=%d, R1=%d\n",
+                       block_count, rx_block[0], rx_block[1], rx_block[2], rx_block[3]);
+            }
+        }
+        block_count++;
     }
 
     /* ---------------- Stop TX on exit or error ---------------- */

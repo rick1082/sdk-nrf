@@ -26,7 +26,7 @@
     reserved-memory {
         tdm_dma_ram: memory@2fc00000 {
             compatible = "nordic,owned-memory", "zephyr,memory-region";
-            reg = <0x2fc00000 DT_SIZE_K(8)>;
+            reg = <0x2fc00000 DT_SIZE_K(16)>;
             status = "okay";
             #memory-region-cells = <0>;
             zephyr,memory-region = "DMA_RAM_TDM";
