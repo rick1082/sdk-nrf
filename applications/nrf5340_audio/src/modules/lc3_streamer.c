@@ -39,6 +39,7 @@ enum lc3_stream_states {
 };
 
 struct lc3_stream {
+	uint8_t stream_index;
 	/* State of the stream */
 	enum lc3_stream_states state;
 
@@ -189,6 +190,10 @@ static int stream_loop(struct lc3_stream *stream)
  *
  * @param[in]	work	Pointer to the work queue item.
  */
+static uint8_t all_streams_ended;
+static uint8_t streams_restarted;
+static bool stream_start;
+
 static void next_frame_load(struct k_work *work)
 {
 	int ret;
@@ -196,20 +201,21 @@ static void next_frame_load(struct k_work *work)
 
 	ret = put_next_frame_to_fifo(stream);
 	if (ret == -ENODATA) {
-		LOG_DBG("End of stream");
-		if (stream->loop_stream) {
-			ret = stream_loop(stream);
-			if (ret) {
-				LOG_ERR("Failed to loop stream %d", ret);
-				stream->state = STREAM_ENDED;
+		LOG_INF("End of stream");
+		all_streams_ended |= BIT(stream->stream_index);
+		if (all_streams_ended == BIT_MASK(4)) {
+			LOG_INF("All streams ended, resetting LC3 streamer");
+			all_streams_ended = 0;
+			for (int i = 0; i < 4; i++) {
+				stream_loop(&streams[i]);
+				k_sleep(K_MSEC(10));
 			}
-		} else {
-			stream->state = STREAM_PLAYING_LAST_FRAME;
 		}
 	} else if (ret) {
 		LOG_ERR("Failed to put next frame to fifo %d", ret);
 		stream->state = STREAM_ENDED;
 	}
+
 }
 
 int lc3_streamer_next_frame_get(const uint8_t streamer_idx, const uint8_t **const frame_buffer)
@@ -354,6 +360,7 @@ int lc3_streamer_stream_register(const char *const filename, uint8_t *const stre
 		if (streams[i].state == STREAM_IDLE) {
 			LOG_DBG("Found free stream slot %d", i);
 			*streamer_idx = i;
+			streams[i].stream_index = i;
 			free_slot_found = true;
 			break;
 		}
