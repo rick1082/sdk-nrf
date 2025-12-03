@@ -90,11 +90,8 @@ RING_BUF_DECLARE(i2s_tx_ring_buf, I2S_SAMPLES_NUM * 2 * sizeof(uint16_t) * BUFFE
 #define MAX_FRAME_DURATION_US 10000
 #define MAX_NUM_SAMPLES	      ((MAX_FRAME_DURATION_US * MAX_SAMPLE_RATE) / USEC_PER_SEC)
 
-static int16_t audio_buf[MAX_NUM_SAMPLES * 2];
 static lc3_decoder_t lc3_decoder[2];
 static lc3_decoder_mem_48k_t lc3_decoder_mem[2];
-static int frames_per_sdu;
-
 
 BUILD_ASSERT(IS_ENABLED(CONFIG_SCAN_SELF) || IS_ENABLED(CONFIG_SCAN_OFFLOAD),
 	     "Either SCAN_SELF or SCAN_OFFLOAD must be enabled");
@@ -156,7 +153,7 @@ void audio_i2s_set_next_buf(const uint8_t *tx_buf, uint32_t *rx_buf)
 
 	ret = nrfx_i2s_next_buffers_set(&i2s_inst, &i2s_buf);
 	if (ret != NRFX_SUCCESS) {
-		printf("Failed to set next buffers: %x\n", ret);
+		printk("Failed to set next buffers: %x\n", ret);
 	}
 }
 
@@ -196,7 +193,7 @@ void audio_i2s_start(const uint8_t *tx_buf, uint32_t *rx_buf)
 	/* Buffer size in 32-bit words */
 	ret = nrfx_i2s_start(&i2s_inst, &i2s_buf, 0);
 	if (ret != NRFX_SUCCESS) {
-		printf("Failed to start I2S: %d\n", ret);
+		printk("Failed to start I2S: %d\n", ret);
 	}
 }
 
@@ -206,7 +203,7 @@ void audio_i2s_init(void)
 
 	ret = pinctrl_apply_state(PINCTRL_DT_DEV_CONFIG_GET(I2S_NL), PINCTRL_STATE_DEFAULT);
 	if (ret != 0) {
-		printf("Failed to apply pinctrl state: %d\n", ret);
+		printk("Failed to apply pinctrl state: %d\n", ret);
 		return;
 	}
 
@@ -216,7 +213,7 @@ void audio_i2s_init(void)
 
 	ret = nrfx_i2s_init(&i2s_inst, &cfg, i2s_comp_handler);
 	if (ret != NRFX_SUCCESS) {
-		printf("Failed to initialize I2S: %x\n", ret);
+		printk("Failed to initialize I2S: %x\n", ret);
 		return;
 	}
 }
@@ -230,7 +227,7 @@ static int clocks_start(void)
 
 	clk_mgr = z_nrf_clock_control_get_onoff(CLOCK_CONTROL_NRF_SUBSYS_HF);
 	if (!clk_mgr) {
-		printf("Unable to get the Clock manager\n");
+		printk("Unable to get the Clock manager\n");
 		return -ENXIO;
 	}
 
@@ -238,14 +235,14 @@ static int clocks_start(void)
 
 	err = onoff_request(clk_mgr, &clk_cli);
 	if (err < 0) {
-		printf("Clock request failed: %d\n", err);
+		printk("Clock request failed: %d\n", err);
 		return err;
 	}
 
 	do {
 		err = sys_notify_fetch_result(&clk_cli.notify, &res);
 		if (!err && res) {
-			printf("Clock could not be started: %d\n", res);
+			printk("Clock could not be started: %d\n", res);
 			return res;
 		}
 	} while (err);
@@ -255,7 +252,7 @@ static int clocks_start(void)
 	nrf_clock_task_trigger(NRF_CLOCK, NRF_CLOCK_TASK_PLLSTART);
 #endif /* defined(NRF54L15_XXAA) */
 
-	printf("HF clock started\n");
+	printk("HF clock started\n");
 	return 0;
 }
 
@@ -266,9 +263,9 @@ void dac_i2c_write(const struct i2c_dt_spec *dev_i2c, uint8_t reg, uint8_t value
 
 	ret = i2c_write_dt(dev_i2c, config, sizeof(config));
 	if (ret != 0) {
-		printf("Failed to write to I2C device address %x at reg. %x\n", dev_i2c->addr, reg);
+		printk("Failed to write to I2C device address %x at reg. %x\n", dev_i2c->addr, reg);
 	} else {
-		// printf("I2C device address %x at reg. %x written successfully\n", dev_i2c->addr,
+		// printk("I2C device address %x at reg. %x written successfully\n", dev_i2c->addr,
 		//        reg);
 	}
 }
@@ -305,10 +302,10 @@ void tlv320_setup(void)
 {
 
 	if (!device_is_ready(dev_i2c.bus)) {
-		printf("I2C bus %s is not ready!\n", dev_i2c.bus->name);
+		printk("I2C bus %s is not ready!\n", dev_i2c.bus->name);
 		return;
 	} else {
-		printf("I2C bus %s is ready!\n", dev_i2c.bus->name);
+		printk("I2C bus %s is ready!\n", dev_i2c.bus->name);
 	}
 
 	dac_i2c_write(&dev_i2c, 0x00, 0x00);
@@ -446,7 +443,6 @@ static void stream_started_cb(struct bt_bap_stream *bap_stream)
 {
 	printk("Stream %p started\n", bap_stream);
 
-	struct bt_iso_info bt_iso_info_test;
 	k_sem_give(&sem_stream_started);
 	gpio_pin_set_dt(&led, 1);
 }
