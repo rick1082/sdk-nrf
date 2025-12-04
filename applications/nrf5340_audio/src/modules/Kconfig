@@ -14,8 +14,8 @@ config BUTTON_DEBOUNCE_MS
 
 config AUDIO_SYNC_TIMER_USES_RTC
 	bool
-	default y
-	select NRFX_RTC0
+	default n
+#	select NRFX_RTC0
 
 #----------------------------------------------------------------------------#
 menuconfig NRF5340_AUDIO_POWER_MEASUREMENT

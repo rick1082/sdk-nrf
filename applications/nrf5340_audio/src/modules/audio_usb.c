@@ -37,7 +37,7 @@ static struct k_msgq *audio_q_rx;
 NET_BUF_POOL_FIXED_DEFINE(pool_in, CONFIG_FIFO_FRAME_SPLIT_NUM, USB_BLOCK_SIZE_STEREO,
 			  sizeof(struct audio_metadata), NULL);
 
-K_MEM_SLAB_DEFINE_STATIC(usb_out_buf_pool, USB_MAX_STEREO_FRAME_SIZE, 3, UDC_BUF_ALIGN);
+K_MEM_SLAB_DEFINE_STATIC(usb_out_buf_pool, ROUND_UP(USB_MAX_STEREO_FRAME_SIZE, UDC_BUF_ALIGN), 3, UDC_BUF_ALIGN);
 
 static uint32_t rx_num_overruns;
 static bool rx_first_data;

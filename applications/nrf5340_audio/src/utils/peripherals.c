@@ -5,7 +5,7 @@
  */
 #include "peripherals.h"
 
-#include <nrfx_clock.h>
+//#include <nrfx_clock.h>
 
 #include "led_assignments.h"
 #include "led.h"
@@ -147,12 +147,12 @@ int peripherals_init(void)
 		return ret;
 	}
 
-	/* Use this to turn on 128 MHz clock for cpu_app */
+	/* Use this to turn on 128 MHz clock for cpu_app 
 	ret = nrfx_clock_divider_set(NRF_CLOCK_DOMAIN_HFCLK, NRF_CLOCK_HFCLK_DIV_1);
 	ret -= NRFX_ERROR_BASE_NUM;
 	if (ret) {
 		return ret;
 	}
-
+	*/
 	return 0;
 }

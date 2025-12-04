@@ -43,7 +43,7 @@ ZBUS_CHAN_DECLARE(bt_mgmt_chan);
 ZBUS_CHAN_DECLARE(cont_media_chan);
 ZBUS_CHAN_DECLARE(sdu_ref_chan);
 
-ZBUS_OBS_DECLARE(sdu_ref_msg_listen);
+//ZBUS_OBS_DECLARE(sdu_ref_msg_listen);
 
 static struct k_thread button_msg_sub_thread_data;
 static struct k_thread le_audio_msg_sub_thread_data;
@@ -472,12 +472,13 @@ static int zbus_subscribers_create(void)
 		return ret;
 	}
 
+	/*
 	ret = zbus_chan_add_obs(&sdu_ref_chan, &sdu_ref_msg_listen, ZBUS_ADD_OBS_TIMEOUT_MS);
 	if (ret) {
 		LOG_ERR("Failed to add timestamp listener");
 		return ret;
 	}
-
+	*/
 	return 0;
 }
 
@@ -547,13 +548,15 @@ int main(void)
 {
 	int ret;
 
+	printk("Starting nRF5340 Audio Unicast Client example\n");
+
 	LOG_DBG("Main started");
 
 	ret = peripherals_init();
 	ERR_CHK(ret);
 
-	ret = fw_info_app_print();
-	ERR_CHK(ret);
+	//ret = fw_info_app_print();
+	//ERR_CHK(ret);
 
 	ret = bt_mgmt_init();
 	ERR_CHK(ret);
