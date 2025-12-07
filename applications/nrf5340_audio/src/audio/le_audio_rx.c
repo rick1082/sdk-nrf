@@ -184,12 +184,12 @@ static void audio_datapath_thread(void *dummy1, void *dummy2, void *dummy3)
 			ret = audio_system_decode(audio_frame);
 			ERR_CHK(ret);
 		} else {
-			audio_datapath_stream_out(audio_frame);
+			//audio_datapath_stream_out(audio_frame);
 		}
 
 		net_buf_unref(audio_frame);
 
-		STACK_USAGE_PRINT("audio_datapath_thread", &audio_datapath_thread_data);
+		//STACK_USAGE_PRINT("audio_datapath_thread", &audio_datapath_thread_data);
 	}
 }
 
@@ -217,7 +217,7 @@ int le_audio_rx_init(void)
 	if (initialized) {
 		return -EALREADY;
 	}
-
+	
 	ret = audio_datapath_thread_create();
 	if (ret) {
 		return ret;

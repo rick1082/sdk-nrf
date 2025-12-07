@@ -40,16 +40,16 @@ config ZBUS_MSG_SUBSCRIBER
 	default y
 
 config SENSOR
-	default y
+	default n
 
 config REGULATOR
-	default y
+	default n
 
 config CONTIN_ARRAY
 	default y
 
 config NRFX_I2S0
-	default y
+	default n
 
 config PCM_MIX
 	default y
@@ -62,7 +62,7 @@ config NRFX_CLOCK
 	default n
 
 config I2C
-	default y
+	default n
 
 # Audio codec LC3 related defines
 # FPU_SHARING enables preservation of the hardware floating point registers
@@ -83,7 +83,7 @@ config DISK_DRIVER_SDMMC
 
 # Enable SPI interface
 config SPI
-	default y
+	default n
 
 # Enable ADC for board version readback
 config ADC
@@ -113,7 +113,7 @@ config FS_FATFS_EXFAT
 	default n
 
 config WATCHDOG
-	default y
+	default n
 
 config TASK_WDT
-	default y
+	default n

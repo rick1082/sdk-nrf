@@ -550,13 +550,14 @@ int main(void)
 
 	printk("Starting nRF5340 Audio Unicast Client example\n");
 
+
 	LOG_DBG("Main started");
 
 	ret = peripherals_init();
 	ERR_CHK(ret);
-
+	printk("Peripherals initialized\n");
+	LOG_INF("LED assignments:");
 	//ret = fw_info_app_print();
-	//ERR_CHK(ret);
 
 	ret = bt_mgmt_init();
 	ERR_CHK(ret);
@@ -570,18 +571,24 @@ int main(void)
 	ret = zbus_link_producers_observers();
 	ERR_CHK_MSG(ret, "Failed to link zbus producers and observers");
 
-	ret = le_audio_rx_init();
-	ERR_CHK(ret);
 
+
+	//ret = le_audio_rx_init();
+	//ERR_CHK(ret);
+/*
 	ret = bt_r_and_c_init();
 	ERR_CHK(ret);
 
 	ret = bt_content_ctrl_init();
 	ERR_CHK(ret);
+	*/
 
 	ret = unicast_client_enable(0, le_audio_rx_data_handler);
 	ERR_CHK(ret);
-
+	while(1)
+	{
+		k_sleep(K_SECONDS(10));
+	}
 	ret = bt_mgmt_scan_start(0, 0, BT_MGMT_SCAN_TYPE_CONN, CONFIG_BT_DEVICE_NAME,
 				 BRDCAST_ID_NOT_USED);
 	if (ret) {

@@ -344,7 +344,7 @@ int audio_system_decode(struct net_buf *audio_frame)
 		LOG_ERR("Failed to decode");
 		return ret;
 	}
-
+#if 0
 	/* If not enough space for a full frame, remove oldest samples to make room */
 	while (k_msgq_num_free_get(&audio_q_tx) < CONFIG_FIFO_FRAME_SPLIT_NUM) {
 		struct net_buf *stale_buf;
@@ -386,7 +386,7 @@ int audio_system_decode(struct net_buf *audio_frame)
 	} else {
 		debug_trans_count++;
 	}
-
+#endif
 	return 0;
 }
 
@@ -407,7 +407,7 @@ void audio_system_start(void)
 
 	ret = sw_codec_init(sw_codec_cfg);
 	ERR_CHK_MSG(ret, "Failed to set up codec");
-
+	LOG_WRN("codec init");
 	sw_codec_cfg.initialized = true;
 
 	if (sw_codec_cfg.encoder.enabled && encoder_thread_id == NULL) {

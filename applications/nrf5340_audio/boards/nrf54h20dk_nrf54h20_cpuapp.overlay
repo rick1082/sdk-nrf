@@ -10,48 +10,24 @@
 };
 
 &cpuapp_slot0_partition {
-	reg = < 0xa6000 DT_SIZE_K(328) >;
+	reg = < 0xa6000 DT_SIZE_K(1140) >;
 };
-
-
 / {
-	audioleds: audioleds {
-		compatible = "gpio-leds";
+	cpu_app_local_ram: memory@22000000 {
+		compatible = "zephyr,memory-region";
+		reg = <0x22000000 DT_SIZE_K(32)>;
 		status = "okay";
-
-		led_conn_status: led_conn_status {
-			gpios = <&gpio9 0 GPIO_ACTIVE_LOW>;
-			label = "Green LED 0";
-		};
-
-		led_sync_status: led_sync_status {
-			gpios = <&gpio9 1 GPIO_ACTIVE_LOW>;
-			label = "Green LED 1";
-		};
-
-		led_app_status: led_app_status {
-			gpios = <&gpio9 2 GPIO_ACTIVE_LOW>;
-			label = "Green LED 2";
-		};
+		zephyr,memory-region = "LOCAL_RAM_APP";
 	};
-/* 
-	ramdisk0: ramdisk0 {
-		compatible = "zephyr,ram-disk";
-		disk-name = "RAM";
-		sector-size = <512>;
-		sector-count = <80>;
-	};
-	*/
 };
-
-
- #include <dt-bindings/usb/audio.h>
+#include <dt-bindings/usb/audio.h>
 
  / {
 	 uac2_headset: usb_audio2 {
 		 compatible = "zephyr,uac2";
 		 status = "okay";
 		 full-speed;
+		 high-speed;
 		 audio-function = <AUDIO_FUNCTION_HEADSET>;
  
 		 uac_aclk: aclk {
@@ -113,4 +89,37 @@
 		 };
 	 };
  };
+
+/ {
+	audioleds: audioleds {
+		compatible = "gpio-leds";
+		status = "okay";
+
+		led_conn_status: led_conn_status {
+			gpios = <&gpio9 0 GPIO_ACTIVE_LOW>;
+			label = "Green LED 0";
+		};
+
+		led_sync_status: led_sync_status {
+			gpios = <&gpio9 1 GPIO_ACTIVE_LOW>;
+			label = "Green LED 1";
+		};
+
+		led_app_status: led_app_status {
+			gpios = <&gpio9 2 GPIO_ACTIVE_LOW>;
+			label = "Green LED 2";
+		};
+	};
+/* 
+	ramdisk0: ramdisk0 {
+		compatible = "zephyr,ram-disk";
+		disk-name = "RAM";
+		sector-size = <512>;
+		sector-count = <80>;
+	};
+	*/
+};
+
+
+
  

@@ -6,8 +6,8 @@
 
 # Audio sync timer
 config NRFX_TIMER1
-	default y
+	default n
 
 # Audio sync timer
 config NRFX_DPPI
-	default y
+	default n
