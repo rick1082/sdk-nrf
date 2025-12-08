@@ -31,7 +31,7 @@ config SAMPLE_USBD_MANUFACTURER
 
 config SAMPLE_USBD_PRODUCT
 	string "USB device sample product string"
-	default "nRF5340 Audio"
+	default "nRF54H20 Audio"
 	help
 	  USB device sample product stringa.
 

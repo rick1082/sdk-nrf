@@ -110,7 +110,6 @@ static void uac2_data_recv_cb(const struct device *dev, uint8_t terminal, void *
 
 	if (!terminal_enabled || buf == NULL || size == 0U || audio_q_rx == NULL || size != 192) {
 		k_mem_slab_free(&usb_out_buf_pool, buf);
-		printk("drop\n");
 		return;
 	}
 

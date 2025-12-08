@@ -1846,14 +1846,12 @@ int unicast_client_enable(uint8_t cig_index, le_audio_receive_cb recv_cb)
 	}
 
 
-/*
+
 	ret = bt_bap_unicast_client_register_cb(&unicast_client_cbs);
 	if (ret) {
 		LOG_ERR("Failed to register client callbacks: %d", ret);
 		return ret;
 	}
-	printk("XD\n");
-	LOG_WRN("test");
 
 	ret = bt_cap_initiator_register_cb(&cap_cbs);
 	if (ret) {
@@ -1864,7 +1862,7 @@ int unicast_client_enable(uint8_t cig_index, le_audio_receive_cb recv_cb)
 	if (IS_ENABLED(CONFIG_BT_AUDIO_TX)) {
 		bt_le_audio_tx_init();
 	}
-*/
+
 	initialized = true;
 
 	return 0;
