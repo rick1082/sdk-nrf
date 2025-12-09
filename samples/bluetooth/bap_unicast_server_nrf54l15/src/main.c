@@ -574,7 +574,9 @@ static void stream_sent_cb(struct bt_bap_stream *stream)
 }
 
 static struct bt_bap_stream_ops stream_ops = {
+#if CONFIG_BT_ASCS_MAX_ASE_SNK_COUNT > 0 
 	.recv = stream_recv,
+#endif
 	.stopped = stream_stopped,
 	.started = stream_started,
 	.enabled = stream_enabled_cb,
@@ -888,7 +890,11 @@ static int set_location(void)
 			return err;
 		}
 	}
-
+		err = bt_pacs_set_location(BT_AUDIO_DIR_SINK, BT_AUDIO_LOCATION_FRONT_LEFT);
+		if (err != 0) {
+			LOG_INF("Failed to set source location (err %d)", err);
+			return err;
+		}
 	LOG_INF("Location successfully set");
 
 	return 0;
@@ -906,7 +912,14 @@ static int set_supported_contexts(void)
 			return err;
 		}
 	}
+	if (IS_ENABLED(CONFIG_BT_PAC_SNK)) {
+		err = bt_pacs_set_supported_contexts(BT_AUDIO_DIR_SINK, AVAILABLE_SINK_CONTEXT);
+		if (err != 0) {
+			LOG_INF("Failed to set source supported contexts (err %d)", err);
 
+			return err;
+		}
+	}
 	LOG_INF("Supported contexts successfully set");
 
 	return 0;
@@ -919,6 +932,13 @@ static int set_available_contexts(void)
 
 	if (IS_ENABLED(CONFIG_BT_PAC_SRC)) {
 		err = bt_pacs_set_available_contexts(BT_AUDIO_DIR_SOURCE, AVAILABLE_SOURCE_CONTEXT);
+		if (err != 0) {
+			LOG_INF("Failed to set source available contexts (err %d)", err);
+			return err;
+		}
+	}
+	if (IS_ENABLED(CONFIG_BT_PAC_SNK)) {
+			err = bt_pacs_set_available_contexts(BT_AUDIO_DIR_SINK, AVAILABLE_SINK_CONTEXT);
 		if (err != 0) {
 			LOG_INF("Failed to set source available contexts (err %d)", err);
 			return err;
@@ -1167,6 +1187,8 @@ int main(void)
 	const struct bt_pacs_register_param pacs_param = {
 		.src_pac = true,
 		.src_loc = true,
+		.snk_pac = true,
+		.snk_loc = true,
 	};
 
 	err = bt_pacs_register(&pacs_param);
@@ -1220,7 +1242,7 @@ int main(void)
 	k_work_submit(&adv_work);
 
 	while (true) {
-		k_sleep(K_SECONDS(1));
+		k_sleep(K_SECONDS(10));
 		bas_notify();		
 	}
 	return 0;
