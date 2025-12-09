@@ -90,11 +90,8 @@ RING_BUF_DECLARE(i2s_tx_ring_buf, I2S_SAMPLES_NUM * 2 * sizeof(uint16_t) * BUFFE
 #define MAX_FRAME_DURATION_US 10000
 #define MAX_NUM_SAMPLES	      ((MAX_FRAME_DURATION_US * MAX_SAMPLE_RATE) / USEC_PER_SEC)
 
-static int16_t audio_buf[MAX_NUM_SAMPLES * 2];
 static lc3_decoder_t lc3_decoder[2];
 static lc3_decoder_mem_48k_t lc3_decoder_mem[2];
-static int frames_per_sdu;
-
 
 BUILD_ASSERT(IS_ENABLED(CONFIG_SCAN_SELF) || IS_ENABLED(CONFIG_SCAN_OFFLOAD),
 	     "Either SCAN_SELF or SCAN_OFFLOAD must be enabled");
@@ -446,7 +443,6 @@ static void stream_started_cb(struct bt_bap_stream *bap_stream)
 {
 	printk("Stream %p started\n", bap_stream);
 
-	struct bt_iso_info bt_iso_info_test;
 	k_sem_give(&sem_stream_started);
 	gpio_pin_set_dt(&led, 1);
 }
@@ -475,10 +471,9 @@ struct recv_pkt_info {
 } __packed;
 
 
-#define JITTER_BUFFER_SIZE 6
-#define JITTER_BUFFER_CHECK 4
+#define JITTER_BUFFER_SIZE 3
+#define JITTER_BUFFER_CHECK 2
 K_MSGQ_DEFINE(recv_pkt_msgq_l, sizeof(struct recv_pkt_info), JITTER_BUFFER_SIZE, 4);
-K_MSGQ_DEFINE(recv_pkt_msgq_r, sizeof(struct recv_pkt_info), JITTER_BUFFER_SIZE, 4);
 
 static void stream_recv_cb(struct bt_bap_stream *bap_stream, const struct bt_iso_recv_info *info,
 			   struct net_buf *buf)
@@ -504,51 +499,14 @@ static void stream_recv_cb(struct bt_bap_stream *bap_stream, const struct bt_iso
 			k_msgq_put(&recv_pkt_msgq_l, &pkt_info, K_NO_WAIT);
 			//k_msgq_purge(&recv_pkt_msgq_l);
 		}
-	} else if (stream_num_get(bap_stream) == 1) {
-		struct recv_pkt_info pkt_info = {0};
-		pkt_info.sdu_ref_us = info->ts;
-		pkt_info.channel = 1;
-		pkt_info.size = buf->len;
-		if (buf->len == 0 || ((info->flags & BT_ISO_FLAGS_VALID) == 0)) {
-			pkt_info.bad_frame = true;
-		} else {
-			pkt_info.bad_frame = false;
-		}
-		memcpy(pkt_info.buf, buf->data, buf->len);
-		int ret = k_msgq_put(&recv_pkt_msgq_r, &pkt_info, K_NO_WAIT);
-		if (ret != 0 && ret != -ENOMSG) {
-			printk("R: MsgQ full: %d\n", ret);
-			k_msgq_get(&recv_pkt_msgq_r, &dummy_pkt_info, K_NO_WAIT);
-			k_msgq_put(&recv_pkt_msgq_r, &pkt_info, K_NO_WAIT);
-			//k_msgq_purge(&recv_pkt_msgq_r);
-		}
 	}
 
 	struct recv_pkt_info pkt_info_l = {0};
-	struct recv_pkt_info pkt_info_r = {0};
-	if (k_msgq_num_used_get(&recv_pkt_msgq_l) >= JITTER_BUFFER_CHECK || k_msgq_num_used_get(&recv_pkt_msgq_r) >= JITTER_BUFFER_CHECK) {
-		k_msgq_peek(&recv_pkt_msgq_l, &pkt_info_l);
-		k_msgq_peek(&recv_pkt_msgq_r, &pkt_info_r);
-		if (pkt_info_l.sdu_ref_us > pkt_info_r.sdu_ref_us && (pkt_info_l.sdu_ref_us - pkt_info_r.sdu_ref_us) > 2000) {
-			k_msgq_get(&recv_pkt_msgq_r, &pkt_info_r, K_NO_WAIT);
-			printk("drop L %d %d\n", pkt_info_l.sdu_ref_us, pkt_info_r.sdu_ref_us);
-		} else if (pkt_info_l.sdu_ref_us < pkt_info_r.sdu_ref_us && (pkt_info_r.sdu_ref_us - pkt_info_l.sdu_ref_us) > 2000){
+	if (k_msgq_num_used_get(&recv_pkt_msgq_l) >= JITTER_BUFFER_CHECK) {
 			k_msgq_get(&recv_pkt_msgq_l, &pkt_info_l, K_NO_WAIT);
-			printk("drop R %d %d\n", pkt_info_l.sdu_ref_us, pkt_info_r.sdu_ref_us);
-		} else {
-			//printk("Sync: %d %d\n", pkt_info_l.sdu_ref_us, pkt_info_r.sdu_ref_us);
-			k_msgq_get(&recv_pkt_msgq_l, &pkt_info_l, K_NO_WAIT);
-			k_msgq_get(&recv_pkt_msgq_r, &pkt_info_r, K_NO_WAIT);
-			if (pkt_info_l.sdu_ref_us != pkt_info_r.sdu_ref_us){
-				//printk("%d %d\n", pkt_info_l.sdu_ref_us, pkt_info_r.sdu_ref_us);
-			}
-
-
-			int16_t audio_buf_test[2 * 480];
-			// LOG_INF("RX stream %p len %u", stream, buf->len);
+			int16_t audio_buf_test[2 * 480] = {0};
 			uint16_t buf_size;
 			static uint16_t prev_buf_size = 0;
-
 			buf_size = ring_buf_space_get(&i2s_tx_ring_buf);
 			if (buf_size != prev_buf_size) {
 				prev_buf_size = buf_size;
@@ -570,20 +528,13 @@ static void stream_recv_cb(struct bt_bap_stream *bap_stream, const struct bt_iso
 				
 			}
 
-
 			int err;
 			err = lc3_decode(
 				lc3_decoder[0],
 				pkt_info_l.bad_frame ? NULL : pkt_info_l.buf,
 				pkt_info_l.size, LC3_PCM_FORMAT_S16, audio_buf_test + 0, 2);
-			err = lc3_decode(
-				lc3_decoder[1],
-				pkt_info_r.bad_frame ? NULL : pkt_info_r.buf,
-				pkt_info_r.size, LC3_PCM_FORMAT_S16, audio_buf_test + 1, 2);
 
 			ring_buf_put(&i2s_tx_ring_buf, (uint8_t *)audio_buf_test, 480 * 2 * sizeof(int16_t));
-
-		}
 	}
 	//printk("%p, %d, %d\n", (void *)bap_stream, stream_num_get(bap_stream),info->ts);
 }
@@ -792,7 +743,6 @@ static void broadcast_sink_stopped_cb(struct bt_bap_broadcast_sink *sink, uint8_
 		lc3_decoder[i] = NULL;
 	}
 	k_msgq_purge(&recv_pkt_msgq_l);
-	k_msgq_purge(&recv_pkt_msgq_r);
 	big_synced = false;
 	k_sem_give(&sem_broadcast_sink_stopped);
 }
