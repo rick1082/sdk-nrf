@@ -551,17 +551,20 @@ static void stream_recv_cb(struct bt_bap_stream *bap_stream, const struct bt_iso
 				//LOG_INF("I2S TX ring buffer space: %d bytes", buf_size);
 				int16_t buf_size_percent = buf_size * 100 / (I2S_SAMPLES_NUM * 2 * sizeof(uint16_t) * BUFFER_SPACE);
 				//LOG_INF("%d", buf_size_percent);
-				printk("%d\n", buf_size_percent);
+				//printk("%d\n", buf_size_percent);
 				
 				if (buf_size_percent < 45) {
-					dac_i2c_write(&dev_i2c, 0x07, 0x0E); // D[13:8] for D=3760
-					dac_i2c_write(&dev_i2c, 0x08, 0xDA); // D[7:0] for D=3760
+					// Speed up the sampling rate to 48037.5 Hz
+					dac_i2c_write(&dev_i2c, 0x07, 0x0E); // D[13:8] for D=3802
+					dac_i2c_write(&dev_i2c, 0x08, 0xDA); // D[7:0] for D=3802
 				} else if (buf_size_percent >= 40 && buf_size_percent <= 55) {
+					// Keep the sampling rate at 48000 Hz
 					dac_i2c_write(&dev_i2c, 0x07, 0x0E); // D[13:8] for D=3760
 					dac_i2c_write(&dev_i2c, 0x08, 0xB0); // D[7:0] for D=3760
 				} else {
-					dac_i2c_write(&dev_i2c, 0x07, 0x0E); // D[13:8] for D=3760
-					dac_i2c_write(&dev_i2c, 0x08, 0x86); // D[7:0] for D=3760
+					// Speed down the sampling rate to 47962.5 Hz
+					dac_i2c_write(&dev_i2c, 0x07, 0x0E); // D[13:8] for D=3718
+					dac_i2c_write(&dev_i2c, 0x08, 0x86); // D[7:0] for D=3718
 				}
 				
 			}
