@@ -95,9 +95,9 @@ K_MSGQ_DEFINE(hids_queue, sizeof(struct mouse_pos), HIDS_QUEUE_SIZE, 4);
 	BT_BAP_LC3_PRESET(BT_AUDIO_CODEC_LC3_CONFIG(BT_AUDIO_CODEC_CFG_FREQ_48KHZ,                 \
 						    BT_AUDIO_CODEC_CFG_DURATION_10, _loc, 100U, 1,  \
 						    _stream_context),                              \
-			  BT_BAP_QOS_CFG_UNFRAMED(10000u, 100u, 2u, 10u, 40000u))
+			  BT_BAP_QOS_CFG_UNFRAMED(10000u, 100u, 8u, 10u, 40000u))
 static struct bt_bap_lc3_preset codec_configuration = BT_BAP_LC3_UNICAST_PRESET_TEST(
-	BT_AUDIO_LOCATION_FRONT_LEFT, BT_AUDIO_CONTEXT_TYPE_UNSPECIFIED);
+	BT_AUDIO_LOCATION_FRONT_LEFT, (BT_AUDIO_CONTEXT_TYPE_UNSPECIFIED|BT_AUDIO_CONTEXT_TYPE_MEDIA));
 
 static K_SEM_DEFINE(sem_connected, 0, 1);
 static K_SEM_DEFINE(sem_disconnected, 0, 1);
@@ -560,7 +560,7 @@ static void lc3_decoder_thread_func(void *arg1, void *arg2, void *arg3)
 		struct lc3_data *data = k_fifo_get(&lc3_in_fifo, K_FOREVER);
 		if (data->do_plc) {
 			iso_data = NULL;
-			printk("bad\n");
+			printk("PLC for missing LC3 data\n");
 		} else {
 			iso_data = net_buf_pull_mem(data->buf, octets_per_frame_source);
 		}
