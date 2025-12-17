@@ -96,7 +96,7 @@ static lc3_decoder_mem_48k_t lc3_decoder_mem[2];
 BUILD_ASSERT(IS_ENABLED(CONFIG_SCAN_SELF) || IS_ENABLED(CONFIG_SCAN_OFFLOAD),
 	     "Either SCAN_SELF or SCAN_OFFLOAD must be enabled");
 
-#define SEM_TIMEOUT                 K_SECONDS(5)
+#define SEM_TIMEOUT                 K_SECONDS(20)
 #define BROADCAST_ASSISTANT_TIMEOUT K_SECONDS(120) /* 2 minutes */
 
 #define LOG_INTERVAL 1000U
@@ -108,7 +108,7 @@ BUILD_ASSERT(IS_ENABLED(CONFIG_SCAN_SELF) || IS_ENABLED(CONFIG_SCAN_OFFLOAD),
 #endif /* CONFIG_SCAN_SELF */
 
 #define PA_SYNC_INTERVAL_TO_TIMEOUT_RATIO 5 /* Set the timeout relative to interval */
-#define PA_SYNC_SKIP                5
+#define PA_SYNC_SKIP                2
 #define NAME_LEN                    sizeof(CONFIG_TARGET_BROADCAST_NAME) + 1
 #define BROADCAST_DATA_ELEMENT_SIZE sizeof(int16_t)
 
@@ -1581,8 +1581,7 @@ int main(void)
 			return 0;
 		}
 
-		if (0) {
-		//if (IS_ENABLED(CONFIG_SCAN_OFFLOAD)) {
+		if (IS_ENABLED(CONFIG_SCAN_OFFLOAD)) {
 			if (broadcast_assistant_conn == NULL) {
 				k_sem_reset(&sem_connected);
 
