@@ -205,11 +205,15 @@ static void device_found(const bt_addr_le_t *addr, int8_t rssi, uint8_t type,
 	bt_data_parse(ad, device_name_check, (void *)addr);
 }
 
+K_MSGQ_DEFINE(dmic_msgq, 80, 5, 4);
+
 static void iso_sending_thread(void *arg1, void *arg2, void *arg3)
 {
 	struct bt_iso_tx_info tx_info[2];
-	uint8_t dummy_data[100] = {0};
+	uint8_t dummy_data[80] = {0};
+	
 	while(1){
+		k_msgq_get(&dmic_msgq, &dummy_data, K_FOREVER);
 		for(int i = 0; i < ARRAY_SIZE(iso_chan); i++){
 			if (iso_chan[i].state == BT_ISO_STATE_CONNECTED) {
 				k_sem_take(i == 0 ? &chan0_iso_sent_sem : &chan1_iso_sent_sem, K_MSEC(20));
@@ -217,7 +221,7 @@ static void iso_sending_thread(void *arg1, void *arg2, void *arg3)
 				net_buf_reserve(buf, BT_ISO_CHAN_SEND_RESERVE);
 				net_buf_add_mem(buf, dummy_data, sizeof(dummy_data));
 				tx_info[i].seq_num = seq_num++;
-				int err = bt_iso_chan_send(&iso_chan[i], buf, &tx_info[i]);
+				int err = bt_iso_chan_send(&iso_chan[i], buf, tx_info[i].seq_num);
 				if (err < 0) {
 					printk("Failed to send ISO data: %d\n", err);
 					net_buf_unref(buf);
@@ -235,6 +239,8 @@ static void dmic_fetch_thread(void *arg1, void *arg2, void *arg3)
 	int ret;
 	void *buffer;
 	uint32_t size;
+	uint8_t lc3_encoded_buffer[320];
+	uint16_t encoded_bytes_written;
 
 	while (true) {
 		//k_sem_take(&lc3_encoder_sem, K_FOREVER);
@@ -254,7 +260,11 @@ static void dmic_fetch_thread(void *arg1, void *arg2, void *arg3)
 			size = sizeof(send_pcm_data);
 		}
 		memcpy(send_pcm_data, buffer, size);
-		//printk("DMIC read %d bytes\n", size);
+		ret = sw_codec_lc3_enc_run(send_pcm_data, sizeof(send_pcm_data), 80 * 8 * 100,
+					0, sizeof(lc3_encoded_buffer), lc3_encoded_buffer,
+					&encoded_bytes_written);
+		k_msgq_put(&dmic_msgq, &encoded_bytes_written, K_NO_WAIT);
+		//printk("LC3 encoded bytes: %d\n", encoded_bytes_written);
 		k_mem_slab_free(&mem_slab, buffer);
 		//printk("DMIC buffer freed\n");
 		//send_data();
@@ -545,6 +555,7 @@ static int clocks_start(void)
 int main(void)
 {
 	int err;
+	uint16_t pcm_bytes_req_enc;
 	struct bt_iso_chan *channels[2];
 	struct bt_iso_cig_param param;
 	struct bt_iso_cig *cig;
@@ -560,6 +571,15 @@ int main(void)
 	if (IS_ENABLED(CONFIG_SETTINGS)) {
 		settings_load();
 	}
+
+	err = sw_codec_lc3_init(NULL, NULL, MAX_FRAME_DURATION_US);
+	if (err) {
+		printk("sw_codec_lc3_init failed (ret %d)\n", err);
+	}
+	err = sw_codec_lc3_enc_init(16000, 16, MAX_FRAME_DURATION_US, 80 * 8 * 100,
+				    1, &pcm_bytes_req_enc);
+	printk("sw_codec_lc3_enc_init returned %d, pcm_bytes_req_enc %d\n", err,
+	       pcm_bytes_req_enc);
 
 	pdm_mic_init();
 
