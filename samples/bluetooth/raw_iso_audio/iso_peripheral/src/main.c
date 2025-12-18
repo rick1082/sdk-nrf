@@ -121,12 +121,12 @@ struct recv_pkt_info {
 	uint8_t desired_data_size;
 	uint8_t buf[CONFIG_BT_ISO_RX_MTU];
 } __packed;
-
+static void adv_work_handler(struct k_work *work);
 K_MSGQ_DEFINE(recv_pkt_msgq_l, sizeof(struct recv_pkt_info), JITTER_BUFFER_SIZE, 4);
 K_WORK_DEFINE(adv_work, adv_work_handler);
 
 /* Function declarations */
-static void adv_work_handler(struct k_work *work);
+
 
 /**
  * @brief Write register to TLV320 DAC via I2C
