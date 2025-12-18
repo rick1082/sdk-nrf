@@ -211,9 +211,9 @@ static void iso_sending_thread(void *arg1, void *arg2, void *arg3)
 {
 	struct bt_iso_tx_info tx_info[2];
 	uint8_t dummy_data[80] = {0};
-	
+	int k = 0;
 	while(1){
-		k_msgq_get(&dmic_msgq, &dummy_data, K_FOREVER);
+		k_msgq_get(&dmic_msgq, dummy_data, K_FOREVER);
 		for(int i = 0; i < ARRAY_SIZE(iso_chan); i++){
 			if (iso_chan[i].state == BT_ISO_STATE_CONNECTED) {
 				k_sem_take(i == 0 ? &chan0_iso_sent_sem : &chan1_iso_sent_sem, K_MSEC(20));
@@ -226,7 +226,10 @@ static void iso_sending_thread(void *arg1, void *arg2, void *arg3)
 					printk("Failed to send ISO data: %d\n", err);
 					net_buf_unref(buf);
 				} else {
-					//printk("Sent ISO data on chan %d\n", i);
+					k++;
+					if (k % 100 == 0){
+						//printk("Sent ISO data on chan %d\n", i);
+					}
 				}
 			}
 		}
@@ -263,7 +266,11 @@ static void dmic_fetch_thread(void *arg1, void *arg2, void *arg3)
 		ret = sw_codec_lc3_enc_run(send_pcm_data, sizeof(send_pcm_data), 80 * 8 * 100,
 					0, sizeof(lc3_encoded_buffer), lc3_encoded_buffer,
 					&encoded_bytes_written);
-		k_msgq_put(&dmic_msgq, &encoded_bytes_written, K_NO_WAIT);
+		if (ret != 0) {
+			printk("LC3 encoding failed: %d\n", ret);
+			encoded_bytes_written = 0;
+		}
+		k_msgq_put(&dmic_msgq, lc3_encoded_buffer, K_NO_WAIT);
 		//printk("LC3 encoded bytes: %d\n", encoded_bytes_written);
 		k_mem_slab_free(&mem_slab, buffer);
 		//printk("DMIC buffer freed\n");
