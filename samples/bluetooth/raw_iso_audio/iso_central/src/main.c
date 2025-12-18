@@ -68,6 +68,11 @@ static void dmic_fetch_thread(void *arg1, void *arg2, void *arg3);
 K_THREAD_DEFINE(dmic_fetch, LC3_ENCODER_STACK_SIZE, dmic_fetch_thread, NULL, NULL, NULL,
 		LC3_ENCODER_PRIORITY, 0, -1);
 
+static void iso_sending_thread(void *arg1, void *arg2, void *arg3);
+K_THREAD_DEFINE(iso_sending, 4096, iso_sending_thread, NULL, NULL, NULL,
+		7, 0, -1);
+K_SEM_DEFINE(chan0_iso_sent_sem, 0U, 1U);
+K_SEM_DEFINE(chan1_iso_sent_sem, 0U, 1U);
 /* Function declarations */
 static void start_scan(void);
 
@@ -200,6 +205,31 @@ static void device_found(const bt_addr_le_t *addr, int8_t rssi, uint8_t type,
 	bt_data_parse(ad, device_name_check, (void *)addr);
 }
 
+static void iso_sending_thread(void *arg1, void *arg2, void *arg3)
+{
+	struct bt_iso_tx_info tx_info[2];
+	uint8_t dummy_data[100] = {0};
+	while(1){
+		for(int i = 0; i < ARRAY_SIZE(iso_chan); i++){
+			if (iso_chan[i].state == BT_ISO_STATE_CONNECTED) {
+				k_sem_take(i == 0 ? &chan0_iso_sent_sem : &chan1_iso_sent_sem, K_MSEC(20));
+				struct net_buf *buf = net_buf_alloc(&tx_pool, K_FOREVER);
+				net_buf_reserve(buf, BT_ISO_CHAN_SEND_RESERVE);
+				net_buf_add_mem(buf, dummy_data, sizeof(dummy_data));
+				tx_info[i].seq_num = seq_num++;
+				int err = bt_iso_chan_send(&iso_chan[i], buf, &tx_info[i]);
+				if (err < 0) {
+					printk("Failed to send ISO data: %d\n", err);
+					net_buf_unref(buf);
+				} else {
+					//printk("Sent ISO data on chan %d\n", i);
+				}
+			}
+		}
+		k_sleep(K_MSEC(1));
+	}
+}
+
 static void dmic_fetch_thread(void *arg1, void *arg2, void *arg3)
 {
 	int ret;
@@ -224,11 +254,11 @@ static void dmic_fetch_thread(void *arg1, void *arg2, void *arg3)
 			size = sizeof(send_pcm_data);
 		}
 		memcpy(send_pcm_data, buffer, size);
-		printk("DMIC read %d bytes\n", size);
+		//printk("DMIC read %d bytes\n", size);
 		k_mem_slab_free(&mem_slab, buffer);
 		//printk("DMIC buffer freed\n");
 		//send_data();
-		k_sleep(K_MSEC(1));
+		//k_sleep(K_MSEC(1));
 	}
 }
 
@@ -358,12 +388,18 @@ static void iso_disconnected(struct bt_iso_chan *chan, uint8_t reason)
 	}
 }
 
+
 /**
  * @brief ISO data sent callback
  */
 static void iso_sent(struct bt_iso_chan *chan)
 {
-	printk("ISO Channel %p sent\n", chan);
+	//printk("ISO Channel %p sent\n", chan);
+	if (chan == &iso_chan[0]) {
+		k_sem_give(&chan0_iso_sent_sem);
+	} else if (chan == &iso_chan[1]) {
+		k_sem_give(&chan1_iso_sent_sem);
+	}
 }
 
 static struct bt_iso_chan_ops iso_ops = {
@@ -562,6 +598,7 @@ int main(void)
 	k_work_init_delayable(&iso_send_work, iso_timer_timeout);
 	
 	start_scan();
+	k_thread_start(iso_sending);
 	
 	return 0;
 }
