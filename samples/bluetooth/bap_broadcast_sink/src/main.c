@@ -1041,7 +1041,7 @@ static struct bt_pacs_cap cap = {
 	.codec_cap = &codec_cap,
 };
 
-#define TARGET_BROADCAST_ID 0x123455
+#define TARGET_BROADCAST_ID 0x123456
 static bool scan_check_and_sync_broadcast(struct bt_data *data, void *user_data)
 {
 	const struct bt_le_scan_recv_info *info = user_data;
