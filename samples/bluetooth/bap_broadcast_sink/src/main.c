@@ -270,9 +270,13 @@ void dac_i2c_write(const struct i2c_dt_spec *dev_i2c, uint8_t reg, uint8_t value
 	}
 }
 static const struct i2c_dt_spec dev_i2c = I2C_DT_SPEC_GET(I2C_NODE);
-
+static const struct gpio_dt_spec sw2 = GPIO_DT_SPEC_GET(DT_ALIAS(sw2), gpios);
+#include <zephyr/device.h>
+#include <zephyr/pm/device.h>
+#include <zephyr/sys/poweroff.h>
 static void button_handler(uint32_t button_state, uint32_t has_changed)
 {
+	printk("%x %x\n", button_state, has_changed);
 	if (has_changed) {
 		if ((button_state & DK_BTN1_MSK) == DK_BTN1_MSK) {
 			
@@ -293,6 +297,34 @@ static void button_handler(uint32_t button_state, uint32_t has_changed)
 			printk("Button2 pressed, volume = %d\n", volume);
 			dac_i2c_write(&dev_i2c, 0x41, volume);
 			dac_i2c_write(&dev_i2c, 0x42, volume);			
+		}
+		if ((button_state & DK_BTN3_MSK) == DK_BTN3_MSK) {
+			printk("button3 pressed\n");
+
+
+			nrfx_i2s_stop(&i2s_inst);
+			nrfx_i2s_uninit(&i2s_inst);
+			int rc = pm_device_action_run(dev_i2c.bus, PM_DEVICE_ACTION_SUSPEND);
+			if (rc < 0) {
+				printf("Could not suspend console (%d)\n", rc);
+			}
+
+			rc = gpio_pin_configure_dt(&sw2, GPIO_INPUT);
+			if (rc < 0) {
+				printf("Could not configure sw2 GPIO (%d)\n", rc);
+				return 0;
+			}
+
+			rc = gpio_pin_interrupt_configure_dt(&sw2, GPIO_INT_LEVEL_ACTIVE);
+			if (rc < 0) {
+				printf("Could not configure sw2 GPIO interrupt (%d)\n", rc);
+				return 0;
+			}
+
+			sys_poweroff();
+		}
+		if ((button_state & DK_BTN4_MSK) == DK_BTN4_MSK) {
+			printk("button4 pressed\n");
 		}
 		
 	}
