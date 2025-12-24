@@ -41,7 +41,6 @@
 #include <pcm_mix.h>
 #include "lc3.h"
 #include <zephyr/drivers/gpio.h>
-static const struct device *gpio;
 
 #include "nrf54l15.h"
 #if defined(NRF54L15_XXAA)
@@ -50,7 +49,8 @@ static const struct device *gpio;
 #include <zephyr/drivers/i2c.h>
 #define I2C_NODE DT_NODELABEL(tlv320)
 
-static const struct gpio_dt_spec led = GPIO_DT_SPEC_GET(DT_ALIAS(led0), gpios);
+static const struct gpio_dt_spec led_streaming = GPIO_DT_SPEC_GET(DT_ALIAS(led2), gpios);
+static const struct gpio_dt_spec led_scanning = GPIO_DT_SPEC_GET(DT_ALIAS(led1), gpios);
 static const struct gpio_dt_spec rst = GPIO_DT_SPEC_GET(DT_ALIAS(led3), gpios);
 
 #define I2S_NL DT_NODELABEL(i2s20)
@@ -270,13 +270,70 @@ void dac_i2c_write(const struct i2c_dt_spec *dev_i2c, uint8_t reg, uint8_t value
 	}
 }
 static const struct i2c_dt_spec dev_i2c = I2C_DT_SPEC_GET(I2C_NODE);
-static const struct gpio_dt_spec sw2 = GPIO_DT_SPEC_GET(DT_ALIAS(sw2), gpios);
+static const struct gpio_dt_spec sw3 = GPIO_DT_SPEC_GET(DT_ALIAS(sw3), gpios);
 #include <zephyr/device.h>
 #include <zephyr/pm/device.h>
 #include <zephyr/sys/poweroff.h>
+static void led_blink_work_handler(struct k_work *work);
+static K_WORK_DELAYABLE_DEFINE(work_led_blink, led_blink_work_handler);
+static void system_off_work_handler(struct k_work *work)
+{
+	k_work_cancel_delayable(&work_led_blink);
+	gpio_pin_set_dt(&rst, 0);
+	gpio_pin_set_dt(&led_streaming, 0);
+	gpio_pin_set_dt(&led_scanning, 0);
+	nrfx_i2s_stop(&i2s_inst);
+	nrfx_i2s_uninit(&i2s_inst);
+	int rc = pm_device_action_run(dev_i2c.bus, PM_DEVICE_ACTION_SUSPEND);
+	if (rc < 0) {
+		printf("Could not suspend console (%d)\n", rc);
+	}
+
+	printk("ready for system off\n");
+	rc = gpio_pin_configure_dt(&sw3, GPIO_INPUT);
+	if (rc < 0) {
+		printf("Could not configure sw2 GPIO (%d)\n", rc);
+	}
+
+	rc = gpio_pin_interrupt_configure_dt(&sw3, GPIO_INT_LEVEL_ACTIVE);
+	if (rc < 0) {
+		printf("Could not configure sw2 GPIO interrupt (%d)\n", rc);
+	}
+	k_sleep(K_MSEC(500));
+	sys_poweroff();	
+}
+
+static K_WORK_DELAYABLE_DEFINE(work_system_off, system_off_work_handler);
+
+static void led_blink_work_handler(struct k_work *work)
+{
+	gpio_pin_toggle_dt(&led_scanning);
+	k_work_schedule(&work_led_blink, K_MSEC(100));
+}
+
+static void led_blink_start()
+{
+	k_work_schedule(&work_led_blink, K_MSEC(0));
+}
+
+static void led_blink_stop()
+{
+	k_work_cancel_delayable(&work_led_blink);
+	gpio_pin_set_dt(&led_scanning, 0);
+}
+
 static void button_handler(uint32_t button_state, uint32_t has_changed)
 {
-	printk("%x %x\n", button_state, has_changed);
+	if (has_changed == 8) {
+		if (button_state & (1 << 3)) {
+			printk("start count down for power off\n");
+			k_work_schedule(&work_system_off, K_MSEC(3000));
+		} else{	
+			printk("cancel count down\n");
+			k_work_cancel_delayable(&work_system_off);
+		}
+	}
+
 	if (has_changed) {
 		if ((button_state & DK_BTN1_MSK) == DK_BTN1_MSK) {
 			
@@ -300,28 +357,6 @@ static void button_handler(uint32_t button_state, uint32_t has_changed)
 		}
 		if ((button_state & DK_BTN3_MSK) == DK_BTN3_MSK) {
 			printk("button3 pressed\n");
-
-
-			nrfx_i2s_stop(&i2s_inst);
-			nrfx_i2s_uninit(&i2s_inst);
-			int rc = pm_device_action_run(dev_i2c.bus, PM_DEVICE_ACTION_SUSPEND);
-			if (rc < 0) {
-				printf("Could not suspend console (%d)\n", rc);
-			}
-
-			rc = gpio_pin_configure_dt(&sw2, GPIO_INPUT);
-			if (rc < 0) {
-				printf("Could not configure sw2 GPIO (%d)\n", rc);
-				return 0;
-			}
-
-			rc = gpio_pin_interrupt_configure_dt(&sw2, GPIO_INT_LEVEL_ACTIVE);
-			if (rc < 0) {
-				printf("Could not configure sw2 GPIO interrupt (%d)\n", rc);
-				return 0;
-			}
-
-			sys_poweroff();
 		}
 		if ((button_state & DK_BTN4_MSK) == DK_BTN4_MSK) {
 			printk("button4 pressed\n");
@@ -476,7 +511,8 @@ static void stream_started_cb(struct bt_bap_stream *bap_stream)
 	printk("Stream %p started\n", bap_stream);
 
 	k_sem_give(&sem_stream_started);
-	gpio_pin_set_dt(&led, 1);
+	gpio_pin_set_dt(&led_streaming, 1);
+	led_blink_stop();
 }
 
 static void stream_stopped_cb(struct bt_bap_stream *bap_stream, uint8_t reason)
@@ -489,7 +525,8 @@ static void stream_stopped_cb(struct bt_bap_stream *bap_stream, uint8_t reason)
 	if (err != 0) {
 		printk("Failed to take sem_stream_started: %d\n", err);
 	}
-	gpio_pin_set_dt(&led, 0);
+	gpio_pin_set_dt(&led_streaming, 0);
+	led_blink_start();
 }
 
 struct recv_pkt_info {
@@ -1580,8 +1617,8 @@ int main(void)
 {
 	int err;
 
-	gpio = DEVICE_DT_GET(DT_NODELABEL(gpio0));
-	gpio_pin_configure_dt(&led, GPIO_OUTPUT);
+	gpio_pin_configure_dt(&led_streaming, GPIO_OUTPUT);
+	gpio_pin_configure_dt(&led_scanning, GPIO_OUTPUT);
 	gpio_pin_configure_dt(&rst, GPIO_OUTPUT);
 
 	clocks_start();
@@ -1601,11 +1638,11 @@ int main(void)
 	audio_i2s_start((uint8_t *)i2s_tx_buf_a, (uint32_t *)i2s_rx_buf_a);
 	audio_i2s_set_next_buf((const uint8_t *)i2s_tx_buf_b, (uint32_t *)i2s_rx_buf_b);
 	dk_buttons_init(button_handler);
-
+	
 	while (true) {
 		uint8_t stream_count;
 		uint32_t sync_bitfield;
-
+		led_blink_start();
 		err = reset();
 		if (err != 0) {
 			printk("Resetting failed: %d - Aborting\n", err);
