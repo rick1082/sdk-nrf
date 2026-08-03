@@ -1,0 +1,18 @@
+sample:
+  description: nrf54l15 as air mouse with LE audio mic
+    application
+  name: mic_pointer_nrf54l15
+common:
+  min_ram: 2
+  min_flash: 16
+  tags: introduction
+  integration_platforms:
+    - native_sim
+  harness: console
+  harness_config:
+    type: one_line
+    regex:
+      - "Hello World! (.*)"
+tests:
+  sample.basic.helloworld:
+    tags: introduction
