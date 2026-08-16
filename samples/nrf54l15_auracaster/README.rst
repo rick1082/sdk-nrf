@@ -1,79 +1,104 @@
-.. zephyr:code-sample:: bluetooth_bap_broadcast_source
-   :name: Basic Audio Profile (BAP) Broadcast Audio Source
-   :relevant-api: bluetooth bt_audio bt_bap
+.. _nrf54l15_auracaster:
 
-   Use BAP Broadcast Source functionality.
+nRF54L15: Auracaster (LE Audio broadcast source)
+################################################
+
+.. contents::
+   :local:
+   :depth: 2
 
 Overview
 ********
 
-Application demonstrating the BAP Broadcast Source functionality.
-Will start advertising extended advertising with audio flags, periodic advertising with the
-Broadcast Audio Source Endpoint (BASE) and finally the BIGinfo together with
-(mock) Audio (ISO) data.
+This sample turns an nRF54L15 into an Auracast\ :sup:`TM` broadcast source.
+It captures audio from an on-board PDM microphone, encodes it with the LC3
+codec running on the application core, and transmits it as a Broadcast
+Isochronous Group (BIG).
 
-The BAP Broadcast Source will reset every 30 seconds to show the full API.
+The sample starts extended advertising carrying the Broadcast Audio
+Announcement and the Broadcast Name, periodic advertising carrying the
+Broadcast Audio Source Endpoint (BASE), and then the BIG itself.
 
-This sample can be found under
-:zephyr_file:`samples/bluetooth/bap_broadcast_source` in the Zephyr tree.
+It derives from the Zephyr :zephyr:code-sample:`bluetooth_bap_broadcast_source`
+sample, with the mock sine/tone generator replaced by a real PDM capture path
+and the Zephyr LIBLC3 encoder replaced by the nrfxlib T2 software LC3 encoder
+(``CONFIG_SW_CODEC_LC3_T2_SOFTWARE``).
 
-Check the :zephyr:code-sample-category:`bluetooth` samples for general information.
+Audio configuration
+===================
+
+* LC3 preset ``BT_BAP_LC3_BROADCAST_PRESET_16_2_1`` (16 kHz, 10 ms frames)
+* Two BIS streams (front left / front right) in a single subgroup
+* Mono PDM capture, duplicated across both streams
 
 Requirements
 ************
 
-* BlueZ running on the host, or
-* A board with Bluetooth Low Energy 5.2 support
+One of the following boards:
 
-Building and Running
+.. list-table::
+   :header-rows: 1
+
+   * - Board target
+     - Microphone
+   * - ``nrf54l15dk/nrf54l15/cpuapp``
+     - External PDM microphone on P1.12 (CLK) and P1.13 (DIN)
+   * - ``xiao_nrf54l15/nrf54l15/cpuapp``
+     - On-board PDM microphone (Seeed XIAO nRF54L15 Sense)
+
+To listen to the stream you also need an Auracast receiver. Prebuilt nRF5340
+Audio DK BIS headset images are included in this directory as
+:file:`nrf5340_bis_headset_app.hex` and :file:`nrf5340_bis_headset_net.hex`.
+
+Building and running
 ********************
 
-When building targeting an nrf52 series board with the Zephyr Bluetooth Controller,
-use ``-DEXTRA_CONF_FILE=overlay-bt_ll_sw_split.conf`` to enable the required ISO
-feature support.
+Seeed XIAO nRF54L15 Sense
+=========================
 
-Building for an nrf5340dk
--------------------------
+The board is in the Zephyr tree as of NCS v3.4.0, so no ``BOARD_ROOT`` is
+needed:
 
-You can build both the application core image and an appropriate controller image for the network
-core with:
+.. code-block:: console
 
-.. zephyr-app-commands::
-   :zephyr-app: samples/bluetooth/bap_broadcast_source/
-   :board: nrf5340dk/nrf5340/cpuapp
-   :goals: build
-   :west-args: --sysbuild
+   west build -b xiao_nrf54l15/nrf54l15/cpuapp samples/nrf54l15_auracaster
 
-If you prefer to only build the application core image, you can do so by doing instead:
+The on-board microphone needs no overlay work: the board files already assign
+the PDM pins and apply the ``dmic_dev`` label, and the microphone power rail
+(``pdm_imu_pwr``, P0.01) is brought up automatically before the DMIC driver
+initializes.
 
-.. zephyr-app-commands::
-   :zephyr-app: samples/bluetooth/bap_broadcast_source/
-   :board: nrf5340dk/nrf5340/cpuapp
-   :goals: build
+This build advertises the Broadcast Name ``XIAO_54L15_Sense``.
 
-In that case you can pair this application core image with the
-:zephyr:code-sample:`bluetooth_hci_ipc` sample
-:zephyr_file:`samples/bluetooth/hci_ipc/nrf5340_cpunet_iso-bt_ll_sw_split.conf` configuration.
+nRF54L15 DK
+===========
 
-Building for a simulated nrf5340bsim
-------------------------------------
+.. code-block:: console
 
-Similarly to how you would for real HW, you can do:
+   west build -b nrf54l15dk/nrf54l15/cpuapp samples/nrf54l15_auracaster
 
-.. zephyr-app-commands::
-   :zephyr-app: samples/bluetooth/bap_broadcast_source/
-   :board: nrf5340bsim/nrf5340/cpuapp
-   :goals: build
-   :west-args: --sysbuild
+Connect a PDM microphone to P1.12 (PDM_CLK) and P1.13 (PDM_DIN). This build
+advertises the Broadcast Name ``nRF54L15_PDM``.
 
-Note this will produce a Linux executable in :file:`./build/zephyr/zephyr.exe`.
-For more information, check :ref:`this board documentation <nrf5340bsim>`.
+Configuration
+*************
 
-Building for a simulated nrf52_bsim
------------------------------------
+``CONFIG_BROADCAST_CODE``
+   Non-empty string encrypts the broadcast with that code (1-16 octets).
 
-.. zephyr-app-commands::
-   :zephyr-app: samples/bluetooth/bap_broadcast_source/
-   :board: nrf52_bsim
-   :goals: build
-   :gen-args: -DEXTRA_CONF_FILE=overlay-bt_ll_sw_split.conf
+``CONFIG_STATIC_BROADCAST_ID`` / ``CONFIG_BROADCAST_ID``
+   Use a fixed 3-octet broadcast ID instead of a random one. Defaults to
+   ``0x123456``.
+
+``CONFIG_BT_DEVICE_NAME``
+   Also used as the advertised Broadcast Name.
+
+Limitations
+***********
+
+* The application uses ``DT_NODELABEL(dmic_dev)`` unconditionally, so it only
+  builds for board targets whose devicetree provides a PDM node under that
+  label. The nRF5340 and nRF52 overlays inherited from the upstream Zephyr
+  sample do not, and those targets do not build.
+* Capture is mono. Both BIS streams carry the same audio, tagged as front left
+  and front right.

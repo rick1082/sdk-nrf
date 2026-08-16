@@ -1,0 +1,29 @@
+/*
+ * Copyright (c) 2026 Nordic Semiconductor ASA
+ *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/*
+ * Seeed XIAO nRF54L15 Sense.
+ *
+ * The on-board PDM microphone is already wired up by the in-tree board files
+ * in zephyr/boards/seeed/xiao_nrf54l15: the pinctrl dtsi assigns PDM_CLK to
+ * P1.12 and PDM_DIN to P1.13 (the same pins the nRF54L15 DK overlay uses), the
+ * common dtsi attaches &pdm20_default and selects PCLK32M, and the cpuapp .dts
+ * already applies the dmic_dev label. The declaration below is therefore
+ * redundant against the in-tree board, and is kept only so the sample also
+ * builds against the out-of-tree Seeed board root (platform-seeedboards),
+ * whose .dts does not apply the label itself.
+ *
+ * Microphone power: the mic and IMU share the pdm_imu_pwr fixed regulator on
+ * P0.01, which is regulator-boot-on and additionally held by an
+ * imu_power_default_on GPIO hog, so the rail is up before the DMIC driver
+ * initializes (CONFIG_REGULATOR_FIXED_INIT_PRIORITY=45 vs
+ * CONFIG_AUDIO_DMIC_INIT_PRIORITY=80). Do not disable either of those or
+ * dmic_read() returns silence.
+ */
+
+dmic_dev: &pdm20 {
+	status = "okay";
+};
