@@ -20,6 +20,17 @@ Use :kconfig:option:`CONFIG_TARGET_BROADCAST_NAME` Kconfig to specify the name
 (:kconfig:option:`CONFIG_BT_DEVICE_NAME`) of a broadcast source to listen to. With default value
 (empty string), sink device will listen to all available broadcast sources.
 
+User interface
+**************
+
+* Button 1 / Button 2: volume up / down.
+* Button 3: cycle the EQ preset (FLAT -> BASS -> VOCAL). The EQ runs in the 3 programmable
+  biquads of the TLV320DAC3100 (processing block PRB_P1). Adaptive filtering mode is used, so
+  presets switch glitch-free while audio is playing. Boosted bands are pre-scaled to avoid
+  clipping, and the lost level is restored through the DAC digital volume. After each switch the
+  streaming LED blinks 1 / 2 / 3 times (FLAT / BASS / VOCAL) to show the active preset.
+* Button 4: hold for 3 seconds to power off.
+
 Requirements
 ************
 

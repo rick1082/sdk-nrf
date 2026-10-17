@@ -6,6 +6,7 @@
  */
 
 #include <errno.h>
+#include <math.h>
 #include <stdint.h>
 #include <string.h>
 #include <strings.h>
@@ -270,15 +271,244 @@ void dac_i2c_write(const struct i2c_dt_spec *dev_i2c, uint8_t reg, uint8_t value
 	}
 }
 static const struct i2c_dt_spec dev_i2c = I2C_DT_SPEC_GET(I2C_NODE);
+
+/* Write len bytes starting at reg using the codec's register auto-increment. Sent as a single
+ * I2C message: i2c_burst_write_dt() would need a TWIM concat buffer (zephyr,concat-buf-size).
+ */
+void dac_i2c_burst_write(const struct i2c_dt_spec *dev_i2c, uint8_t reg, const uint8_t *data,
+			 uint32_t len)
+{
+	uint8_t buf[1 + 32];
+	int ret;
+
+	__ASSERT_NO_MSG(len < sizeof(buf));
+	buf[0] = reg;
+	memcpy(&buf[1], data, len);
+
+	ret = i2c_write_dt(dev_i2c, buf, len + 1);
+	if (ret != 0) {
+		printk("Failed to burst write to I2C device address %x at reg. %x\n", dev_i2c->addr,
+		       reg);
+	}
+}
+
+/* EQ presets using the 3 programmable biquads of processing block PRB_P1.
+ * Coefficients are 1.15 format, H(z) = (N0 + 2*N1*z^-1 + N2*z^-2) / (2^15 - 2*D1*z^-1 - D2*z^-2).
+ * Each boosting band is pre-scaled by its gain so it cannot clip internally, and the lost
+ * level is added back through the DAC digital volume (makeup gain).
+ */
+#define EQ_FS_HZ	   48000.0f
+#define EQ_BIQUAD_NUM	   3
+#define EQ_COEF_BYTES	   (EQ_BIQUAD_NUM * 5 * 2)
+#define EQ_REG_LEFT_BQ_A   0x02 /* Page 8, buffer A, left biquad A N0 MSB */
+#define EQ_REG_RIGHT_BQ_A  0x42 /* Page 8, buffer A, right biquad A N0 MSB */
+#define EQ_REG_COEF_RAM	   0x01 /* Page 8, DAC coefficient RAM control */
+#define EQ_ADAPTIVE_EN	   BIT(2)
+#define EQ_BUFFER_SWITCH   BIT(0)
+
+enum eq_band_type {
+	EQ_BAND_FLAT,
+	EQ_BAND_PEAK,
+	EQ_BAND_LOW_SHELF,
+	EQ_BAND_HIGH_SHELF,
+	EQ_BAND_HIGH_PASS,
+};
+
+struct eq_band {
+	enum eq_band_type type;
+	float freq_hz;
+	float gain_db;
+	float q;
+};
+
+struct eq_preset {
+	const char *name;
+	struct eq_band band[EQ_BIQUAD_NUM];
+};
+
+static const struct eq_preset eq_presets[] = {
+	{"FLAT", {{EQ_BAND_FLAT}, {EQ_BAND_FLAT}, {EQ_BAND_FLAT}}},
+	{"BASS",
+	 /* Kick-drum focused: low shelf for the thump (30-80 Hz), cut the muddy low-mids that
+	  * mask the kick, and boost the beater click (~3.5 kHz) so the drum cuts through.
+	  * Narrow low peaks with large gain drift once quantized to 1.15 format, so the low
+	  * boost stays a shelf.
+	  */
+	 {{EQ_BAND_LOW_SHELF, 120.0f, 14.0f, 0.9f},
+	  {EQ_BAND_PEAK, 300.0f, -5.0f, 1.0f},
+	  {EQ_BAND_PEAK, 3500.0f, 5.0f, 1.0f}}},
+	{"VOCAL",
+	 /* Two cascaded high-pass sections = 4th order, 24 dB/octave bass cut */
+	 {{EQ_BAND_HIGH_PASS, 400.0f, 0.0f, 0.707f},
+	  {EQ_BAND_HIGH_PASS, 400.0f, 0.0f, 0.707f},
+	  {EQ_BAND_PEAK, 3000.0f, 10.0f, 0.6f}}},
+};
+
+/* Coefficient bytes as written to the codec, MSB first */
+static uint8_t eq_coef[ARRAY_SIZE(eq_presets)][EQ_COEF_BYTES];
+/* Makeup gain in DAC volume register steps (0.5 dB) */
+static int8_t eq_makeup[ARRAY_SIZE(eq_presets)];
+static uint8_t eq_idx;
+
+static int16_t eq_to_q15(float x, bool *clipped)
+{
+	int32_t q = (int32_t)lroundf(x * 32768.0f);
+
+	if (q > INT16_MAX || q < INT16_MIN) {
+		*clipped = true;
+		return q > 0 ? INT16_MAX : INT16_MIN;
+	}
+	return (int16_t)q;
+}
+
+/* RBJ audio EQ cookbook biquad, converted to the TLV320DAC3100 coefficient layout */
+static void eq_band_to_coef(const struct eq_band *band, uint8_t *out, bool *clipped)
+{
+	float b0, b1, b2, a0, a1, a2;
+	float a = powf(10.0f, band->gain_db / 40.0f);
+	float w0 = 2.0f * 3.14159265f * band->freq_hz / EQ_FS_HZ;
+	float cs = cosf(w0);
+	float alpha = sinf(w0) / (2.0f * band->q);
+	float sa = 2.0f * sqrtf(a) * alpha;
+	float scale = powf(10.0f, -MAX(band->gain_db, 0.0f) / 20.0f);
+	int16_t c[5];
+
+	switch (band->type) {
+	case EQ_BAND_PEAK:
+		b0 = 1.0f + alpha * a;
+		b1 = -2.0f * cs;
+		b2 = 1.0f - alpha * a;
+		a0 = 1.0f + alpha / a;
+		a1 = -2.0f * cs;
+		a2 = 1.0f - alpha / a;
+		break;
+	case EQ_BAND_LOW_SHELF:
+		b0 = a * ((a + 1.0f) - (a - 1.0f) * cs + sa);
+		b1 = 2.0f * a * ((a - 1.0f) - (a + 1.0f) * cs);
+		b2 = a * ((a + 1.0f) - (a - 1.0f) * cs - sa);
+		a0 = (a + 1.0f) + (a - 1.0f) * cs + sa;
+		a1 = -2.0f * ((a - 1.0f) + (a + 1.0f) * cs);
+		a2 = (a + 1.0f) + (a - 1.0f) * cs - sa;
+		break;
+	case EQ_BAND_HIGH_SHELF:
+		b0 = a * ((a + 1.0f) + (a - 1.0f) * cs + sa);
+		b1 = -2.0f * a * ((a - 1.0f) + (a + 1.0f) * cs);
+		b2 = a * ((a + 1.0f) + (a - 1.0f) * cs - sa);
+		a0 = (a + 1.0f) - (a - 1.0f) * cs + sa;
+		a1 = 2.0f * ((a - 1.0f) - (a + 1.0f) * cs);
+		a2 = (a + 1.0f) - (a - 1.0f) * cs - sa;
+		break;
+	case EQ_BAND_HIGH_PASS:
+		b0 = (1.0f + cs) / 2.0f;
+		b1 = -(1.0f + cs);
+		b2 = (1.0f + cs) / 2.0f;
+		a0 = 1.0f + alpha;
+		a1 = -2.0f * cs;
+		a2 = 1.0f - alpha;
+		break;
+	case EQ_BAND_FLAT:
+	default:
+		/* Codec default all-pass: N0 = 0x7FFF, the rest 0 */
+		memset(out, 0, 10);
+		sys_put_be16(INT16_MAX, out);
+		return;
+	}
+
+	c[0] = eq_to_q15(scale * b0 / a0, clipped);
+	c[1] = eq_to_q15(scale * b1 / (2.0f * a0), clipped);
+	c[2] = eq_to_q15(scale * b2 / a0, clipped);
+	c[3] = eq_to_q15(-a1 / (2.0f * a0), clipped);
+	c[4] = eq_to_q15(-a2 / a0, clipped);
+
+	for (int i = 0; i < 5; i++) {
+		sys_put_be16((uint16_t)c[i], &out[i * 2]);
+	}
+}
+
+static void eq_init(void)
+{
+	for (int p = 0; p < ARRAY_SIZE(eq_presets); p++) {
+		float makeup_db = 0.0f;
+		bool clipped = false;
+
+		for (int b = 0; b < EQ_BIQUAD_NUM; b++) {
+			const struct eq_band *band = &eq_presets[p].band[b];
+
+			eq_band_to_coef(band, &eq_coef[p][b * 10], &clipped);
+			if (band->type != EQ_BAND_FLAT) {
+				makeup_db += MAX(band->gain_db, 0.0f);
+			}
+		}
+		eq_makeup[p] = (int8_t)lroundf(makeup_db * 2.0f);
+		if (clipped) {
+			printk("EQ preset %s: coefficient clipped, check band settings\n",
+			       eq_presets[p].name);
+		}
+	}
+}
+
+/* Apply user volume plus the makeup gain of the active EQ preset. Expects page 0.
+ * Capped at 0 dB: boosted bands are pre-scaled to unity, so any positive digital gain would
+ * push them past full scale and clip.
+ */
+static void dac_volume_apply(void)
+{
+	int32_t reg = CLAMP(volume + eq_makeup[eq_idx], -127, 0);
+
+	dac_i2c_write(&dev_i2c, 0x41, (uint8_t)reg);
+	dac_i2c_write(&dev_i2c, 0x42, (uint8_t)reg);
+}
+
+/* Load preset coefficients. With adaptive filtering on, writes go to the buffer not in use by
+ * the DAC; switch = true then swaps buffers at the next frame boundary (glitch-free while playing).
+ * Expects page 0, returns on page 0.
+ */
+static void eq_apply(uint8_t idx, bool buffer_switch)
+{
+	dac_i2c_write(&dev_i2c, 0x00, 0x08);
+	dac_i2c_burst_write(&dev_i2c, EQ_REG_LEFT_BQ_A, eq_coef[idx], EQ_COEF_BYTES);
+	dac_i2c_burst_write(&dev_i2c, EQ_REG_RIGHT_BQ_A, eq_coef[idx], EQ_COEF_BYTES);
+	if (!buffer_switch) {
+		/* DAC is off: read back buffer A to verify the coefficient writes landed */
+		uint8_t reg = EQ_REG_LEFT_BQ_A;
+		uint8_t readback[EQ_COEF_BYTES];
+
+		if (i2c_write_read_dt(&dev_i2c, &reg, 1, readback, sizeof(readback)) != 0 ||
+		    memcmp(readback, eq_coef[idx], EQ_COEF_BYTES) != 0) {
+			printk("EQ %s: coefficient readback MISMATCH\n", eq_presets[idx].name);
+		} else {
+			printk("EQ %s: coefficient readback OK\n", eq_presets[idx].name);
+		}
+	} else {
+		uint8_t reg = EQ_REG_COEF_RAM;
+		uint8_t ram_ctrl = 0;
+
+		dac_i2c_write(&dev_i2c, EQ_REG_COEF_RAM, EQ_ADAPTIVE_EN | EQ_BUFFER_SWITCH);
+		/* Switch happens at the next frame boundary (~21 us at 48 kHz) */
+		k_sleep(K_MSEC(1));
+		if (i2c_write_read_dt(&dev_i2c, &reg, 1, &ram_ctrl, 1) == 0) {
+			printk("EQ %s loaded, DAC uses coefficient buffer %c (ctrl 0x%02x)\n",
+			       eq_presets[idx].name, (ram_ctrl & BIT(1)) ? 'B' : 'A', ram_ctrl);
+		}
+	}
+	dac_i2c_write(&dev_i2c, 0x00, 0x00);
+
+	eq_idx = idx;
+	dac_volume_apply();
+}
+
 static const struct gpio_dt_spec sw3 = GPIO_DT_SPEC_GET(DT_ALIAS(sw3), gpios);
 #include <zephyr/device.h>
 #include <zephyr/pm/device.h>
 #include <zephyr/sys/poweroff.h>
 static void led_blink_work_handler(struct k_work *work);
 static K_WORK_DELAYABLE_DEFINE(work_led_blink, led_blink_work_handler);
+static void eq_led_work_handler(struct k_work *work);
+static K_WORK_DELAYABLE_DEFINE(work_eq_led, eq_led_work_handler);
 static void system_off_work_handler(struct k_work *work)
 {
 	k_work_cancel_delayable(&work_led_blink);
+	k_work_cancel_delayable(&work_eq_led);
 	gpio_pin_set_dt(&rst, 0);
 	gpio_pin_set_dt(&led_streaming, 0);
 	gpio_pin_set_dt(&led_scanning, 0);
@@ -322,6 +552,33 @@ static void led_blink_stop()
 	gpio_pin_set_dt(&led_scanning, 0);
 }
 
+/* EQ indicator: blink the streaming LED (preset index + 1) times, then restore its state */
+#define EQ_LED_GAP_MS	400
+#define EQ_LED_BLINK_MS 150
+static uint8_t eq_led_steps_left;
+
+static void eq_led_work_handler(struct k_work *work)
+{
+	if (eq_led_steps_left == 0) {
+		gpio_pin_set_dt(&led_streaming, k_sem_count_get(&sem_stream_started) > 0);
+		return;
+	}
+
+	/* Even steps left = LED on, odd = LED off */
+	gpio_pin_set_dt(&led_streaming, !(eq_led_steps_left & 1));
+	eq_led_steps_left--;
+	k_work_schedule(&work_eq_led,
+			K_MSEC(eq_led_steps_left == 0 ? EQ_LED_GAP_MS : EQ_LED_BLINK_MS));
+}
+
+static void eq_led_indicate(uint8_t idx)
+{
+	/* Start with the LED off for a gap, then (idx + 1) on/off blinks */
+	gpio_pin_set_dt(&led_streaming, 0);
+	eq_led_steps_left = (idx + 1) * 2;
+	k_work_reschedule(&work_eq_led, K_MSEC(EQ_LED_GAP_MS));
+}
+
 static void button_handler(uint32_t button_state, uint32_t has_changed)
 {
 	if (has_changed == 8) {
@@ -342,8 +599,7 @@ static void button_handler(uint32_t button_state, uint32_t has_changed)
 				volume = VOLUME_MAX;
 			}
 			printk("Button1 pressed, volume = %d\n", volume);
-			dac_i2c_write(&dev_i2c, 0x41, volume);
-			dac_i2c_write(&dev_i2c, 0x42, volume);
+			dac_volume_apply();
 		}
 		if ((button_state & DK_BTN2_MSK) == DK_BTN2_MSK) {
 			
@@ -352,11 +608,14 @@ static void button_handler(uint32_t button_state, uint32_t has_changed)
 				volume = VOLUME_MIN;
 			}
 			printk("Button2 pressed, volume = %d\n", volume);
-			dac_i2c_write(&dev_i2c, 0x41, volume);
-			dac_i2c_write(&dev_i2c, 0x42, volume);			
+			dac_volume_apply();
 		}
 		if ((button_state & DK_BTN3_MSK) == DK_BTN3_MSK) {
-			printk("button3 pressed\n");
+			uint8_t next = (eq_idx + 1) % ARRAY_SIZE(eq_presets);
+
+			printk("Button3 pressed, EQ = %s\n", eq_presets[next].name);
+			eq_apply(next, true);
+			eq_led_indicate(next);
 		}
 		if ((button_state & DK_BTN4_MSK) == DK_BTN4_MSK) {
 			printk("button4 pressed\n");
@@ -400,6 +659,15 @@ void tlv320_setup(void)
 	dac_i2c_write(&dev_i2c, 0x3C, 0x01);
 	dac_i2c_write(&dev_i2c, 0x74, 0x00);
 
+	/* Enable adaptive filtering so EQ coefficients can be updated while the DAC runs,
+	 * then load the default preset into buffer A while the DAC is still powered down.
+	 */
+	eq_init();
+	dac_i2c_write(&dev_i2c, 0x00, 0x08);
+	dac_i2c_write(&dev_i2c, EQ_REG_COEF_RAM, EQ_ADAPTIVE_EN);
+	dac_i2c_write(&dev_i2c, 0x00, 0x00);
+	eq_apply(eq_idx, false);
+
 	dac_i2c_write(&dev_i2c, 0x00, 0x01);
 	dac_i2c_write(&dev_i2c, 0x1F, (0b00 << 3));
 	dac_i2c_write(&dev_i2c, 0x21, (0b0111 << 3) | (0b11 << 1));
@@ -415,8 +683,7 @@ void tlv320_setup(void)
 
 	dac_i2c_write(&dev_i2c, 0x00, 0x00);
 	dac_i2c_write(&dev_i2c, 0x3F, 0xD4);
-	dac_i2c_write(&dev_i2c, 0x41, DEFAULT_VOLUME);
-	dac_i2c_write(&dev_i2c, 0x42, DEFAULT_VOLUME);
+	dac_volume_apply();
 	dac_i2c_write(&dev_i2c, 0x40, 0x00);
 	dac_i2c_write(&dev_i2c, 0x00, 0x00);
 }
