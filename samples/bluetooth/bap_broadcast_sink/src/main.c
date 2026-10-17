@@ -564,7 +564,8 @@ static void stream_recv_cb(struct bt_bap_stream *bap_stream, const struct bt_iso
 		}
 		memcpy(pkt_info.buf, buf->data, buf->len);
 		int ret = k_msgq_put(&recv_pkt_msgq_l, &pkt_info, K_NO_WAIT);
-		if (ret != 0 && ret != -ENOMSG) {
+		if (ret == -ENOMSG) {
+			/* Queue full: drop the oldest packet to make room for the newest */
 			printk("L: MsgQ full: %d\n", ret);
 			k_msgq_get(&recv_pkt_msgq_l, &dummy_pkt_info, K_NO_WAIT);
 			k_msgq_put(&recv_pkt_msgq_l, &pkt_info, K_NO_WAIT);
@@ -582,7 +583,8 @@ static void stream_recv_cb(struct bt_bap_stream *bap_stream, const struct bt_iso
 		}
 		memcpy(pkt_info.buf, buf->data, buf->len);
 		int ret = k_msgq_put(&recv_pkt_msgq_r, &pkt_info, K_NO_WAIT);
-		if (ret != 0 && ret != -ENOMSG) {
+		if (ret == -ENOMSG) {
+			/* Queue full: drop the oldest packet to make room for the newest */
 			printk("R: MsgQ full: %d\n", ret);
 			k_msgq_get(&recv_pkt_msgq_r, &dummy_pkt_info, K_NO_WAIT);
 			k_msgq_put(&recv_pkt_msgq_r, &pkt_info, K_NO_WAIT);
@@ -593,18 +595,26 @@ static void stream_recv_cb(struct bt_bap_stream *bap_stream, const struct bt_iso
 	struct recv_pkt_info pkt_info_l = {0};
 	struct recv_pkt_info pkt_info_r = {0};
 	if (k_msgq_num_used_get(&recv_pkt_msgq_l) >= JITTER_BUFFER_CHECK || k_msgq_num_used_get(&recv_pkt_msgq_r) >= JITTER_BUFFER_CHECK) {
-		k_msgq_peek(&recv_pkt_msgq_l, &pkt_info_l);
-		k_msgq_peek(&recv_pkt_msgq_r, &pkt_info_r);
-		if (pkt_info_l.sdu_ref_us > pkt_info_r.sdu_ref_us && (pkt_info_l.sdu_ref_us - pkt_info_r.sdu_ref_us) > 2000) {
+		/* Only one queue has data for a mono (single BIS) source */
+		bool has_l = k_msgq_peek(&recv_pkt_msgq_l, &pkt_info_l) == 0;
+		bool has_r = k_msgq_peek(&recv_pkt_msgq_r, &pkt_info_r) == 0;
+		/* Signed difference handles the 32-bit us timestamp wrap (~71.6 min) */
+		int32_t ts_diff = (int32_t)(pkt_info_l.sdu_ref_us - pkt_info_r.sdu_ref_us);
+
+		if (has_l && has_r && ts_diff > 2000) {
 			k_msgq_get(&recv_pkt_msgq_r, &pkt_info_r, K_NO_WAIT);
-			printk("drop L %d %d\n", pkt_info_l.sdu_ref_us, pkt_info_r.sdu_ref_us);
-		} else if (pkt_info_l.sdu_ref_us < pkt_info_r.sdu_ref_us && (pkt_info_r.sdu_ref_us - pkt_info_l.sdu_ref_us) > 2000){
+			printk("drop L %u %u\n", pkt_info_l.sdu_ref_us, pkt_info_r.sdu_ref_us);
+		} else if (has_l && has_r && ts_diff < -2000) {
 			k_msgq_get(&recv_pkt_msgq_l, &pkt_info_l, K_NO_WAIT);
-			printk("drop R %d %d\n", pkt_info_l.sdu_ref_us, pkt_info_r.sdu_ref_us);
+			printk("drop R %u %u\n", pkt_info_l.sdu_ref_us, pkt_info_r.sdu_ref_us);
 		} else {
 			//printk("Sync: %d %d\n", pkt_info_l.sdu_ref_us, pkt_info_r.sdu_ref_us);
-			k_msgq_get(&recv_pkt_msgq_l, &pkt_info_l, K_NO_WAIT);
-			k_msgq_get(&recv_pkt_msgq_r, &pkt_info_r, K_NO_WAIT);
+			if (has_l) {
+				k_msgq_get(&recv_pkt_msgq_l, &pkt_info_l, K_NO_WAIT);
+			}
+			if (has_r) {
+				k_msgq_get(&recv_pkt_msgq_r, &pkt_info_r, K_NO_WAIT);
+			}
 			if (pkt_info_l.sdu_ref_us != pkt_info_r.sdu_ref_us){
 				//printk("%d %d\n", pkt_info_l.sdu_ref_us, pkt_info_r.sdu_ref_us);
 			}
@@ -641,14 +651,29 @@ static void stream_recv_cb(struct bt_bap_stream *bap_stream, const struct bt_iso
 
 
 			int err;
-			err = lc3_decode(
-				lc3_decoder[0],
-				pkt_info_l.bad_frame ? NULL : pkt_info_l.buf,
-				pkt_info_l.size, LC3_PCM_FORMAT_S16, audio_buf_test + 0, 2);
-			err = lc3_decode(
-				lc3_decoder[1],
-				pkt_info_r.bad_frame ? NULL : pkt_info_r.buf,
-				pkt_info_r.size, LC3_PCM_FORMAT_S16, audio_buf_test + 1, 2);
+			if (has_l) {
+				err = lc3_decode(
+					lc3_decoder[0],
+					pkt_info_l.bad_frame ? NULL : pkt_info_l.buf,
+					pkt_info_l.size, LC3_PCM_FORMAT_S16, audio_buf_test + 0, 2);
+			}
+			if (has_r) {
+				err = lc3_decode(
+					lc3_decoder[1],
+					pkt_info_r.bad_frame ? NULL : pkt_info_r.buf,
+					pkt_info_r.size, LC3_PCM_FORMAT_S16, audio_buf_test + 1, 2);
+			}
+
+			/* Mono: copy the received channel to the other output */
+			if (has_l && !has_r) {
+				for (int j = 0; j < 480; j++) {
+					audio_buf_test[2 * j + 1] = audio_buf_test[2 * j];
+				}
+			} else if (has_r && !has_l) {
+				for (int j = 0; j < 480; j++) {
+					audio_buf_test[2 * j] = audio_buf_test[2 * j + 1];
+				}
+			}
 
 			ring_buf_put(&i2s_tx_ring_buf, (uint8_t *)audio_buf_test, 480 * 2 * sizeof(int16_t));
 
