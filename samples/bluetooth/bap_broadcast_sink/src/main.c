@@ -80,10 +80,10 @@ static int8_t volume = DEFAULT_VOLUME;
 
 #define I2S_SAMPLES_NUM 48 // samples per 1ms block
 // 20 buffers of size I2S_SAMPLES_NUM * 2 * sizeof(uint16_t) = 10ms
-static uint16_t i2s_tx_buf_a[I2S_SAMPLES_NUM * 2] = {0}; // 2 channels, 16 bits each
-static uint16_t i2s_tx_buf_b[I2S_SAMPLES_NUM * 2] = {0}; // 2 channels, 16 bits each
-static uint16_t i2s_rx_buf_a[I2S_SAMPLES_NUM * 2] = {0}; // 2 channels, 16 bits each
-static uint16_t i2s_rx_buf_b[I2S_SAMPLES_NUM * 2] = {0}; // 2 channels, 16 bits each
+static uint16_t i2s_tx_buf_a[I2S_SAMPLES_NUM * 2] __aligned(4) = {0}; // 2 channels, 16 bits each
+static uint16_t i2s_tx_buf_b[I2S_SAMPLES_NUM * 2] __aligned(4) = {0}; // 2 channels, 16 bits each
+static uint16_t i2s_rx_buf_a[I2S_SAMPLES_NUM * 2] __aligned(4) = {0}; // 2 channels, 16 bits each
+static uint16_t i2s_rx_buf_b[I2S_SAMPLES_NUM * 2] __aligned(4) = {0}; // 2 channels, 16 bits each
 #define BUFFER_SPACE 60 // 20 buffers of size I2S_SAMPLES_NUM * 2 * sizeof(uint16_t) = 10ms
 RING_BUF_DECLARE(i2s_tx_ring_buf, I2S_SAMPLES_NUM * 2 * sizeof(uint16_t) * BUFFER_SPACE);
 
@@ -1497,9 +1497,21 @@ static int stop_adv(void)
 static int pa_sync_create(void)
 {
 	struct bt_le_per_adv_sync_param create_params = {0};
+	struct bt_le_local_features feature;
+	int err;
+
+	err = bt_le_get_local_features(&feature);
+	if (err < 0) {
+		printk("Failed to get local le features (err %d)\n", err);
+		return err;
+	}
 
 	bt_addr_le_copy(&create_params.addr, &broadcaster_addr);
-	create_params.options = BT_LE_PER_ADV_SYNC_OPT_FILTER_DUPLICATE;
+	if (BT_FEAT_LE_PER_ADV_ADI_SUPP(feature.features)) {
+		create_params.options = BT_LE_PER_ADV_SYNC_OPT_FILTER_DUPLICATE;
+	} else {
+		create_params.options = BT_LE_PER_ADV_SYNC_OPT_NONE;
+	}
 	create_params.sid = broadcaster_info.sid;
 	create_params.skip = PA_SYNC_SKIP;
 	create_params.timeout = interval_to_sync_timeout(broadcaster_info.interval);
