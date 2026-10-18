@@ -32,15 +32,17 @@
 #include <zephyr/sys_clock.h>
 #include <zephyr/toolchain.h>
 #include <zephyr/sys/ring_buffer.h>
+#include <zephyr/device.h>
 #include <zephyr/drivers/pinctrl.h>
 #include <zephyr/drivers/gpio.h>
-#include <zephyr/sys_clock.h>
 #include <zephyr/drivers/clock_control/nrf_clock_control.h>
+#include <zephyr/pm/device.h>
+#include <zephyr/sys/poweroff.h>
+#include <dk_buttons_and_leds.h>
 #include <nrfx_i2s.h>
 #include <nrfx_clock.h>
 #include <pcm_mix.h>
 #include "lc3.h"
-#include <zephyr/drivers/gpio.h>
 
 #if defined(NRF54L15_XXAA)
 #include <hal/nrf_clock.h>
@@ -71,7 +73,6 @@ static nrfx_i2s_config_t cfg = {
 	},
 };
 
-#include <dk_buttons_and_leds.h>
 #define VOLUME_MAX 0
 #define VOLUME_MIN -100
 #define DEFAULT_VOLUME -60
@@ -79,7 +80,6 @@ static nrfx_i2s_config_t cfg = {
 static int8_t volume = DEFAULT_VOLUME;
 
 #define I2S_SAMPLES_NUM 48 // samples per 1ms block
-// 20 buffers of size I2S_SAMPLES_NUM * 2 * sizeof(uint16_t) = 10ms
 static uint16_t i2s_tx_buf_a[I2S_SAMPLES_NUM * 2] __aligned(4) = {0}; // 2 channels, 16 bits each
 static uint16_t i2s_tx_buf_b[I2S_SAMPLES_NUM * 2] __aligned(4) = {0}; // 2 channels, 16 bits each
 static uint16_t i2s_rx_buf_a[I2S_SAMPLES_NUM * 2] __aligned(4) = {0}; // 2 channels, 16 bits each
@@ -206,14 +206,14 @@ void audio_i2s_start(const uint8_t *tx_buf, uint32_t *rx_buf)
 	}
 }
 
-void audio_i2s_init(void)
+int audio_i2s_init(void)
 {
 	int ret;
 
 	ret = pinctrl_apply_state(PINCTRL_DT_DEV_CONFIG_GET(I2S_NL), PINCTRL_STATE_DEFAULT);
 	if (ret != 0) {
 		printk("Failed to apply pinctrl state: %d\n", ret);
-		return;
+		return ret;
 	}
 
 	IRQ_CONNECT(DT_IRQN(I2S_NL), DT_IRQ(I2S_NL, priority), nrfx_i2s_irq_handler, &i2s_inst,
@@ -223,8 +223,10 @@ void audio_i2s_init(void)
 	ret = nrfx_i2s_init(&i2s_inst, &cfg, i2s_comp_handler);
 	if (ret != 0) {
 		printk("Failed to initialize I2S: %d\n", ret);
-		return;
+		return ret;
 	}
+
+	return 0;
 }
 
 static int clocks_start(void)
@@ -273,16 +275,10 @@ void dac_i2c_write(const struct i2c_dt_spec *dev_i2c, uint8_t reg, uint8_t value
 	ret = i2c_write_dt(dev_i2c, config, sizeof(config));
 	if (ret != 0) {
 		printk("Failed to write to I2C device address %x at reg. %x\n", dev_i2c->addr, reg);
-	} else {
-		// printk("I2C device address %x at reg. %x written successfully\n", dev_i2c->addr,
-		//        reg);
 	}
 }
 static const struct i2c_dt_spec dev_i2c = I2C_DT_SPEC_GET(I2C_NODE);
 static const struct gpio_dt_spec sw3 = GPIO_DT_SPEC_GET(DT_ALIAS(sw3), gpios);
-#include <zephyr/device.h>
-#include <zephyr/pm/device.h>
-#include <zephyr/sys/poweroff.h>
 static void led_blink_work_handler(struct k_work *work);
 static K_WORK_DELAYABLE_DEFINE(work_led_blink, led_blink_work_handler);
 static void system_off_work_handler(struct k_work *work)
@@ -295,18 +291,18 @@ static void system_off_work_handler(struct k_work *work)
 	nrfx_i2s_uninit(&i2s_inst);
 	int rc = pm_device_action_run(dev_i2c.bus, PM_DEVICE_ACTION_SUSPEND);
 	if (rc < 0) {
-		printf("Could not suspend console (%d)\n", rc);
+		printk("Could not suspend I2C bus (%d)\n", rc);
 	}
 
 	printk("ready for system off\n");
 	rc = gpio_pin_configure_dt(&sw3, GPIO_INPUT);
 	if (rc < 0) {
-		printf("Could not configure sw2 GPIO (%d)\n", rc);
+		printk("Could not configure wake-up button GPIO (%d)\n", rc);
 	}
 
 	rc = gpio_pin_interrupt_configure_dt(&sw3, GPIO_INT_LEVEL_ACTIVE);
 	if (rc < 0) {
-		printf("Could not configure sw2 GPIO interrupt (%d)\n", rc);
+		printk("Could not configure wake-up button interrupt (%d)\n", rc);
 	}
 	k_sleep(K_MSEC(500));
 	sys_poweroff();	
@@ -331,46 +327,42 @@ static void led_blink_stop()
 	gpio_pin_set_dt(&led_scanning, 0);
 }
 
+static void tlv320_set_volume(int8_t vol)
+{
+	/* Page 0: left (register 65) and right (register 66) DAC digital volume */
+	dac_i2c_write(&dev_i2c, 0x41, vol);
+	dac_i2c_write(&dev_i2c, 0x42, vol);
+}
+
 static void button_handler(uint32_t button_state, uint32_t has_changed)
 {
-	if (has_changed == 8) {
-		if (button_state & (1 << 3)) {
+	uint32_t pressed = button_state & has_changed;
+
+	if (has_changed & DK_BTN4_MSK) {
+		/* Hold button 4 for 3 s to power off */
+		if (button_state & DK_BTN4_MSK) {
 			printk("start count down for power off\n");
 			k_work_schedule(&work_system_off, K_MSEC(3000));
-		} else{	
+		} else {
 			printk("cancel count down\n");
 			k_work_cancel_delayable(&work_system_off);
 		}
 	}
 
-	if (has_changed) {
-		if ((button_state & DK_BTN1_MSK) == DK_BTN1_MSK) {
-			
-			volume += VOLUME_STEP;
-			if (volume >= VOLUME_MAX) {
-				volume = VOLUME_MAX;
-			}
-			printk("Button1 pressed, volume = %d\n", volume);
-			dac_i2c_write(&dev_i2c, 0x41, volume);
-			dac_i2c_write(&dev_i2c, 0x42, volume);
-		}
-		if ((button_state & DK_BTN2_MSK) == DK_BTN2_MSK) {
-			
-			volume -= VOLUME_STEP;
-			if (volume <= VOLUME_MIN) {
-				volume = VOLUME_MIN;
-			}
-			printk("Button2 pressed, volume = %d\n", volume);
-			dac_i2c_write(&dev_i2c, 0x41, volume);
-			dac_i2c_write(&dev_i2c, 0x42, volume);			
-		}
-		if ((button_state & DK_BTN3_MSK) == DK_BTN3_MSK) {
-			printk("button3 pressed\n");
-		}
-		if ((button_state & DK_BTN4_MSK) == DK_BTN4_MSK) {
-			printk("button4 pressed\n");
-		}
-		
+	if (pressed & DK_BTN1_MSK) {
+		volume = MIN(volume + VOLUME_STEP, VOLUME_MAX);
+		printk("Button1 pressed, volume = %d\n", volume);
+		tlv320_set_volume(volume);
+	}
+
+	if (pressed & DK_BTN2_MSK) {
+		volume = MAX(volume - VOLUME_STEP, VOLUME_MIN);
+		printk("Button2 pressed, volume = %d\n", volume);
+		tlv320_set_volume(volume);
+	}
+
+	if (pressed & DK_BTN3_MSK) {
+		printk("button3 pressed\n");
 	}
 }
 
@@ -424,8 +416,7 @@ void tlv320_setup(void)
 
 	dac_i2c_write(&dev_i2c, 0x00, 0x00);
 	dac_i2c_write(&dev_i2c, 0x3F, 0xD4);
-	dac_i2c_write(&dev_i2c, 0x41, DEFAULT_VOLUME);
-	dac_i2c_write(&dev_i2c, 0x42, DEFAULT_VOLUME);
+	tlv320_set_volume(DEFAULT_VOLUME);
 	dac_i2c_write(&dev_i2c, 0x40, 0x00);
 	dac_i2c_write(&dev_i2c, 0x00, 0x00);
 }
@@ -515,8 +506,6 @@ static void stream_disconnected_cb(struct bt_bap_stream *bap_stream, uint8_t rea
 		printk("Failed to take sem_stream_connected: %d\n", err);
 	}
 }
-#include "audio/bap_endpoint.h"
-#include "audio/bap_iso.h"
 static void stream_started_cb(struct bt_bap_stream *bap_stream)
 {
 	printk("Stream %p started\n", bap_stream);
@@ -958,11 +947,6 @@ static void broadcast_sink_started_cb(struct bt_bap_broadcast_sink *sink)
 	printk("Broadcast sink %p started\n", sink);
 
 	big_synced = true;
-	//struct bt_iso_info bt_iso_info_test;
-	//bt_iso_chan_get_info(sink->bis[0].chan, &bt_iso_info_test);
-	//printk("latency = %d\n", bt_iso_info_test.sync_receiver.latency);
-
-
 	k_sem_give(&sem_big_synced);
 }
 
@@ -1819,7 +1803,12 @@ int main(void)
 	gpio_pin_configure_dt(&led_scanning, GPIO_OUTPUT);
 	gpio_pin_configure_dt(&rst, GPIO_OUTPUT);
 
-	clocks_start();
+	err = clocks_start();
+	if (err) {
+		printk("Clock start failed (err %d)\n", err);
+		return 0;
+	}
+
 	gpio_pin_set_dt(&rst, 0); // Reset high
 	k_sleep(K_MSEC(1000));	  // Wait for reset to take effect
 	gpio_pin_set_dt(&rst, 1); // Reset high
@@ -1831,7 +1820,11 @@ int main(void)
 	}
 	tlv320_setup();
 
-	audio_i2s_init();
+	err = audio_i2s_init();
+	if (err) {
+		printk("I2S init failed (err %d)\n", err);
+		return 0;
+	}
 
 	audio_i2s_start((uint8_t *)i2s_tx_buf_a, (uint32_t *)i2s_rx_buf_a);
 	audio_i2s_set_next_buf((const uint8_t *)i2s_tx_buf_b, (uint32_t *)i2s_rx_buf_b);
