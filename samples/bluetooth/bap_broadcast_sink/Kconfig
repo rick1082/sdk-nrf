@@ -84,8 +84,9 @@ config INFO_REPORTING_INTERVAL
 	int "Number of SDUs received between each information report"
 	default 1000
 	help
-	  Determines how often information about received data is logged.
-	  Set to 0 to disable reporting.
+	  Determines how often receive statistics are logged, counted in SDUs
+	  received on all streams together. With two BISes and 10 ms SDUs,
+	  200 gives about one report per second. Set to 0 to disable reporting.
 
 # Source common USB sample options used to initialize new experimental USB device stack.
 # The scope of these options is limited to USB samples in project tree,

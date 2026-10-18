@@ -87,6 +87,9 @@ static uint16_t i2s_rx_buf_b[I2S_SAMPLES_NUM * 2] __aligned(4) = {0}; // 2 chann
 #define I2S_BLOCK_BYTES (I2S_SAMPLES_NUM * 2 * sizeof(uint16_t)) /* One 1 ms I2S block */
 #define BUFFER_SPACE 60 // 60 I2S blocks = 60 ms
 RING_BUF_DECLARE(i2s_tx_ring_buf, I2S_BLOCK_BYTES * BUFFER_SPACE);
+/* I2S blocks not completely filled from the ring buffer, counted in the I2S ISR */
+static atomic_t i2s_underrun_cnt;
+
 /* A new stream starts playing only once the ring buffer holds i2s_prime_bytes: the level drift
  * control aims for (DRIFT_FILL_MID_PCT, half the ring) plus one ISO interval of audio, set by
  * i2s_prime_setup(). After the first interval has played, the fill bottoms out at the target.
@@ -205,6 +208,7 @@ static void i2s_comp_handler(nrfx_i2s_buffers_t const *released_bufs, uint32_t s
 	/* On underrun, keep what was read and fill only the rest with silence */
 	read = ring_buf_get(&i2s_tx_ring_buf, (uint8_t *)tx_buf, I2S_BLOCK_BYTES);
 	if (read < I2S_BLOCK_BYTES) {
+		atomic_inc(&i2s_underrun_cnt);
 		memset((uint8_t *)tx_buf + read, 0, I2S_BLOCK_BYTES - read);
 	}
 
@@ -508,6 +512,39 @@ static uint8_t sink_broadcast_code[BT_ISO_BROADCAST_CODE_SIZE];
 static int stop_adv(void);
 static uint8_t get_stream_count(uint32_t bitfield);
 
+/* ISO receive statistics, printed every CONFIG_INFO_REPORTING_INTERVAL received SDUs (all
+ * streams together). The counts cover the time since the previous report.
+ */
+struct rx_stream_stats {
+	uint32_t rx;      /* SDUs delivered by the host */
+	uint32_t valid;   /* Valid SDUs with data */
+	uint32_t empty;   /* Valid SDUs without data */
+	uint32_t lost;    /* SDUs reported lost by the controller */
+	uint32_t error;   /* SDUs reported with errors */
+	uint32_t no_ts;   /* SDUs without a timestamp */
+	uint32_t missing; /* SDUs never delivered (gaps in seq_num) */
+	uint32_t dup;     /* Repeated seq_num */
+	uint32_t ooo;     /* seq_num went backwards */
+};
+
+static struct {
+	struct rx_stream_stats stream[CONFIG_BT_BAP_BROADCAST_SNK_STREAM_COUNT];
+	uint32_t qfull[2];  /* Oldest packet dropped because the L/R queue was full */
+	uint32_t drop[2];   /* Packet dropped from the L/R queue to realign L and R */
+	uint32_t decoded;   /* Frames decoded and written to the I2S ring buffer */
+	uint32_t mono;      /* Frames decoded with only one of L/R available */
+	uint32_t wait[2];   /* Decodes held back because the L/R queue was empty (stereo) */
+	uint32_t plc[2];    /* L/R frames concealed by LC3: lost SDUs and undecodable data */
+	uint32_t ring_full; /* Decoded frames dropped because the I2S ring buffer was full */
+	uint32_t sdu_cnt;   /* SDUs since the last report */
+} rx_stats;
+
+/* Last seq_num per stream, to find SDUs that were never delivered */
+static struct {
+	uint16_t seq_num;
+	bool valid;
+} rx_last_seq[CONFIG_BT_BAP_BROADCAST_SNK_STREAM_COUNT];
+
 static void stream_connected_cb(struct bt_bap_stream *bap_stream)
 {
 	printk("Stream %p connected\n", bap_stream);
@@ -528,7 +565,17 @@ static void stream_disconnected_cb(struct bt_bap_stream *bap_stream, uint8_t rea
 }
 static void stream_started_cb(struct bt_bap_stream *bap_stream)
 {
+	int stream = stream_num_get(bap_stream);
+
 	printk("Stream %p started\n", bap_stream);
+
+	if (stream >= 0) {
+		rx_last_seq[stream].valid = false;
+	}
+
+	/* Count from the stream start, not the I2S underruns while idle */
+	memset(&rx_stats, 0, sizeof(rx_stats));
+	(void)atomic_clear(&i2s_underrun_cnt);
 
 	/* Buffer i2s_prime_bytes before playing, see i2s_comp_handler() */
 	(void)atomic_clear(&i2s_primed);
@@ -540,9 +587,14 @@ static void stream_started_cb(struct bt_bap_stream *bap_stream)
 
 static void stream_stopped_cb(struct bt_bap_stream *bap_stream, uint8_t reason)
 {
+	int stream = stream_num_get(bap_stream);
 	int err;
 
 	printk("Stream %p stopped with reason 0x%02X\n", bap_stream, reason);
+
+	if (stream >= 0) {
+		rx_last_seq[stream].valid = false;
+	}
 
 	err = k_sem_take(&sem_stream_started, K_NO_WAIT);
 	if (err != 0) {
@@ -651,6 +703,8 @@ static uint32_t i2s_ring_fill_pct(void)
 /* Lowest fill (%) in the current ISO interval and frames decoded in it, see below */
 static uint32_t drift_fill_min = UINT32_MAX;
 static uint8_t drift_frame_cnt;
+/* Fill (%) drift control last decided on, for the statistics report */
+static uint32_t drift_fill_last;
 
 static void drift_control_update(void)
 {
@@ -676,6 +730,7 @@ static void drift_control_update(void)
 	}
 
 	fill_pct = drift_fill_min;
+	drift_fill_last = fill_pct;
 	drift_fill_min = UINT32_MAX;
 	drift_frame_cnt = 0U;
 
@@ -722,9 +777,86 @@ static void recv_pkt_enqueue(uint8_t chan, const struct recv_pkt_info *pkt_info)
 		struct recv_pkt_info oldest;
 
 		/* Queue full: drop the oldest packet to make room for the newest */
+		rx_stats.qfull[chan]++;
 		printk("%c: MsgQ full\n", chan == 0U ? 'L' : 'R');
 		(void)k_msgq_get(msgq, &oldest, K_NO_WAIT);
 		(void)k_msgq_put(msgq, pkt_info, K_NO_WAIT);
+	}
+}
+
+static void rx_stats_report(void)
+{
+	static const char *const drift_name[] = {
+		[DRIFT_NOMINAL] = "nominal",
+		[DRIFT_FAST] = "fast",
+		[DRIFT_SLOW] = "slow",
+	};
+
+	for (size_t i = 0U; i < ARRAY_SIZE(rx_stats.stream); i++) {
+		const struct rx_stream_stats *st = &rx_stats.stream[i];
+
+		if (st->rx == 0U && !rx_last_seq[i].valid) {
+			continue; /* Stream not synced */
+		}
+
+		printk("RX[%zu] %c: rx %u valid %u empty %u lost %u err %u no_ts %u | "
+		       "missing %u dup %u ooo %u\n",
+		       i, stream_out_chan[i] == 0U ? 'L' : 'R', st->rx, st->valid, st->empty,
+		       st->lost, st->error, st->no_ts, st->missing, st->dup, st->ooo);
+	}
+
+	printk("OUT: decoded %u mono %u | plc L %u R %u | wait L %u R %u | realign drop L %u R %u | "
+	       "qfull L %u R %u\n",
+	       rx_stats.decoded, rx_stats.mono, rx_stats.plc[0], rx_stats.plc[1],
+	       rx_stats.wait[0], rx_stats.wait[1], rx_stats.drop[0], rx_stats.drop[1],
+	       rx_stats.qfull[0], rx_stats.qfull[1]);
+	printk("I2S: ringfull %u underrun %u | fill %u%% now, %u%% interval low | rate %s\n",
+	       rx_stats.ring_full, (uint32_t)atomic_clear(&i2s_underrun_cnt), i2s_ring_fill_pct(),
+	       drift_fill_last, drift_name[drift_state]);
+
+	memset(&rx_stats, 0, sizeof(rx_stats));
+}
+
+static void rx_stats_count(int stream, const struct bt_iso_recv_info *info, uint16_t len)
+{
+	struct rx_stream_stats *st = &rx_stats.stream[stream];
+
+	st->rx++;
+	if ((info->flags & BT_ISO_FLAGS_VALID) != 0) {
+		if (len == 0U) {
+			st->empty++;
+		} else {
+			st->valid++;
+		}
+	}
+	if ((info->flags & BT_ISO_FLAGS_LOST) != 0) {
+		st->lost++;
+	}
+	if ((info->flags & BT_ISO_FLAGS_ERROR) != 0) {
+		st->error++;
+	}
+	if ((info->flags & BT_ISO_FLAGS_TS) == 0) {
+		st->no_ts++;
+	}
+
+	if (rx_last_seq[stream].valid) {
+		uint16_t delta = (uint16_t)(info->seq_num - rx_last_seq[stream].seq_num);
+
+		if (delta == 0U) {
+			st->dup++;
+		} else if (delta >= 0x8000U) {
+			st->ooo++;
+		} else {
+			st->missing += delta - 1U;
+		}
+	}
+	rx_last_seq[stream].seq_num = info->seq_num;
+	rx_last_seq[stream].valid = true;
+
+	rx_stats.sdu_cnt++;
+	if (CONFIG_INFO_REPORTING_INTERVAL > 0 &&
+	    rx_stats.sdu_cnt >= CONFIG_INFO_REPORTING_INTERVAL) {
+		rx_stats_report();
 	}
 }
 
@@ -745,6 +877,8 @@ static void frame_play(const struct recv_pkt_info *l, const struct recv_pkt_info
 				 LC3_PCM_FORMAT_S16, audio_buf + 0, 2);
 		if (err < 0) {
 			printk("L: LC3 decode failed: %d\n", err);
+		} else if (err > 0) {
+			rx_stats.plc[0]++;
 		}
 	}
 	if (r != NULL) {
@@ -752,15 +886,19 @@ static void frame_play(const struct recv_pkt_info *l, const struct recv_pkt_info
 				 LC3_PCM_FORMAT_S16, audio_buf + 1, 2);
 		if (err < 0) {
 			printk("R: LC3 decode failed: %d\n", err);
+		} else if (err > 0) {
+			rx_stats.plc[1]++;
 		}
 	}
 
 	/* Mono: copy the received channel to the other output */
 	if (l != NULL && r == NULL) {
+		rx_stats.mono++;
 		for (int j = 0; j < pcm_frame_samples; j++) {
 			audio_buf[2 * j + 1] = audio_buf[2 * j];
 		}
 	} else if (r != NULL && l == NULL) {
+		rx_stats.mono++;
 		for (int j = 0; j < pcm_frame_samples; j++) {
 			audio_buf[2 * j] = audio_buf[2 * j + 1];
 		}
@@ -769,11 +907,13 @@ static void frame_play(const struct recv_pkt_info *l, const struct recv_pkt_info
 	/* Drop the whole frame rather than writing part of it when the buffer is full */
 	frame_bytes = pcm_frame_samples * 2 * sizeof(int16_t);
 	if (ring_buf_space_get(&i2s_tx_ring_buf) < frame_bytes) {
+		rx_stats.ring_full++;
 		printk("I2S ring buffer full, frame dropped\n");
 		return;
 	}
 
 	(void)ring_buf_put(&i2s_tx_ring_buf, (uint8_t *)audio_buf, frame_bytes);
+	rx_stats.decoded++;
 }
 
 static void stream_recv_cb(struct bt_bap_stream *bap_stream, const struct bt_iso_recv_info *info,
@@ -792,6 +932,8 @@ static void stream_recv_cb(struct bt_bap_stream *bap_stream, const struct bt_iso
 	if (stream < 0) {
 		return;
 	}
+
+	rx_stats_count(stream, info, buf->len);
 
 	pkt_info.sdu_ref_us = info->ts;
 	pkt_info.has_ts = (info->flags & BT_ISO_FLAGS_TS) != 0;
@@ -832,6 +974,7 @@ static void stream_recv_cb(struct bt_bap_stream *bap_stream, const struct bt_iso
 	 * packet alone.
 	 */
 	if (has_l != has_r && synced_stream_cnt > 1U) {
+		rx_stats.wait[has_l ? 1 : 0]++;
 		return;
 	}
 
@@ -844,6 +987,7 @@ static void stream_recv_cb(struct bt_bap_stream *bap_stream, const struct bt_iso
 		if (ts_diff > LR_SYNC_MAX_DIFF_US) {
 			/* R packet is older than L: drop it */
 			(void)k_msgq_get(&recv_pkt_msgq_r, &pkt_info_r, K_NO_WAIT);
+			rx_stats.drop[1]++;
 			printk("drop R %u %u %d\n", pkt_info_l.sdu_ref_us, pkt_info_r.sdu_ref_us,
 			       (int)ts_diff);
 			return;
@@ -852,6 +996,7 @@ static void stream_recv_cb(struct bt_bap_stream *bap_stream, const struct bt_iso
 		if (ts_diff < -LR_SYNC_MAX_DIFF_US) {
 			/* L packet is older than R: drop it */
 			(void)k_msgq_get(&recv_pkt_msgq_l, &pkt_info_l, K_NO_WAIT);
+			rx_stats.drop[0]++;
 			printk("drop L %u %u %d\n", pkt_info_l.sdu_ref_us, pkt_info_r.sdu_ref_us,
 			       (int)ts_diff);
 			return;
@@ -1058,7 +1203,7 @@ static void base_recv_cb(struct bt_bap_broadcast_sink *sink, const struct bt_bap
 	k_sem_give(&sem_base_received);
 }
 
-/* Latest BIGInfo of the source being synced, saved in syncable_cb() for main() */
+/* Latest BIGInfo of the source being synced, saved in syncable_cb() and printed by main() */
 static struct bt_iso_biginfo big_info;
 
 static void syncable_cb(struct bt_bap_broadcast_sink *sink, const struct bt_iso_biginfo *biginfo)
@@ -1864,6 +2009,22 @@ static uint32_t select_bis_sync_bitfield(struct base_data *base_sg_data,
 	return result;
 }
 
+static void big_info_print(void)
+{
+	uint32_t iso_interval_us = BT_CONN_INTERVAL_TO_US(big_info.iso_interval);
+
+	printk("BIG: ISO interval %u us (%u x 1.25 ms), SDU interval %u us, %u SDUs per ISO "
+	       "interval\n",
+	       iso_interval_us, big_info.iso_interval, big_info.sdu_interval,
+	       big_info.sdu_interval > 0U ? DIV_ROUND_UP(iso_interval_us, big_info.sdu_interval)
+					  : 0U);
+	printk("BIG: %u BIS, NSE %u, BN %u, IRC %u, PTO %u, max PDU %u, max SDU %u, PHY %u, "
+	       "%s\n",
+	       big_info.num_bis, big_info.sub_evt_count, big_info.burst_number,
+	       big_info.rep_count, big_info.offset, big_info.max_pdu, big_info.max_sdu,
+	       big_info.phy, big_info.framing ? "framed" : "unframed");
+}
+
 /* Priming level for the next stream: drift-control target plus one ISO interval of audio,
  * kept one frame below the ring size so the frame that completes it still fits.
  */
@@ -2115,6 +2276,8 @@ wait_for_pa_sync:
 			printk("sem_syncable timed out, resetting\n");
 			continue;
 		}
+
+		big_info_print();
 
 		/* No stream is running yet, so the jitter queues can be resized for this BIG */
 		if (big_info.sdu_interval > 0U) {
