@@ -87,6 +87,16 @@ static uint16_t i2s_rx_buf_b[I2S_SAMPLES_NUM * 2] __aligned(4) = {0}; // 2 chann
 #define I2S_BLOCK_BYTES (I2S_SAMPLES_NUM * 2 * sizeof(uint16_t)) /* One 1 ms I2S block */
 #define BUFFER_SPACE 60 // 60 I2S blocks = 60 ms
 RING_BUF_DECLARE(i2s_tx_ring_buf, I2S_BLOCK_BYTES * BUFFER_SPACE);
+/* A new stream starts playing only once the ring buffer holds i2s_prime_bytes: the level drift
+ * control aims for (DRIFT_FILL_MID_PCT, half the ring) plus one ISO interval of audio, set by
+ * i2s_prime_setup(). After the first interval has played, the fill bottoms out at the target.
+ * Without priming, playback starts from an almost empty buffer, which underruns until drift
+ * control slowly fills it.
+ */
+#define I2S_PRIME_TARGET_BYTES (I2S_BLOCK_BYTES * BUFFER_SPACE / 2)
+static uint32_t i2s_prime_bytes = I2S_PRIME_TARGET_BYTES;
+/* Cleared at stream start, set by the I2S ISR once i2s_prime_bytes are buffered */
+static atomic_t i2s_primed;
 
 #define MAX_SAMPLE_RATE	      48000
 #define MAX_FRAME_DURATION_US 10000
@@ -180,6 +190,16 @@ static void i2s_comp_handler(nrfx_i2s_buffers_t const *released_bufs, uint32_t s
 		rx_buf = i2s_rx_buf_b;
 	} else {
 		return;
+	}
+
+	/* Play silence, without consuming, until a new stream has buffered i2s_prime_bytes */
+	if (!atomic_get(&i2s_primed)) {
+		if (ring_buf_size_get(&i2s_tx_ring_buf) < i2s_prime_bytes) {
+			memset(tx_buf, 0, I2S_BLOCK_BYTES);
+			audio_i2s_set_next_buf((const uint8_t *)tx_buf, (uint32_t *)rx_buf);
+			return;
+		}
+		atomic_set(&i2s_primed, 1);
 	}
 
 	/* On underrun, keep what was read and fill only the rest with silence */
@@ -510,6 +530,9 @@ static void stream_started_cb(struct bt_bap_stream *bap_stream)
 {
 	printk("Stream %p started\n", bap_stream);
 
+	/* Buffer i2s_prime_bytes before playing, see i2s_comp_handler() */
+	(void)atomic_clear(&i2s_primed);
+
 	k_sem_give(&sem_stream_started);
 	gpio_pin_set_dt(&led_streaming, 1);
 	led_blink_stop();
@@ -559,6 +582,7 @@ static struct k_msgq recv_pkt_msgq_l;
 static struct k_msgq recv_pkt_msgq_r;
 static uint8_t jitter_buffer_size;
 static uint8_t jitter_buffer_check;
+static uint8_t jitter_buffer_sdus = JITTER_BUFFER_DEFAULT; /* SDUs per ISO interval */
 
 /* Size both queues for sdus_per_interval SDUs per ISO interval. Must only be called while no
  * stream is running, i.e. before bt_bap_broadcast_sink_sync().
@@ -574,6 +598,7 @@ static void jitter_buffer_setup(uint32_t sdus_per_interval)
 
 	jitter_buffer_size = size;
 	jitter_buffer_check = MIN(sdus_per_interval, size);
+	jitter_buffer_sdus = MIN(sdus_per_interval, UINT8_MAX);
 	k_msgq_init(&recv_pkt_msgq_l, recv_pkt_msgq_l_buf, sizeof(struct recv_pkt_info), size);
 	k_msgq_init(&recv_pkt_msgq_r, recv_pkt_msgq_r_buf, sizeof(struct recv_pkt_info), size);
 }
@@ -611,16 +636,48 @@ static void tlv320_set_pll_d(uint16_t d)
 /* Adjust the DAC sample rate to keep the I2S ring buffer around half full. The PLL is only
  * written when the rate changes.
  */
+static enum drift_state {
+	DRIFT_NOMINAL,
+	DRIFT_FAST,
+	DRIFT_SLOW,
+} drift_state = DRIFT_NOMINAL;
+
+static uint32_t i2s_ring_fill_pct(void)
+{
+	return 100U - (ring_buf_space_get(&i2s_tx_ring_buf) * 100U /
+		       ring_buf_capacity_get(&i2s_tx_ring_buf));
+}
+
+/* Lowest fill (%) in the current ISO interval and frames decoded in it, see below */
+static uint32_t drift_fill_min = UINT32_MAX;
+static uint8_t drift_frame_cnt;
+
 static void drift_control_update(void)
 {
-	static enum {
-		DRIFT_NOMINAL,
-		DRIFT_FAST,
-		DRIFT_SLOW,
-	} state = DRIFT_NOMINAL;
-	uint32_t fill_pct = 100U - (ring_buf_space_get(&i2s_tx_ring_buf) * 100U /
-				    ring_buf_capacity_get(&i2s_tx_ring_buf));
+	enum drift_state state = drift_state;
 	int new_state = state;
+	uint32_t fill_pct;
+
+	/* The fill only rises while the I2S ISR is priming; nothing to correct yet */
+	if (!atomic_get(&i2s_primed)) {
+		drift_fill_min = UINT32_MAX;
+		drift_frame_cnt = 0U;
+		return;
+	}
+
+	/* Each decoded frame adds 10 ms and the DAC drains it between ISO intervals, so with N
+	 * SDUs per interval the fill is a sawtooth N frames high. Decide once per interval, on
+	 * its lowest point (just before the interval's first frame), so the rate does not flip
+	 * inside every interval.
+	 */
+	drift_fill_min = MIN(drift_fill_min, i2s_ring_fill_pct());
+	if (++drift_frame_cnt < jitter_buffer_sdus) {
+		return;
+	}
+
+	fill_pct = drift_fill_min;
+	drift_fill_min = UINT32_MAX;
+	drift_frame_cnt = 0U;
 
 	switch (state) {
 	case DRIFT_NOMINAL:
@@ -647,6 +704,7 @@ static void drift_control_update(void)
 	}
 
 	state = new_state;
+	drift_state = state;
 	if (state == DRIFT_FAST) {
 		tlv320_set_pll_d(TLV320_PLL_D_FAST);
 	} else if (state == DRIFT_SLOW) {
@@ -1806,6 +1864,18 @@ static uint32_t select_bis_sync_bitfield(struct base_data *base_sg_data,
 	return result;
 }
 
+/* Priming level for the next stream: drift-control target plus one ISO interval of audio,
+ * kept one frame below the ring size so the frame that completes it still fits.
+ */
+static void i2s_prime_setup(void)
+{
+	uint32_t frame_bytes = pcm_frame_samples * 2 * sizeof(int16_t);
+	uint32_t max = ring_buf_capacity_get(&i2s_tx_ring_buf) - frame_bytes;
+
+	i2s_prime_bytes = MIN(I2S_PRIME_TARGET_BYTES + jitter_buffer_sdus * frame_bytes, max);
+	printk("I2S: playback starts after %u ms buffered\n", i2s_prime_bytes / I2S_BLOCK_BYTES);
+}
+
 /* Returns the subgroup that contains all BISes in bis_bitfield, or NULL */
 static const struct base_subgroup_data *subgroup_get(const struct base_data *data,
 						     uint32_t bis_bitfield)
@@ -2093,6 +2163,7 @@ wait_for_pa_sync:
 		}
 
 		stream_out_chan_set(sync_subgroup, sync_bitfield);
+		i2s_prime_setup();
 
 		stream_count = get_stream_count(sync_bitfield);
 
