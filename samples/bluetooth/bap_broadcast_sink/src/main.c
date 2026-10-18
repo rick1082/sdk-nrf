@@ -84,8 +84,9 @@ static uint16_t i2s_tx_buf_a[I2S_SAMPLES_NUM * 2] __aligned(4) = {0}; // 2 chann
 static uint16_t i2s_tx_buf_b[I2S_SAMPLES_NUM * 2] __aligned(4) = {0}; // 2 channels, 16 bits each
 static uint16_t i2s_rx_buf_a[I2S_SAMPLES_NUM * 2] __aligned(4) = {0}; // 2 channels, 16 bits each
 static uint16_t i2s_rx_buf_b[I2S_SAMPLES_NUM * 2] __aligned(4) = {0}; // 2 channels, 16 bits each
-#define BUFFER_SPACE 60 // 20 buffers of size I2S_SAMPLES_NUM * 2 * sizeof(uint16_t) = 10ms
-RING_BUF_DECLARE(i2s_tx_ring_buf, I2S_SAMPLES_NUM * 2 * sizeof(uint16_t) * BUFFER_SPACE);
+#define I2S_BLOCK_BYTES (I2S_SAMPLES_NUM * 2 * sizeof(uint16_t)) /* One 1 ms I2S block */
+#define BUFFER_SPACE 60 // 60 I2S blocks = 60 ms
+RING_BUF_DECLARE(i2s_tx_ring_buf, I2S_BLOCK_BYTES * BUFFER_SPACE);
 
 #define MAX_SAMPLE_RATE	      48000
 #define MAX_FRAME_DURATION_US 10000
@@ -163,27 +164,31 @@ void audio_i2s_set_next_buf(const uint8_t *tx_buf, uint32_t *rx_buf)
 
 static void i2s_comp_handler(nrfx_i2s_buffers_t const *released_bufs, uint32_t status)
 {
-	int ret;
+	uint16_t *tx_buf;
+	uint16_t *rx_buf;
+	uint32_t read;
 
-	if (status == NRFX_I2S_STATUS_NEXT_BUFFERS_NEEDED) {
-		if ((uint16_t *)released_bufs->p_tx_buffer == i2s_tx_buf_a) {
-			ret = ring_buf_get(&i2s_tx_ring_buf, (uint8_t *)i2s_tx_buf_a,
-					   I2S_SAMPLES_NUM * 2 * sizeof(uint16_t));
-			if (ret != 192) {
-				memset(i2s_tx_buf_a, 0, 192);
-			}
-			audio_i2s_set_next_buf((const uint8_t *)i2s_tx_buf_a,
-					       (uint32_t *)i2s_rx_buf_a);
-		} else if ((uint16_t *)released_bufs->p_tx_buffer == i2s_tx_buf_b) {
-			ret = ring_buf_get(&i2s_tx_ring_buf, (uint8_t *)i2s_tx_buf_b,
-					   I2S_SAMPLES_NUM * 2 * sizeof(uint16_t));
-			if (ret != 192) {
-				memset(i2s_tx_buf_b, 0, 192);
-			}
-			audio_i2s_set_next_buf((const uint8_t *)i2s_tx_buf_b,
-					       (uint32_t *)i2s_rx_buf_b);
-		}
+	if (status != NRFX_I2S_STATUS_NEXT_BUFFERS_NEEDED || released_bufs == NULL) {
+		return;
 	}
+
+	if ((uint16_t *)released_bufs->p_tx_buffer == i2s_tx_buf_a) {
+		tx_buf = i2s_tx_buf_a;
+		rx_buf = i2s_rx_buf_a;
+	} else if ((uint16_t *)released_bufs->p_tx_buffer == i2s_tx_buf_b) {
+		tx_buf = i2s_tx_buf_b;
+		rx_buf = i2s_rx_buf_b;
+	} else {
+		return;
+	}
+
+	/* On underrun, keep what was read and fill only the rest with silence */
+	read = ring_buf_get(&i2s_tx_ring_buf, (uint8_t *)tx_buf, I2S_BLOCK_BYTES);
+	if (read < I2S_BLOCK_BYTES) {
+		memset((uint8_t *)tx_buf + read, 0, I2S_BLOCK_BYTES - read);
+	}
+
+	audio_i2s_set_next_buf((const uint8_t *)tx_buf, (uint32_t *)rx_buf);
 }
 
 void audio_i2s_start(const uint8_t *tx_buf, uint32_t *rx_buf)
@@ -426,7 +431,7 @@ void tlv320_setup(void)
 }
 
 
-uint8_t stream_num_get(struct bt_bap_stream * stream)
+static int stream_num_get(struct bt_bap_stream *stream)
 {
 	for (int i = 0; i < CONFIG_BT_BAP_BROADCAST_SNK_STREAM_COUNT; i++) {
 		if (bap_streams_p[i] == stream) {
@@ -537,13 +542,11 @@ static void stream_stopped_cb(struct bt_bap_stream *bap_stream, uint8_t reason)
 
 struct recv_pkt_info {
 	uint32_t sdu_ref_us;
-	uint32_t recv_frame_ts_us;
-	uint8_t channel;
-	bool bad_frame;
-	uint8_t size;
-	uint8_t desired_data_size;
+	bool has_ts;    /* sdu_ref_us is valid (BT_ISO_FLAGS_TS) */
+	bool bad_frame; /* Lost or invalid SDU, decoded with packet loss concealment */
+	uint16_t size;
 	uint8_t buf[CONFIG_BT_ISO_RX_MTU];
-} __packed;
+};
 
 
 #define JITTER_BUFFER_SIZE 6
@@ -551,148 +554,201 @@ struct recv_pkt_info {
 K_MSGQ_DEFINE(recv_pkt_msgq_l, sizeof(struct recv_pkt_info), JITTER_BUFFER_SIZE, 4);
 K_MSGQ_DEFINE(recv_pkt_msgq_r, sizeof(struct recv_pkt_info), JITTER_BUFFER_SIZE, 4);
 
+/* Max SDU timestamp difference between L and R packets that are played together */
+#define LR_SYNC_MAX_DIFF_US 2000
+
+BUILD_ASSERT(CONFIG_BT_BAP_BROADCAST_SNK_STREAM_COUNT <= 2,
+	     "Only a left and a right output are supported");
+
+/* Output channel of each synced stream (0 = left, 1 = right), indexed like bap_streams_p */
+static uint8_t stream_out_chan[CONFIG_BT_BAP_BROADCAST_SNK_STREAM_COUNT];
+
+/* TLV320 PLL D values that set the DAC sample rate */
+#define TLV320_PLL_D_FAST    3802 /* 48037.5 Hz */
+#define TLV320_PLL_D_NOMINAL 3760 /* 48000 Hz */
+#define TLV320_PLL_D_SLOW    3718 /* 47962.5 Hz */
+
+/* I2S ring buffer fill levels (percent) for drift control. The DAC rate changes when the fill
+ * leaves the LOW-HIGH band, and returns to nominal once the fill is back at MID.
+ */
+#define DRIFT_FILL_HIGH_PCT 55
+#define DRIFT_FILL_LOW_PCT  45
+#define DRIFT_FILL_MID_PCT  50
+
+static void tlv320_set_pll_d(uint16_t d)
+{
+	/* Page 0: PLL D-value MSB (register 7) and LSB (register 8) */
+	dac_i2c_write(&dev_i2c, 0x07, (d >> 8) & 0x3F);
+	dac_i2c_write(&dev_i2c, 0x08, d & 0xFF);
+}
+
+/* Adjust the DAC sample rate to keep the I2S ring buffer around half full. The PLL is only
+ * written when the rate changes.
+ */
+static void drift_control_update(void)
+{
+	static enum {
+		DRIFT_NOMINAL,
+		DRIFT_FAST,
+		DRIFT_SLOW,
+	} state = DRIFT_NOMINAL;
+	uint32_t fill_pct = 100U - (ring_buf_space_get(&i2s_tx_ring_buf) * 100U /
+				    ring_buf_capacity_get(&i2s_tx_ring_buf));
+	int new_state = state;
+
+	switch (state) {
+	case DRIFT_NOMINAL:
+		if (fill_pct > DRIFT_FILL_HIGH_PCT) {
+			new_state = DRIFT_FAST;
+		} else if (fill_pct < DRIFT_FILL_LOW_PCT) {
+			new_state = DRIFT_SLOW;
+		}
+		break;
+	case DRIFT_FAST:
+		if (fill_pct <= DRIFT_FILL_MID_PCT) {
+			new_state = DRIFT_NOMINAL;
+		}
+		break;
+	case DRIFT_SLOW:
+		if (fill_pct >= DRIFT_FILL_MID_PCT) {
+			new_state = DRIFT_NOMINAL;
+		}
+		break;
+	}
+
+	if (new_state == state) {
+		return;
+	}
+
+	state = new_state;
+	if (state == DRIFT_FAST) {
+		tlv320_set_pll_d(TLV320_PLL_D_FAST);
+	} else if (state == DRIFT_SLOW) {
+		tlv320_set_pll_d(TLV320_PLL_D_SLOW);
+	} else {
+		tlv320_set_pll_d(TLV320_PLL_D_NOMINAL);
+	}
+}
+
+static void recv_pkt_enqueue(struct k_msgq *msgq, const struct recv_pkt_info *pkt_info,
+			     char chan_name)
+{
+	if (k_msgq_put(msgq, pkt_info, K_NO_WAIT) == -ENOMSG) {
+		struct recv_pkt_info oldest;
+
+		/* Queue full: drop the oldest packet to make room for the newest */
+		printk("%c: MsgQ full\n", chan_name);
+		(void)k_msgq_get(msgq, &oldest, K_NO_WAIT);
+		(void)k_msgq_put(msgq, pkt_info, K_NO_WAIT);
+	}
+}
+
 static void stream_recv_cb(struct bt_bap_stream *bap_stream, const struct bt_iso_recv_info *info,
 			   struct net_buf *buf)
 {
-	static int i;
-	i++;
-	struct recv_pkt_info dummy_pkt_info = {0};
-	if (stream_num_get(bap_stream) == 0) {
-		struct recv_pkt_info pkt_info = {0};
-		pkt_info.sdu_ref_us = info->ts;
-		pkt_info.channel = 0;
-		pkt_info.size = buf->len;
-		if (buf->len == 0 || ((info->flags & BT_ISO_FLAGS_VALID) == 0)) {
-			pkt_info.bad_frame = true;
-		} else {
-			pkt_info.bad_frame = false;
-		}
-		memcpy(pkt_info.buf, buf->data, buf->len);
-		int ret = k_msgq_put(&recv_pkt_msgq_l, &pkt_info, K_NO_WAIT);
-		if (ret == -ENOMSG) {
-			/* Queue full: drop the oldest packet to make room for the newest */
-			printk("L: MsgQ full: %d\n", ret);
-			k_msgq_get(&recv_pkt_msgq_l, &dummy_pkt_info, K_NO_WAIT);
-			k_msgq_put(&recv_pkt_msgq_l, &pkt_info, K_NO_WAIT);
-			//k_msgq_purge(&recv_pkt_msgq_l);
-		}
-	} else if (stream_num_get(bap_stream) == 1) {
-		struct recv_pkt_info pkt_info = {0};
-		pkt_info.sdu_ref_us = info->ts;
-		pkt_info.channel = 1;
-		pkt_info.size = buf->len;
-		if (buf->len == 0 || ((info->flags & BT_ISO_FLAGS_VALID) == 0)) {
-			pkt_info.bad_frame = true;
-		} else {
-			pkt_info.bad_frame = false;
-		}
-		memcpy(pkt_info.buf, buf->data, buf->len);
-		int ret = k_msgq_put(&recv_pkt_msgq_r, &pkt_info, K_NO_WAIT);
-		if (ret == -ENOMSG) {
-			/* Queue full: drop the oldest packet to make room for the newest */
-			printk("R: MsgQ full: %d\n", ret);
-			k_msgq_get(&recv_pkt_msgq_r, &dummy_pkt_info, K_NO_WAIT);
-			k_msgq_put(&recv_pkt_msgq_r, &pkt_info, K_NO_WAIT);
-			//k_msgq_purge(&recv_pkt_msgq_r);
-		}
-	}
-
+	struct recv_pkt_info pkt_info = {0};
 	struct recv_pkt_info pkt_info_l = {0};
 	struct recv_pkt_info pkt_info_r = {0};
-	if (k_msgq_num_used_get(&recv_pkt_msgq_l) >= JITTER_BUFFER_CHECK || k_msgq_num_used_get(&recv_pkt_msgq_r) >= JITTER_BUFFER_CHECK) {
-		/* Only one queue has data for a mono (single BIS) source */
-		bool has_l = k_msgq_peek(&recv_pkt_msgq_l, &pkt_info_l) == 0;
-		bool has_r = k_msgq_peek(&recv_pkt_msgq_r, &pkt_info_r) == 0;
-		/* Signed difference handles the 32-bit us timestamp wrap (~71.6 min) */
+	int stream = stream_num_get(bap_stream);
+	uint32_t frame_bytes;
+	bool has_l;
+	bool has_r;
+	int err;
+
+	if (stream < 0) {
+		return;
+	}
+
+	pkt_info.sdu_ref_us = info->ts;
+	pkt_info.has_ts = (info->flags & BT_ISO_FLAGS_TS) != 0;
+	pkt_info.bad_frame = buf->len == 0 || (info->flags & BT_ISO_FLAGS_VALID) == 0;
+	pkt_info.size = buf->len;
+	memcpy(pkt_info.buf, buf->data, buf->len);
+
+	if (stream_out_chan[stream] == 0U) {
+		recv_pkt_enqueue(&recv_pkt_msgq_l, &pkt_info, 'L');
+	} else {
+		recv_pkt_enqueue(&recv_pkt_msgq_r, &pkt_info, 'R');
+	}
+
+	if (k_msgq_num_used_get(&recv_pkt_msgq_l) < JITTER_BUFFER_CHECK &&
+	    k_msgq_num_used_get(&recv_pkt_msgq_r) < JITTER_BUFFER_CHECK) {
+		return;
+	}
+
+	/* Only one queue has data for a mono (single BIS) source */
+	has_l = k_msgq_peek(&recv_pkt_msgq_l, &pkt_info_l) == 0;
+	has_r = k_msgq_peek(&recv_pkt_msgq_r, &pkt_info_r) == 0;
+
+	/* Align L and R on the SDU timestamps, unless an SDU has no timestamp (ts is then 0).
+	 * The signed difference handles the 32-bit us timestamp wrap (~71.6 min).
+	 */
+	if (has_l && has_r && pkt_info_l.has_ts && pkt_info_r.has_ts) {
 		int32_t ts_diff = (int32_t)(pkt_info_l.sdu_ref_us - pkt_info_r.sdu_ref_us);
 
-		if (has_l && has_r && ts_diff > 2000) {
-			k_msgq_get(&recv_pkt_msgq_r, &pkt_info_r, K_NO_WAIT);
-			printk("drop L %u %u\n", pkt_info_l.sdu_ref_us, pkt_info_r.sdu_ref_us);
-		} else if (has_l && has_r && ts_diff < -2000) {
-			k_msgq_get(&recv_pkt_msgq_l, &pkt_info_l, K_NO_WAIT);
-			printk("drop R %u %u\n", pkt_info_l.sdu_ref_us, pkt_info_r.sdu_ref_us);
-		} else {
-			//printk("Sync: %d %d\n", pkt_info_l.sdu_ref_us, pkt_info_r.sdu_ref_us);
-			if (has_l) {
-				k_msgq_get(&recv_pkt_msgq_l, &pkt_info_l, K_NO_WAIT);
-			}
-			if (has_r) {
-				k_msgq_get(&recv_pkt_msgq_r, &pkt_info_r, K_NO_WAIT);
-			}
-			if (pkt_info_l.sdu_ref_us != pkt_info_r.sdu_ref_us){
-				//printk("%d %d\n", pkt_info_l.sdu_ref_us, pkt_info_r.sdu_ref_us);
-			}
+		if (ts_diff > LR_SYNC_MAX_DIFF_US) {
+			/* R packet is older than L: drop it */
+			(void)k_msgq_get(&recv_pkt_msgq_r, &pkt_info_r, K_NO_WAIT);
+			printk("drop R %u %u %d\n", pkt_info_l.sdu_ref_us, pkt_info_r.sdu_ref_us,
+			       (int)ts_diff);
+			return;
+		}
 
-
-			/* Zeroed so a failed decode outputs silence instead of stack data */
-			int16_t audio_buf_test[2 * MAX_NUM_SAMPLES] = {0};
-			// LOG_INF("RX stream %p len %u", stream, buf->len);
-			uint16_t buf_size;
-			static uint16_t prev_buf_size = 0;
-
-			buf_size = ring_buf_space_get(&i2s_tx_ring_buf);
-			if (buf_size != prev_buf_size) {
-				prev_buf_size = buf_size;
-				//LOG_INF("I2S TX ring buffer space: %d bytes", buf_size);
-				int16_t buf_size_percent = buf_size * 100 / (I2S_SAMPLES_NUM * 2 * sizeof(uint16_t) * BUFFER_SPACE);
-				//LOG_INF("%d", buf_size_percent);
-				//printk("%d\n", buf_size_percent);
-				
-				if (buf_size_percent < 45) {
-					// Speed up the sampling rate to 48037.5 Hz
-					dac_i2c_write(&dev_i2c, 0x07, 0x0E); // D[13:8] for D=3802
-					dac_i2c_write(&dev_i2c, 0x08, 0xDA); // D[7:0] for D=3802
-				} else if (buf_size_percent >= 40 && buf_size_percent <= 55) {
-					// Keep the sampling rate at 48000 Hz
-					dac_i2c_write(&dev_i2c, 0x07, 0x0E); // D[13:8] for D=3760
-					dac_i2c_write(&dev_i2c, 0x08, 0xB0); // D[7:0] for D=3760
-				} else {
-					// Speed down the sampling rate to 47962.5 Hz
-					dac_i2c_write(&dev_i2c, 0x07, 0x0E); // D[13:8] for D=3718
-					dac_i2c_write(&dev_i2c, 0x08, 0x86); // D[7:0] for D=3718
-				}
-				
-			}
-
-
-			int err;
-			if (has_l) {
-				err = lc3_decode(
-					lc3_decoder[0],
-					pkt_info_l.bad_frame ? NULL : pkt_info_l.buf,
-					pkt_info_l.size, LC3_PCM_FORMAT_S16, audio_buf_test + 0, 2);
-				if (err < 0) {
-					printk("L: LC3 decode failed: %d\n", err);
-				}
-			}
-			if (has_r) {
-				err = lc3_decode(
-					lc3_decoder[1],
-					pkt_info_r.bad_frame ? NULL : pkt_info_r.buf,
-					pkt_info_r.size, LC3_PCM_FORMAT_S16, audio_buf_test + 1, 2);
-				if (err < 0) {
-					printk("R: LC3 decode failed: %d\n", err);
-				}
-			}
-
-			/* Mono: copy the received channel to the other output */
-			if (has_l && !has_r) {
-				for (int j = 0; j < pcm_frame_samples; j++) {
-					audio_buf_test[2 * j + 1] = audio_buf_test[2 * j];
-				}
-			} else if (has_r && !has_l) {
-				for (int j = 0; j < pcm_frame_samples; j++) {
-					audio_buf_test[2 * j] = audio_buf_test[2 * j + 1];
-				}
-			}
-
-			ring_buf_put(&i2s_tx_ring_buf, (uint8_t *)audio_buf_test,
-				     pcm_frame_samples * 2 * sizeof(int16_t));
-
+		if (ts_diff < -LR_SYNC_MAX_DIFF_US) {
+			/* L packet is older than R: drop it */
+			(void)k_msgq_get(&recv_pkt_msgq_l, &pkt_info_l, K_NO_WAIT);
+			printk("drop L %u %u %d\n", pkt_info_l.sdu_ref_us, pkt_info_r.sdu_ref_us,
+			       (int)ts_diff);
+			return;
 		}
 	}
-	//printk("%p, %d, %d\n", (void *)bap_stream, stream_num_get(bap_stream),info->ts);
+
+	if (has_l) {
+		(void)k_msgq_get(&recv_pkt_msgq_l, &pkt_info_l, K_NO_WAIT);
+	}
+	if (has_r) {
+		(void)k_msgq_get(&recv_pkt_msgq_r, &pkt_info_r, K_NO_WAIT);
+	}
+
+	drift_control_update();
+
+	/* Zeroed so a failed decode outputs silence instead of stack data */
+	int16_t audio_buf[2 * MAX_NUM_SAMPLES] = {0};
+
+	if (has_l) {
+		err = lc3_decode(lc3_decoder[0], pkt_info_l.bad_frame ? NULL : pkt_info_l.buf,
+				 pkt_info_l.size, LC3_PCM_FORMAT_S16, audio_buf + 0, 2);
+		if (err < 0) {
+			printk("L: LC3 decode failed: %d\n", err);
+		}
+	}
+	if (has_r) {
+		err = lc3_decode(lc3_decoder[1], pkt_info_r.bad_frame ? NULL : pkt_info_r.buf,
+				 pkt_info_r.size, LC3_PCM_FORMAT_S16, audio_buf + 1, 2);
+		if (err < 0) {
+			printk("R: LC3 decode failed: %d\n", err);
+		}
+	}
+
+	/* Mono: copy the received channel to the other output */
+	if (has_l && !has_r) {
+		for (int j = 0; j < pcm_frame_samples; j++) {
+			audio_buf[2 * j + 1] = audio_buf[2 * j];
+		}
+	} else if (has_r && !has_l) {
+		for (int j = 0; j < pcm_frame_samples; j++) {
+			audio_buf[2 * j] = audio_buf[2 * j + 1];
+		}
+	}
+
+	/* Drop the whole frame rather than writing part of it when the buffer is full */
+	frame_bytes = pcm_frame_samples * 2 * sizeof(int16_t);
+	if (ring_buf_space_get(&i2s_tx_ring_buf) < frame_bytes) {
+		printk("I2S ring buffer full, frame dropped\n");
+		return;
+	}
+
+	(void)ring_buf_put(&i2s_tx_ring_buf, (uint8_t *)audio_buf, frame_bytes);
 }
 
 static struct bt_bap_stream_ops stream_ops = {
@@ -1719,6 +1775,42 @@ static int lc3_decoders_setup(const struct base_subgroup_data *sg)
 	return 0;
 }
 
+/* True if the BIS is allocated to exactly one of front left and front right, and it is loc */
+static bool bis_is_front_location(const struct bis_audio_allocation *alloc,
+				  enum bt_audio_location loc)
+{
+	const enum bt_audio_location front_lr =
+		BT_AUDIO_LOCATION_FRONT_LEFT | BT_AUDIO_LOCATION_FRONT_RIGHT;
+
+	return alloc->valid && (alloc->value & front_lr) == loc;
+}
+
+/* Map the synced streams to the left and right outputs using the BASE channel allocation */
+static void stream_out_chan_set(const struct base_subgroup_data *sg, uint32_t bis_bitfield)
+{
+	const struct bis_audio_allocation *alloc[ARRAY_SIZE(stream_out_chan)];
+	uint8_t cnt = 0U;
+
+	/* Streams are assigned to the synced BISes in ascending BIS index order */
+	for (uint8_t idx = 1U; idx <= BT_ISO_BIS_INDEX_MAX && cnt < ARRAY_SIZE(alloc); idx++) {
+		if ((bis_bitfield & BT_ISO_BIS_INDEX_BIT(idx)) != 0U) {
+			alloc[cnt++] = &sg->audio_allocation[idx];
+		}
+	}
+
+	/* Default: first BIS to the left output, second BIS to the right output */
+	for (uint8_t i = 0U; i < ARRAY_SIZE(stream_out_chan); i++) {
+		stream_out_chan[i] = i;
+	}
+
+	if (cnt == 2U && bis_is_front_location(alloc[0], BT_AUDIO_LOCATION_FRONT_RIGHT) &&
+	    bis_is_front_location(alloc[1], BT_AUDIO_LOCATION_FRONT_LEFT)) {
+		stream_out_chan[0] = 1U;
+		stream_out_chan[1] = 0U;
+		printk("First BIS is right channel, swapping outputs\n");
+	}
+}
+
 int main(void)
 {
 	int err;
@@ -1915,6 +2007,8 @@ wait_for_pa_sync:
 			printk("Could not set up LC3 decoders, resetting\n");
 			continue;
 		}
+
+		stream_out_chan_set(sync_subgroup, sync_bitfield);
 
 		stream_count = get_stream_count(sync_bitfield);
 
