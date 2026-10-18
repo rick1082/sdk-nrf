@@ -91,8 +91,12 @@ RING_BUF_DECLARE(i2s_tx_ring_buf, I2S_SAMPLES_NUM * 2 * sizeof(uint16_t) * BUFFE
 #define MAX_FRAME_DURATION_US 10000
 #define MAX_NUM_SAMPLES	      ((MAX_FRAME_DURATION_US * MAX_SAMPLE_RATE) / USEC_PER_SEC)
 
+#define PCM_OUT_SAMPLE_RATE 48000 /* Sample rate of the I2S output to the DAC */
+
 static lc3_decoder_t lc3_decoder[2];
 static lc3_decoder_mem_48k_t lc3_decoder_mem[2];
+/* PCM samples per channel decoded from one LC3 frame, set by lc3_decoders_setup() */
+static int pcm_frame_samples = MAX_NUM_SAMPLES;
 
 BUILD_ASSERT(IS_ENABLED(CONFIG_SCAN_SELF) || IS_ENABLED(CONFIG_SCAN_OFFLOAD),
 	     "Either SCAN_SELF or SCAN_OFFLOAD must be enabled");
@@ -113,14 +117,14 @@ BUILD_ASSERT(IS_ENABLED(CONFIG_SCAN_SELF) || IS_ENABLED(CONFIG_SCAN_OFFLOAD),
 #define NAME_LEN                    sizeof(CONFIG_TARGET_BROADCAST_NAME) + 1
 #define BROADCAST_DATA_ELEMENT_SIZE sizeof(int16_t)
 
-static K_SEM_DEFINE(sem_broadcast_sink_stopped, 0U, 1U);
 static K_SEM_DEFINE(sem_connected, 0U, 1U);
 static K_SEM_DEFINE(sem_disconnected, 0U, 1U);
 static K_SEM_DEFINE(sem_broadcaster_found, 0U, 1U);
 static K_SEM_DEFINE(sem_pa_synced, 0U, 1U);
 static K_SEM_DEFINE(sem_base_received, 0U, 1U);
 static K_SEM_DEFINE(sem_syncable, 0U, 1U);
-static K_SEM_DEFINE(sem_pa_sync_lost, 0U, 1U);
+/* Given when either the PA sync or the BIG sync is lost */
+static K_SEM_DEFINE(sem_sync_lost, 0U, 1U);
 static K_SEM_DEFINE(sem_broadcast_code_received, 0U, 1U);
 static K_SEM_DEFINE(sem_pa_request, 0U, 1U);
 static K_SEM_DEFINE(sem_past_request, 0U, 1U);
@@ -142,7 +146,6 @@ static volatile bool base_received;
 static struct bt_conn *broadcast_assistant_conn;
 static struct bt_le_ext_adv *ext_adv;
 static struct bt_bap_stream bis_stream[CONFIG_BT_BAP_BROADCAST_SNK_STREAM_COUNT];
-static uint32_t configured_sampling_freq;
 
 void audio_i2s_set_next_buf(const uint8_t *tx_buf, uint32_t *rx_buf)
 {
@@ -466,6 +469,8 @@ struct base_subgroup_data {
 	uint32_t bis_index_bitfield;
 	struct bis_audio_allocation
 		audio_allocation[BT_ISO_BIS_INDEX_MAX + 1]; /* First BIS index is 1 */
+	uint32_t freq_hz;      /* LC3 sampling frequency of the subgroup */
+	uint32_t frame_dur_us; /* LC3 frame duration of the subgroup */
 };
 
 /**
@@ -620,7 +625,8 @@ static void stream_recv_cb(struct bt_bap_stream *bap_stream, const struct bt_iso
 			}
 
 
-			int16_t audio_buf_test[2 * 480];
+			/* Zeroed so a failed decode outputs silence instead of stack data */
+			int16_t audio_buf_test[2 * MAX_NUM_SAMPLES] = {0};
 			// LOG_INF("RX stream %p len %u", stream, buf->len);
 			uint16_t buf_size;
 			static uint16_t prev_buf_size = 0;
@@ -656,26 +662,33 @@ static void stream_recv_cb(struct bt_bap_stream *bap_stream, const struct bt_iso
 					lc3_decoder[0],
 					pkt_info_l.bad_frame ? NULL : pkt_info_l.buf,
 					pkt_info_l.size, LC3_PCM_FORMAT_S16, audio_buf_test + 0, 2);
+				if (err < 0) {
+					printk("L: LC3 decode failed: %d\n", err);
+				}
 			}
 			if (has_r) {
 				err = lc3_decode(
 					lc3_decoder[1],
 					pkt_info_r.bad_frame ? NULL : pkt_info_r.buf,
 					pkt_info_r.size, LC3_PCM_FORMAT_S16, audio_buf_test + 1, 2);
+				if (err < 0) {
+					printk("R: LC3 decode failed: %d\n", err);
+				}
 			}
 
 			/* Mono: copy the received channel to the other output */
 			if (has_l && !has_r) {
-				for (int j = 0; j < 480; j++) {
+				for (int j = 0; j < pcm_frame_samples; j++) {
 					audio_buf_test[2 * j + 1] = audio_buf_test[2 * j];
 				}
 			} else if (has_r && !has_l) {
-				for (int j = 0; j < 480; j++) {
+				for (int j = 0; j < pcm_frame_samples; j++) {
 					audio_buf_test[2 * j] = audio_buf_test[2 * j + 1];
 				}
 			}
 
-			ring_buf_put(&i2s_tx_ring_buf, (uint8_t *)audio_buf_test, 480 * 2 * sizeof(int16_t));
+			ring_buf_put(&i2s_tx_ring_buf, (uint8_t *)audio_buf_test,
+				     pcm_frame_samples * 2 * sizeof(int16_t));
 
 		}
 	}
@@ -741,33 +754,52 @@ static bool subgroup_get_valid_bis_indexes_cb(const struct bt_bap_base_subgroup 
 	enum bt_audio_location subgroup_chan_allocation;
 	bool subgroup_chan_allocation_available = false;
 	struct base_data *data = user_data;
-	struct base_subgroup_data *base_subgroup_bis = &data->subgroup_bis[data->subgroup_cnt];
+	struct base_subgroup_data *base_subgroup_bis;
 	struct bt_audio_codec_cfg codec_cfg;
 	int err;
 	int ret;
+
+	if (data->subgroup_cnt >= ARRAY_SIZE(data->subgroup_bis)) {
+		/* Returning false would make the whole BASE parse fail, so skip instead */
+		printk("Ignoring subgroup, only %zu supported\n", ARRAY_SIZE(data->subgroup_bis));
+		return true;
+	}
+
+	base_subgroup_bis = &data->subgroup_bis[data->subgroup_cnt];
 
 	err = bt_bap_base_subgroup_codec_to_codec_cfg(subgroup, &codec_cfg);
 	if (err != 0) {
 		printk("Could not get codec configuration: %d\n", err);
 		goto next_subgroup;
 	}
-	ret = bt_audio_codec_cfg_get_freq(&codec_cfg);
-	if (ret >= 0) {
-		ret = bt_audio_codec_cfg_freq_to_freq_hz(ret);
-		configured_sampling_freq = ret;
-	}
-	printk("------sampling freq------: %d\n", ret);
-	for (int i = 0; i < 2; i++) {
-		//if (lc3_decoder[i] == NULL) {
-			lc3_decoder[i] = lc3_setup_decoder(10000, configured_sampling_freq, 48000,
-							&lc3_decoder_mem[i]);
-		//}
 
-	}
 	if (codec_cfg.id != BT_HCI_CODING_FORMAT_LC3) {
 		printk("Only LC3 codec supported (%u)\n", codec_cfg.id);
 		goto next_subgroup;
 	}
+
+	ret = bt_audio_codec_cfg_get_freq(&codec_cfg);
+	if (ret >= 0) {
+		ret = bt_audio_codec_cfg_freq_to_freq_hz(ret);
+	}
+	if (ret < 0) {
+		printk("Could not get sampling frequency: %d\n", ret);
+		goto next_subgroup;
+	}
+	base_subgroup_bis->freq_hz = ret;
+
+	ret = bt_audio_codec_cfg_get_frame_dur(&codec_cfg);
+	if (ret >= 0) {
+		ret = bt_audio_codec_cfg_frame_dur_to_frame_dur_us(ret);
+	}
+	if (ret < 0) {
+		printk("Could not get frame duration: %d\n", ret);
+		goto next_subgroup;
+	}
+	base_subgroup_bis->frame_dur_us = ret;
+
+	printk("Subgroup %u: %u Hz, %u us frames\n", data->subgroup_cnt,
+	       base_subgroup_bis->freq_hz, base_subgroup_bis->frame_dur_us);
 
 	/* Get all BIS indexes for subgroup */
 	err = bt_bap_base_subgroup_get_bis_indexes(subgroup,
@@ -888,7 +920,7 @@ static void broadcast_sink_stopped_cb(struct bt_bap_broadcast_sink *sink, uint8_
 	k_msgq_purge(&recv_pkt_msgq_l);
 	k_msgq_purge(&recv_pkt_msgq_r);
 	big_synced = false;
-	k_sem_give(&sem_broadcast_sink_stopped);
+	k_sem_give(&sem_sync_lost);
 }
 
 static struct bt_bap_broadcast_sink_cb broadcast_sink_cbs = {
@@ -1329,7 +1361,7 @@ static void bap_pa_sync_terminated_cb(struct bt_le_per_adv_sync *sync,
 		printk("PA sync %p lost with reason 0x%02X\n", sync, info->reason);
 		pa_sync = NULL;
 
-		k_sem_give(&sem_pa_sync_lost);
+		k_sem_give(&sem_sync_lost);
 
 		if (info->reason != BT_HCI_ERR_LOCALHOST_TERM_CONN && req_recv_state != NULL) {
 			int err;
@@ -1423,6 +1455,12 @@ static int reset(void)
 	broadcaster_broadcast_id = BT_BAP_INVALID_BROADCAST_ID;
 
 	if (broadcast_sink != NULL) {
+		/* The sink can only be deleted once it is stopped (idle) */
+		err = bt_bap_broadcast_sink_stop(broadcast_sink);
+		if (err != 0 && err != -EALREADY && err != -EBADMSG) {
+			printk("Stopping broadcast sink failed (err %d)\n", err);
+		}
+
 		err = bt_bap_broadcast_sink_delete(broadcast_sink);
 		if (err) {
 			printk("Deleting broadcast sink failed (err %d)\n", err);
@@ -1434,7 +1472,7 @@ static int reset(void)
 	}
 
 	if (pa_sync != NULL) {
-		bt_le_per_adv_sync_delete(pa_sync);
+		err = bt_le_per_adv_sync_delete(pa_sync);
 		if (err) {
 			printk("Deleting PA sync failed (err %d)\n", err);
 
@@ -1448,12 +1486,11 @@ static int reset(void)
 	k_sem_reset(&sem_pa_synced);
 	k_sem_reset(&sem_base_received);
 	k_sem_reset(&sem_syncable);
-	k_sem_reset(&sem_pa_sync_lost);
+	k_sem_reset(&sem_sync_lost);
 	k_sem_reset(&sem_broadcast_code_received);
 	k_sem_reset(&sem_bis_sync_requested);
 	k_sem_reset(&sem_stream_connected);
 	k_sem_reset(&sem_stream_started);
-	k_sem_reset(&sem_broadcast_sink_stopped);
 
 	return 0;
 }
@@ -1627,28 +1664,59 @@ static uint32_t select_bis_sync_bitfield(struct base_data *base_sg_data,
 		}
 	}
 #else  /* !CONFIG_TARGET_BROADCAST_CHANNEL */
-	bool bis_sync_req_no_pref = false;
-
-	for (uint8_t i = 0; i < CONFIG_BT_BAP_BASS_MAX_SUBGROUPS; i++) {
-		if (bis_sync_req[i] != 0) {
-			if (bis_sync_req[i] == BT_BAP_BIS_SYNC_NO_PREF) {
-				bis_sync_req_no_pref = true;
-			}
-			result |=
-				bis_sync_req[i] & base_sg_data->subgroup_bis[i].bis_index_bitfield;
+	/* Sync to BISes of a single subgroup only, since the LC3 decoders are set up from
+	 * that subgroup's codec configuration
+	 */
+	for (uint8_t i = 0; i < base_sg_data->subgroup_cnt; i++) {
+		result = bis_sync_req[i] & base_sg_data->subgroup_bis[i].bis_index_bitfield;
+		if (result == 0U) {
+			continue;
 		}
-	}
 
-	if (bis_sync_req_no_pref) {
-		/** Keep the CONFIG_BT_BAP_BROADCAST_SNK_STREAM_COUNT least significant bits
-		 * of bitfield, as that is the maximum number of BISes we can sync to
-		 */
-		result = keep_n_least_significant_ones(result,
-						       CONFIG_BT_BAP_BROADCAST_SNK_STREAM_COUNT);
+		if (bis_sync_req[i] == BT_BAP_BIS_SYNC_NO_PREF) {
+			/** Keep the CONFIG_BT_BAP_BROADCAST_SNK_STREAM_COUNT least significant
+			 * bits of bitfield, as that is the maximum number of BISes we can sync to
+			 */
+			result = keep_n_least_significant_ones(
+				result, CONFIG_BT_BAP_BROADCAST_SNK_STREAM_COUNT);
+		}
+		break;
 	}
 #endif /* CONFIG_TARGET_BROADCAST_CHANNEL */
 
 	return result;
+}
+
+/* Returns the subgroup that contains all BISes in bis_bitfield, or NULL */
+static const struct base_subgroup_data *subgroup_get(const struct base_data *data,
+						     uint32_t bis_bitfield)
+{
+	for (uint8_t i = 0U; i < data->subgroup_cnt; i++) {
+		const struct base_subgroup_data *sg = &data->subgroup_bis[i];
+
+		if ((bis_bitfield & sg->bis_index_bitfield) == bis_bitfield) {
+			return sg;
+		}
+	}
+
+	return NULL;
+}
+
+static int lc3_decoders_setup(const struct base_subgroup_data *sg)
+{
+	for (size_t i = 0U; i < ARRAY_SIZE(lc3_decoder); i++) {
+		lc3_decoder[i] = lc3_setup_decoder(sg->frame_dur_us, sg->freq_hz,
+						   PCM_OUT_SAMPLE_RATE, &lc3_decoder_mem[i]);
+		if (lc3_decoder[i] == NULL) {
+			printk("Unsupported LC3 configuration: %u Hz, %u us frames\n", sg->freq_hz,
+			       sg->frame_dur_us);
+			return -EINVAL;
+		}
+	}
+
+	pcm_frame_samples = lc3_frame_samples(sg->frame_dur_us, PCM_OUT_SAMPLE_RATE);
+
+	return 0;
 }
 
 int main(void)
@@ -1678,6 +1746,7 @@ int main(void)
 	dk_buttons_init(button_handler);
 	
 	while (true) {
+		const struct base_subgroup_data *sync_subgroup;
 		uint8_t stream_count;
 		uint32_t sync_bitfield;
 		led_blink_start();
@@ -1755,9 +1824,9 @@ int main(void)
 
 		err = bt_le_scan_start(BT_LE_SCAN_ACTIVE, NULL);
 		if (err != 0 && err != -EALREADY) {
-			printk("Unable to start scan for broadcast sources: %d\n",
-			       err);
-			return 0;
+			printk("Unable to start scan for broadcast sources: %d, resetting\n", err);
+			k_sleep(K_SECONDS(1));
+			continue;
 		}
 
 		printk("Waiting for Broadcaster\n");
@@ -1835,6 +1904,18 @@ wait_for_pa_sync:
 			continue;
 		}
 
+		sync_subgroup = subgroup_get(&base_recv_data, sync_bitfield);
+		if (sync_subgroup == NULL) {
+			printk("Selected BISes are not in a single subgroup, resetting\n");
+			continue;
+		}
+
+		err = lc3_decoders_setup(sync_subgroup);
+		if (err != 0) {
+			printk("Could not set up LC3 decoders, resetting\n");
+			continue;
+		}
+
 		stream_count = get_stream_count(sync_bitfield);
 
 		printk("Syncing to broadcast with bitfield: 0x%08x, stream_count = %u\n",
@@ -1843,8 +1924,8 @@ wait_for_pa_sync:
 		err = bt_bap_broadcast_sink_sync(broadcast_sink, sync_bitfield, bap_streams_p,
 						 sink_broadcast_code);
 		if (err != 0) {
-			printk("Unable to sync to broadcast source: %d\n", err);
-			return 0;
+			printk("Unable to sync to broadcast source: %d, resetting\n", err);
+			continue;
 		}
 
 		printk("Waiting for stream(s) started\n");
@@ -1854,15 +1935,11 @@ wait_for_pa_sync:
 			continue;
 		}
 
-		printk("Waiting for PA disconnected\n");
-		k_sem_take(&sem_pa_sync_lost, K_FOREVER);
-
-		printk("Waiting for sink to stop\n");
-		err = k_sem_take(&sem_broadcast_sink_stopped, SEM_TIMEOUT);
-		if (err != 0) {
-			printk("sem_broadcast_sink_stopped timed out, resetting\n");
-			continue;
-		}
+		/* Wait until the PA or the BIG is lost. reset() then stops and deletes the
+		 * sink and the PA sync before scanning again.
+		 */
+		printk("Waiting for PA or BIG sync lost\n");
+		k_sem_take(&sem_sync_lost, K_FOREVER);
 	}
 
 	return 0;
