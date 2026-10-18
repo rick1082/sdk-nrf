@@ -85,19 +85,27 @@ static uint16_t i2s_tx_buf_b[I2S_SAMPLES_NUM * 2] __aligned(4) = {0}; // 2 chann
 static uint16_t i2s_rx_buf_a[I2S_SAMPLES_NUM * 2] __aligned(4) = {0}; // 2 channels, 16 bits each
 static uint16_t i2s_rx_buf_b[I2S_SAMPLES_NUM * 2] __aligned(4) = {0}; // 2 channels, 16 bits each
 #define I2S_BLOCK_BYTES (I2S_SAMPLES_NUM * 2 * sizeof(uint16_t)) /* One 1 ms I2S block */
-#define BUFFER_SPACE 60 // 60 I2S blocks = 60 ms
+/* 80 ms of audio: the drift target (up to 40 ms) plus one ISO interval of frames (up to 30 ms)
+ * plus 10 ms for a burst that arrives early. Covers ISO intervals of 10, 20 and 30 ms.
+ */
+#define BUFFER_SPACE 80 /* I2S blocks */
 RING_BUF_DECLARE(i2s_tx_ring_buf, I2S_BLOCK_BYTES * BUFFER_SPACE);
 /* I2S blocks not completely filled from the ring buffer, counted in the I2S ISR */
 static atomic_t i2s_underrun_cnt;
 
-/* A new stream starts playing only once the ring buffer holds i2s_prime_bytes: the level drift
- * control aims for (DRIFT_FILL_MID_PCT, half the ring) plus one ISO interval of audio, set by
- * i2s_prime_setup(). After the first interval has played, the fill bottoms out at the target.
- * Without priming, playback starts from an almost empty buffer, which underruns until drift
- * control slowly fills it.
+/* Drift control keeps the lowest ring fill of each ISO interval at drift_target_ms, set per BIG
+ * by i2s_prime_setup() to max(DRIFT_TARGET_MIN_MS, ISO interval + one frame). The ring then
+ * still holds audio if one channel arrives a whole ISO interval late.
  */
-#define I2S_PRIME_TARGET_BYTES (I2S_BLOCK_BYTES * BUFFER_SPACE / 2)
-static uint32_t i2s_prime_bytes = I2S_PRIME_TARGET_BYTES;
+#define DRIFT_TARGET_MIN_MS 30
+static uint32_t drift_target_ms = DRIFT_TARGET_MIN_MS;
+
+/* A new stream starts playing only once the ring buffer holds i2s_prime_bytes: the drift target
+ * plus one ISO interval of audio, set by i2s_prime_setup(). After the first interval has played,
+ * the fill bottoms out at the target. Without priming, playback starts from an almost empty
+ * buffer, which underruns until drift control slowly fills it.
+ */
+static uint32_t i2s_prime_bytes = (DRIFT_TARGET_MIN_MS + 10) * I2S_BLOCK_BYTES;
 /* Cleared at stream start, set by the I2S ISR once i2s_prime_bytes are buffered */
 static atomic_t i2s_primed;
 
@@ -674,12 +682,10 @@ static uint8_t synced_stream_cnt;
 #define TLV320_PLL_D_NOMINAL 3760 /* 48000 Hz */
 #define TLV320_PLL_D_SLOW    3718 /* 47962.5 Hz */
 
-/* I2S ring buffer fill levels (percent) for drift control. The DAC rate changes when the fill
- * leaves the LOW-HIGH band, and returns to nominal once the fill is back at MID.
+/* The DAC rate changes when an ISO interval's lowest fill leaves drift_target_ms +/-
+ * DRIFT_BAND_MS, and returns to nominal once the low point is back at the target.
  */
-#define DRIFT_FILL_HIGH_PCT 55
-#define DRIFT_FILL_LOW_PCT  45
-#define DRIFT_FILL_MID_PCT  50
+#define DRIFT_BAND_MS 3
 
 static void tlv320_set_pll_d(uint16_t d)
 {
@@ -688,8 +694,8 @@ static void tlv320_set_pll_d(uint16_t d)
 	dac_i2c_write(&dev_i2c, 0x08, d & 0xFF);
 }
 
-/* Adjust the DAC sample rate to keep the I2S ring buffer around half full. The PLL is only
- * written when the rate changes.
+/* Adjust the DAC sample rate to keep the I2S ring buffer's low point at drift_target_ms. The
+ * PLL is only written when the rate changes.
  */
 static enum drift_state {
 	DRIFT_NOMINAL,
@@ -697,23 +703,23 @@ static enum drift_state {
 	DRIFT_SLOW,
 } drift_state = DRIFT_NOMINAL;
 
-static uint32_t i2s_ring_fill_pct(void)
+/* Audio in the I2S ring buffer, in ms (one I2S block is 1 ms) */
+static uint32_t i2s_ring_fill_ms(void)
 {
-	return 100U - (ring_buf_space_get(&i2s_tx_ring_buf) * 100U /
-		       ring_buf_capacity_get(&i2s_tx_ring_buf));
+	return ring_buf_size_get(&i2s_tx_ring_buf) / I2S_BLOCK_BYTES;
 }
 
-/* Lowest fill (%) in the current ISO interval and frames decoded in it, see below */
+/* Lowest fill (ms) in the current ISO interval and frames decoded in it, see below */
 static uint32_t drift_fill_min = UINT32_MAX;
 static uint8_t drift_frame_cnt;
-/* Fill (%) drift control last decided on, for the statistics report */
+/* Fill (ms) drift control last decided on, for the statistics report */
 static uint32_t drift_fill_last;
 
 static void drift_control_update(void)
 {
 	enum drift_state state = drift_state;
 	int new_state = state;
-	uint32_t fill_pct;
+	uint32_t fill_ms;
 
 	/* The fill only rises while the I2S ISR is priming; nothing to correct yet */
 	if (!atomic_get(&i2s_primed)) {
@@ -727,31 +733,31 @@ static void drift_control_update(void)
 	 * its lowest point (just before the interval's first frame), so the rate does not flip
 	 * inside every interval.
 	 */
-	drift_fill_min = MIN(drift_fill_min, i2s_ring_fill_pct());
+	drift_fill_min = MIN(drift_fill_min, i2s_ring_fill_ms());
 	if (++drift_frame_cnt < jitter_buffer_sdus) {
 		return;
 	}
 
-	fill_pct = drift_fill_min;
-	drift_fill_last = fill_pct;
+	fill_ms = drift_fill_min;
+	drift_fill_last = fill_ms;
 	drift_fill_min = UINT32_MAX;
 	drift_frame_cnt = 0U;
 
 	switch (state) {
 	case DRIFT_NOMINAL:
-		if (fill_pct > DRIFT_FILL_HIGH_PCT) {
+		if (fill_ms > drift_target_ms + DRIFT_BAND_MS) {
 			new_state = DRIFT_FAST;
-		} else if (fill_pct < DRIFT_FILL_LOW_PCT) {
+		} else if (fill_ms + DRIFT_BAND_MS < drift_target_ms) {
 			new_state = DRIFT_SLOW;
 		}
 		break;
 	case DRIFT_FAST:
-		if (fill_pct <= DRIFT_FILL_MID_PCT) {
+		if (fill_ms <= drift_target_ms) {
 			new_state = DRIFT_NOMINAL;
 		}
 		break;
 	case DRIFT_SLOW:
-		if (fill_pct >= DRIFT_FILL_MID_PCT) {
+		if (fill_ms >= drift_target_ms) {
 			new_state = DRIFT_NOMINAL;
 		}
 		break;
@@ -813,9 +819,10 @@ static void rx_stats_report(void)
 	       rx_stats.decoded, rx_stats.mono, rx_stats.plc[0], rx_stats.plc[1],
 	       rx_stats.wait[0], rx_stats.wait[1], rx_stats.drop[0], rx_stats.drop[1],
 	       rx_stats.qfull[0], rx_stats.qfull[1]);
-	printk("I2S: ringfull %u underrun %u | fill %u%% now, %u%% interval low | rate %s\n",
-	       rx_stats.ring_full, (uint32_t)atomic_clear(&i2s_underrun_cnt), i2s_ring_fill_pct(),
-	       drift_fill_last, drift_name[drift_state]);
+	printk("I2S: ringfull %u underrun %u | fill %u ms now, %u ms interval low, target %u ms | "
+	       "rate %s\n",
+	       rx_stats.ring_full, (uint32_t)atomic_clear(&i2s_underrun_cnt), i2s_ring_fill_ms(),
+	       drift_fill_last, drift_target_ms, drift_name[drift_state]);
 
 	memset(&rx_stats, 0, sizeof(rx_stats));
 }
@@ -2028,16 +2035,22 @@ static void big_info_print(void)
 	       big_info.phy, big_info.framing ? "framed" : "unframed");
 }
 
-/* Priming level for the next stream: drift-control target plus one ISO interval of audio,
- * kept one frame below the ring size so the frame that completes it still fits.
+/* Drift target and priming level for the next stream. The target is max(30 ms, ISO interval +
+ * one frame), so the ring covers a channel arriving one whole ISO interval late. Playback
+ * starts at the target plus one ISO interval, kept one frame below the ring size so the frame
+ * that completes it still fits.
  */
 static void i2s_prime_setup(void)
 {
 	uint32_t frame_bytes = pcm_frame_samples * 2 * sizeof(int16_t);
+	uint32_t frame_ms = frame_bytes / I2S_BLOCK_BYTES;
+	uint32_t interval_ms = jitter_buffer_sdus * frame_ms;
 	uint32_t max = ring_buf_capacity_get(&i2s_tx_ring_buf) - frame_bytes;
 
-	i2s_prime_bytes = MIN(I2S_PRIME_TARGET_BYTES + jitter_buffer_sdus * frame_bytes, max);
-	printk("I2S: playback starts after %u ms buffered\n", i2s_prime_bytes / I2S_BLOCK_BYTES);
+	drift_target_ms = MAX(DRIFT_TARGET_MIN_MS, interval_ms + frame_ms);
+	i2s_prime_bytes = MIN((drift_target_ms + interval_ms) * I2S_BLOCK_BYTES, max);
+	printk("I2S: drift target %u ms, playback starts after %u ms buffered\n", drift_target_ms,
+	       i2s_prime_bytes / I2S_BLOCK_BYTES);
 }
 
 /* Returns the subgroup that contains all BISes in bis_bitfield, or NULL */
