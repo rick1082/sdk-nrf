@@ -538,10 +538,45 @@ struct recv_pkt_info {
 };
 
 
-#define JITTER_BUFFER_SIZE 6
-#define JITTER_BUFFER_CHECK 4
-K_MSGQ_DEFINE(recv_pkt_msgq_l, sizeof(struct recv_pkt_info), JITTER_BUFFER_SIZE, 4);
-K_MSGQ_DEFINE(recv_pkt_msgq_r, sizeof(struct recv_pkt_info), JITTER_BUFFER_SIZE, 4);
+/* Jitter queue per channel, sized for each BIG by jitter_buffer_setup():
+ *   decode threshold = SDUs per ISO interval (N)
+ *   size             = N * (1 + JITTER_BUFFER_EXTRA)
+ * A BIS delivers its SDUs per ISO interval, so a late channel falls behind in steps of N SDUs.
+ * The extra space therefore counts ISO intervals: a channel may lag by up to
+ * JITTER_BUFFER_EXTRA ISO intervals before the other channel is played alone
+ * (see stream_recv_cb()).
+ */
+#define JITTER_BUFFER_EXTRA   2  /* ISO intervals a late channel may lag */
+#define JITTER_BUFFER_MAX     12 /* Slots per channel queue */
+#define JITTER_BUFFER_DEFAULT 2  /* SDUs per ISO interval assumed until a BIGInfo is seen */
+
+/* The queues are re-initialized between BIG syncs, which is only safe without object core */
+BUILD_ASSERT(!IS_ENABLED(CONFIG_OBJ_CORE_MSGQ), "k_msgq_init() is called more than once");
+
+static char recv_pkt_msgq_l_buf[JITTER_BUFFER_MAX * sizeof(struct recv_pkt_info)] __aligned(4);
+static char recv_pkt_msgq_r_buf[JITTER_BUFFER_MAX * sizeof(struct recv_pkt_info)] __aligned(4);
+static struct k_msgq recv_pkt_msgq_l;
+static struct k_msgq recv_pkt_msgq_r;
+static uint8_t jitter_buffer_size;
+static uint8_t jitter_buffer_check;
+
+/* Size both queues for sdus_per_interval SDUs per ISO interval. Must only be called while no
+ * stream is running, i.e. before bt_bap_broadcast_sink_sync().
+ */
+static void jitter_buffer_setup(uint32_t sdus_per_interval)
+{
+	uint32_t size = sdus_per_interval * (1U + JITTER_BUFFER_EXTRA);
+
+	if (size > JITTER_BUFFER_MAX) {
+		printk("Jitter buffer needs %u slots, limited to %u\n", size, JITTER_BUFFER_MAX);
+		size = JITTER_BUFFER_MAX;
+	}
+
+	jitter_buffer_size = size;
+	jitter_buffer_check = MIN(sdus_per_interval, size);
+	k_msgq_init(&recv_pkt_msgq_l, recv_pkt_msgq_l_buf, sizeof(struct recv_pkt_info), size);
+	k_msgq_init(&recv_pkt_msgq_r, recv_pkt_msgq_r_buf, sizeof(struct recv_pkt_info), size);
+}
 
 /* Max SDU timestamp difference between L and R packets that are played together */
 #define LR_SYNC_MAX_DIFF_US 2000
@@ -551,6 +586,8 @@ BUILD_ASSERT(CONFIG_BT_BAP_BROADCAST_SNK_STREAM_COUNT <= 2,
 
 /* Output channel of each synced stream (0 = left, 1 = right), indexed like bap_streams_p */
 static uint8_t stream_out_chan[CONFIG_BT_BAP_BROADCAST_SNK_STREAM_COUNT];
+/* Number of synced streams (1 = mono source, 2 = stereo), set by stream_out_chan_set() */
+static uint8_t synced_stream_cnt;
 
 /* TLV320 PLL D values that set the DAC sample rate */
 #define TLV320_PLL_D_FAST    3802 /* 48037.5 Hz */
@@ -619,17 +656,66 @@ static void drift_control_update(void)
 	}
 }
 
-static void recv_pkt_enqueue(struct k_msgq *msgq, const struct recv_pkt_info *pkt_info,
-			     char chan_name)
+static void recv_pkt_enqueue(uint8_t chan, const struct recv_pkt_info *pkt_info)
 {
+	struct k_msgq *msgq = chan == 0U ? &recv_pkt_msgq_l : &recv_pkt_msgq_r;
+
 	if (k_msgq_put(msgq, pkt_info, K_NO_WAIT) == -ENOMSG) {
 		struct recv_pkt_info oldest;
 
 		/* Queue full: drop the oldest packet to make room for the newest */
-		printk("%c: MsgQ full\n", chan_name);
+		printk("%c: MsgQ full\n", chan == 0U ? 'L' : 'R');
 		(void)k_msgq_get(msgq, &oldest, K_NO_WAIT);
 		(void)k_msgq_put(msgq, pkt_info, K_NO_WAIT);
 	}
+}
+
+/* Decode one frame and queue it for I2S. l or r is NULL when that channel is missing; the
+ * channel that is present is then copied to both outputs.
+ */
+static void frame_play(const struct recv_pkt_info *l, const struct recv_pkt_info *r)
+{
+	/* Zeroed so a failed decode outputs silence instead of stack data */
+	int16_t audio_buf[2 * MAX_NUM_SAMPLES] = {0};
+	uint32_t frame_bytes;
+	int err;
+
+	drift_control_update();
+
+	if (l != NULL) {
+		err = lc3_decode(lc3_decoder[0], l->bad_frame ? NULL : l->buf, l->size,
+				 LC3_PCM_FORMAT_S16, audio_buf + 0, 2);
+		if (err < 0) {
+			printk("L: LC3 decode failed: %d\n", err);
+		}
+	}
+	if (r != NULL) {
+		err = lc3_decode(lc3_decoder[1], r->bad_frame ? NULL : r->buf, r->size,
+				 LC3_PCM_FORMAT_S16, audio_buf + 1, 2);
+		if (err < 0) {
+			printk("R: LC3 decode failed: %d\n", err);
+		}
+	}
+
+	/* Mono: copy the received channel to the other output */
+	if (l != NULL && r == NULL) {
+		for (int j = 0; j < pcm_frame_samples; j++) {
+			audio_buf[2 * j + 1] = audio_buf[2 * j];
+		}
+	} else if (r != NULL && l == NULL) {
+		for (int j = 0; j < pcm_frame_samples; j++) {
+			audio_buf[2 * j] = audio_buf[2 * j + 1];
+		}
+	}
+
+	/* Drop the whole frame rather than writing part of it when the buffer is full */
+	frame_bytes = pcm_frame_samples * 2 * sizeof(int16_t);
+	if (ring_buf_space_get(&i2s_tx_ring_buf) < frame_bytes) {
+		printk("I2S ring buffer full, frame dropped\n");
+		return;
+	}
+
+	(void)ring_buf_put(&i2s_tx_ring_buf, (uint8_t *)audio_buf, frame_bytes);
 }
 
 static void stream_recv_cb(struct bt_bap_stream *bap_stream, const struct bt_iso_recv_info *info,
@@ -639,10 +725,11 @@ static void stream_recv_cb(struct bt_bap_stream *bap_stream, const struct bt_iso
 	struct recv_pkt_info pkt_info_l = {0};
 	struct recv_pkt_info pkt_info_r = {0};
 	int stream = stream_num_get(bap_stream);
-	uint32_t frame_bytes;
+	struct k_msgq *own_q;
+	struct k_msgq *other_q;
+	uint8_t chan;
 	bool has_l;
 	bool has_r;
-	int err;
 
 	if (stream < 0) {
 		return;
@@ -654,20 +741,41 @@ static void stream_recv_cb(struct bt_bap_stream *bap_stream, const struct bt_iso
 	pkt_info.size = buf->len;
 	memcpy(pkt_info.buf, buf->data, buf->len);
 
-	if (stream_out_chan[stream] == 0U) {
-		recv_pkt_enqueue(&recv_pkt_msgq_l, &pkt_info, 'L');
-	} else {
-		recv_pkt_enqueue(&recv_pkt_msgq_r, &pkt_info, 'R');
+	chan = stream_out_chan[stream];
+	own_q = chan == 0U ? &recv_pkt_msgq_l : &recv_pkt_msgq_r;
+	other_q = chan == 0U ? &recv_pkt_msgq_r : &recv_pkt_msgq_l;
+
+	/* Stereo, this queue is full and the other channel has nothing: the other channel is
+	 * more than JITTER_BUFFER_EXTRA ISO intervals late. Play this channel's oldest packet
+	 * alone to make room, rather than discarding it.
+	 */
+	if (synced_stream_cnt > 1U && k_msgq_num_free_get(own_q) == 0U &&
+	    k_msgq_num_used_get(other_q) == 0U) {
+		struct recv_pkt_info *oldest = chan == 0U ? &pkt_info_l : &pkt_info_r;
+
+		(void)k_msgq_get(own_q, oldest, K_NO_WAIT);
+		frame_play(chan == 0U ? oldest : NULL, chan == 0U ? NULL : oldest);
 	}
 
-	if (k_msgq_num_used_get(&recv_pkt_msgq_l) < JITTER_BUFFER_CHECK &&
-	    k_msgq_num_used_get(&recv_pkt_msgq_r) < JITTER_BUFFER_CHECK) {
+	recv_pkt_enqueue(chan, &pkt_info);
+
+	if (k_msgq_num_used_get(&recv_pkt_msgq_l) < jitter_buffer_check &&
+	    k_msgq_num_used_get(&recv_pkt_msgq_r) < jitter_buffer_check) {
 		return;
 	}
 
 	/* Only one queue has data for a mono (single BIS) source */
 	has_l = k_msgq_peek(&recv_pkt_msgq_l, &pkt_info_l) == 0;
 	has_r = k_msgq_peek(&recv_pkt_msgq_r, &pkt_info_r) == 0;
+
+	/* In stereo, an empty queue means that channel's SDUs are late: wait for them instead of
+	 * playing the other channel alone, which would make the late packet look old and get it
+	 * dropped. If the wait outgrows the queue, the overflow case above plays the oldest
+	 * packet alone.
+	 */
+	if (has_l != has_r && synced_stream_cnt > 1U) {
+		return;
+	}
 
 	/* Align L and R on the SDU timestamps, unless an SDU has no timestamp (ts is then 0).
 	 * The signed difference handles the 32-bit us timestamp wrap (~71.6 min).
@@ -699,45 +807,7 @@ static void stream_recv_cb(struct bt_bap_stream *bap_stream, const struct bt_iso
 		(void)k_msgq_get(&recv_pkt_msgq_r, &pkt_info_r, K_NO_WAIT);
 	}
 
-	drift_control_update();
-
-	/* Zeroed so a failed decode outputs silence instead of stack data */
-	int16_t audio_buf[2 * MAX_NUM_SAMPLES] = {0};
-
-	if (has_l) {
-		err = lc3_decode(lc3_decoder[0], pkt_info_l.bad_frame ? NULL : pkt_info_l.buf,
-				 pkt_info_l.size, LC3_PCM_FORMAT_S16, audio_buf + 0, 2);
-		if (err < 0) {
-			printk("L: LC3 decode failed: %d\n", err);
-		}
-	}
-	if (has_r) {
-		err = lc3_decode(lc3_decoder[1], pkt_info_r.bad_frame ? NULL : pkt_info_r.buf,
-				 pkt_info_r.size, LC3_PCM_FORMAT_S16, audio_buf + 1, 2);
-		if (err < 0) {
-			printk("R: LC3 decode failed: %d\n", err);
-		}
-	}
-
-	/* Mono: copy the received channel to the other output */
-	if (has_l && !has_r) {
-		for (int j = 0; j < pcm_frame_samples; j++) {
-			audio_buf[2 * j + 1] = audio_buf[2 * j];
-		}
-	} else if (has_r && !has_l) {
-		for (int j = 0; j < pcm_frame_samples; j++) {
-			audio_buf[2 * j] = audio_buf[2 * j + 1];
-		}
-	}
-
-	/* Drop the whole frame rather than writing part of it when the buffer is full */
-	frame_bytes = pcm_frame_samples * 2 * sizeof(int16_t);
-	if (ring_buf_space_get(&i2s_tx_ring_buf) < frame_bytes) {
-		printk("I2S ring buffer full, frame dropped\n");
-		return;
-	}
-
-	(void)ring_buf_put(&i2s_tx_ring_buf, (uint8_t *)audio_buf, frame_bytes);
+	frame_play(has_l ? &pkt_info_l : NULL, has_r ? &pkt_info_r : NULL);
 }
 
 static struct bt_bap_stream_ops stream_ops = {
@@ -930,10 +1000,16 @@ static void base_recv_cb(struct bt_bap_broadcast_sink *sink, const struct bt_bap
 	k_sem_give(&sem_base_received);
 }
 
+/* Latest BIGInfo of the source being synced, saved in syncable_cb() for main() */
+static struct bt_iso_biginfo big_info;
+
 static void syncable_cb(struct bt_bap_broadcast_sink *sink, const struct bt_iso_biginfo *biginfo)
 {
 	printk("Broadcast sink (%p) is syncable, BIG %s\n", (void *)sink,
 	       biginfo->encryption ? "encrypted" : "not encrypted");
+
+	big_info = *biginfo;
+	big_info.addr = NULL; /* Only valid during the callback */
 
 	k_sem_give(&sem_syncable);
 
@@ -1439,6 +1515,9 @@ static int init(void)
 	};
 	int err;
 
+	/* Valid queues before any Bluetooth callback can purge them */
+	jitter_buffer_setup(JITTER_BUFFER_DEFAULT);
+
 	err = bt_enable(NULL);
 	if (err) {
 		printk("Bluetooth enable failed (err %d)\n", err);
@@ -1782,6 +1861,8 @@ static void stream_out_chan_set(const struct base_subgroup_data *sg, uint32_t bi
 		}
 	}
 
+	synced_stream_cnt = cnt;
+
 	/* Default: first BIS to the left output, second BIS to the right output */
 	for (uint8_t i = 0U; i < ARRAY_SIZE(stream_out_chan); i++) {
 		stream_out_chan[i] = i;
@@ -1964,6 +2045,16 @@ wait_for_pa_sync:
 			printk("sem_syncable timed out, resetting\n");
 			continue;
 		}
+
+		/* No stream is running yet, so the jitter queues can be resized for this BIG */
+		if (big_info.sdu_interval > 0U) {
+			jitter_buffer_setup(DIV_ROUND_UP(BT_CONN_INTERVAL_TO_US(big_info.iso_interval),
+							 big_info.sdu_interval));
+		} else {
+			jitter_buffer_setup(JITTER_BUFFER_DEFAULT);
+		}
+		printk("Jitter buffer: %u slots per channel, decode at %u\n", jitter_buffer_size,
+		       jitter_buffer_check);
 
 		/* sem_broadcast_code_received is also given if the
 		 * broadcast is not encrypted
