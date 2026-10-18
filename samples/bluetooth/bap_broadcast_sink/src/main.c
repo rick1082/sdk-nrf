@@ -126,7 +126,10 @@ BUILD_ASSERT(IS_ENABLED(CONFIG_SCAN_SELF) || IS_ENABLED(CONFIG_SCAN_OFFLOAD),
 #define ADV_TIMEOUT K_FOREVER
 #endif /* CONFIG_SCAN_SELF */
 
-#define PA_SYNC_INTERVAL_TO_TIMEOUT_RATIO 5 /* Set the timeout relative to interval */
+/* With PA_SYNC_SKIP the controller listens only every (skip + 1) PA events, and PA events
+ * that collide with BIS events are missed. Allow several listen attempts before timing out.
+ */
+#define PA_SYNC_INTERVAL_TO_TIMEOUT_RATIO 20 /* Set the timeout relative to interval */
 #define PA_SYNC_SKIP                2
 #define NAME_LEN                    sizeof(CONFIG_TARGET_BROADCAST_NAME) + 1
 #define BROADCAST_DATA_ELEMENT_SIZE sizeof(int16_t)
@@ -1563,8 +1566,8 @@ static bool scan_check_and_sync_broadcast(struct bt_data *data, void *user_data)
 
 	bt_addr_le_to_str(info->addr, le_addr, sizeof(le_addr));
 
-	printk("Found broadcaster with ID 0x%06X and addr %s and sid 0x%02X\n", broadcast_id,
-	       le_addr, info->sid);
+	printk("Found broadcaster with ID 0x%06X and addr %s and sid 0x%02X, PA interval %u us\n",
+	       broadcast_id, le_addr, info->sid, BT_GAP_PER_ADV_INTERVAL_TO_US(info->interval));
 
 	if (broadcast_assistant_conn == NULL /* Not requested by Broadcast Assistant */ ||
 	    (req_recv_state != NULL && bt_addr_le_eq(info->addr, &req_recv_state->addr) &&
