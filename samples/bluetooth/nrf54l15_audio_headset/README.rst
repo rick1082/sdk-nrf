@@ -54,8 +54,10 @@ It advertises connectable and waits for a CAP Initiator or Broadcast Assistant t
 Android only offers its Broadcast Assistant (Audio Sharing) for devices that support both unicast and broadcast audio.
 The connected phone can configure either of the following:
 
-* CIS - The sample uses the Basic Audio Profile (BAP) Unicast Server role with one sink and one source Audio Stream Endpoint (ASE).
-  The audio received on the sink ASE is played on both outputs, and the source ASE sends dummy (all zero) SDUs.
+* CIS - The sample uses the Basic Audio Profile (BAP) Unicast Server role with two sink and one source Audio Stream Endpoint (ASE).
+  Each sink ASE supports one channel and the sink audio locations are front left and front right, so a phone streams stereo over two CISes, which are played on the left and right outputs.
+  If the phone only configures one sink ASE, its audio is played on both outputs.
+  The source ASE sends dummy (all zero) SDUs.
 * BIS - The sample uses the BAP Scan Delegator and Broadcast Sink roles.
   The Broadcast Assistant adds a broadcast source, optionally transfers the periodic advertising sync (PAST), and provides the Broadcast Code for encrypted broadcasts.
   Up to two BISes of one subgroup are played on the left and right outputs, using their channel allocation.

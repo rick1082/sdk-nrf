@@ -769,13 +769,18 @@ static const char *src_str(enum audio_out_src src)
 	return src == AUDIO_OUT_SRC_CIS ? "CIS" : "BIS";
 }
 
-/* Set up the decoders, jitter buffer and I2S priming for the first stream to be played */
-static int out_setup(enum audio_out_src src, const struct bt_bap_stream *stream)
+/* LC3 configuration of the streams being played */
+struct lc3_params {
+	int freq_hz;
+	int frame_dur_us;
+	uint16_t octets_per_frame; /* 0 if unknown */
+};
+
+static struct lc3_params out_lc3_params;
+
+static int lc3_params_get(const struct bt_bap_stream *stream, struct lc3_params *params)
 {
 	const struct bt_audio_codec_cfg *codec_cfg = stream->codec_cfg;
-	uint32_t sdus_per_interval;
-	int frame_dur_us;
-	int freq_hz;
 	int ret;
 
 	if (codec_cfg == NULL || codec_cfg->id != BT_HCI_CODING_FORMAT_LC3) {
@@ -791,7 +796,7 @@ static int out_setup(enum audio_out_src src, const struct bt_bap_stream *stream)
 		printk("Could not get sampling frequency: %d\n", ret);
 		return ret;
 	}
-	freq_hz = ret;
+	params->freq_hz = ret;
 
 	ret = bt_audio_codec_cfg_get_frame_dur(codec_cfg);
 	if (ret >= 0) {
@@ -801,15 +806,33 @@ static int out_setup(enum audio_out_src src, const struct bt_bap_stream *stream)
 		printk("Could not get frame duration: %d\n", ret);
 		return ret;
 	}
-	frame_dur_us = ret;
+	params->frame_dur_us = ret;
 
 	ret = bt_audio_codec_cfg_get_octets_per_frame(codec_cfg);
-	lc3_octets_per_frame = ret > 0 ? ret : 0U;
+	params->octets_per_frame = ret > 0 ? ret : 0U;
 
-	ret = lc3_decoders_setup(freq_hz, frame_dur_us);
+	return 0;
+}
+
+/* Set up the decoders, jitter buffer and I2S priming for the first stream to be played */
+static int out_setup(enum audio_out_src src, const struct bt_bap_stream *stream)
+{
+	struct lc3_params params;
+	uint32_t sdus_per_interval;
+	int ret;
+
+	ret = lc3_params_get(stream, &params);
 	if (ret != 0) {
 		return ret;
 	}
+
+	ret = lc3_decoders_setup(params.freq_hz, params.frame_dur_us);
+	if (ret != 0) {
+		return ret;
+	}
+
+	out_lc3_params = params;
+	lc3_octets_per_frame = params.octets_per_frame;
 
 	sdus_per_interval = sdus_per_iso_interval_get(stream);
 	jitter_buffer_setup(sdus_per_interval);
@@ -817,7 +840,8 @@ static int out_setup(enum audio_out_src src, const struct bt_bap_stream *stream)
 
 	printk("Audio out (%s): %d Hz, %d us frames, %u octets, %u SDUs per ISO interval, jitter "
 	       "buffer %u slots, decode at %u\n",
-	       src_str(src), freq_hz, frame_dur_us, lc3_octets_per_frame, sdus_per_interval,
+	       src_str(src), params.freq_hz, params.frame_dur_us, params.octets_per_frame,
+	       sdus_per_interval,
 	       jitter_buffer_size, jitter_buffer_check);
 
 	/* Count from the stream start, not the I2S underruns while idle */
@@ -883,6 +907,20 @@ int audio_out_stream_start(enum audio_out_src src, const struct bt_bap_stream *s
 		err = -ENOMEM;
 	} else if (out_stream_cnt == 0U) {
 		err = out_setup(src, stream);
+	} else {
+		/* E.g. the right CIS, which is decoded with the configuration of the left CIS */
+		struct lc3_params params;
+
+		err = lc3_params_get(stream, &params);
+		if (err == 0 && (params.freq_hz != out_lc3_params.freq_hz ||
+				 params.frame_dur_us != out_lc3_params.frame_dur_us ||
+				 params.octets_per_frame != out_lc3_params.octets_per_frame)) {
+			printk("Stream %p has another LC3 configuration (%d Hz, %d us, %u octets) "
+			       "than the stream being played, not playing it\n",
+			       stream, params.freq_hz, params.frame_dur_us,
+			       params.octets_per_frame);
+			err = -EINVAL;
+		}
 	}
 
 	if (err == 0) {

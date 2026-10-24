@@ -39,7 +39,9 @@
 #define MIN_OCTETS_PER_FRAME 26U
 #define MAX_OCTETS_PER_FRAME 155U
 #define FRAMES_PER_SDU       1U
-#define LOCATION             BT_AUDIO_LOCATION_FRONT_LEFT
+/* Stereo output, with one sink ASE per channel */
+#define SINK_LOCATION   (BT_AUDIO_LOCATION_FRONT_LEFT | BT_AUDIO_LOCATION_FRONT_RIGHT)
+#define SOURCE_LOCATION BT_AUDIO_LOCATION_FRONT_LEFT
 
 static const struct bt_data ad[] = {
 	BT_DATA_BYTES(BT_DATA_FLAGS, (BT_LE_AD_GENERAL | BT_LE_AD_NO_BREDR)),
@@ -171,12 +173,12 @@ static int pacs_init(void)
 		return err;
 	}
 
-	err = register_pac(BT_AUDIO_DIR_SINK, SINK_CONTEXT, &sink_cap, LOCATION);
+	err = register_pac(BT_AUDIO_DIR_SINK, SINK_CONTEXT, &sink_cap, SINK_LOCATION);
 	if (err != 0) {
 		return err;
 	}
 
-	return register_pac(BT_AUDIO_DIR_SOURCE, SOURCE_CONTEXT, &source_cap, LOCATION);
+	return register_pac(BT_AUDIO_DIR_SOURCE, SOURCE_CONTEXT, &source_cap, SOURCE_LOCATION);
 }
 
 int main(void)
