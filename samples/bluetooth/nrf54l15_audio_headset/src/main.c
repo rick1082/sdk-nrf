@@ -66,8 +66,18 @@ static struct bt_conn *default_conn;
 static K_SEM_DEFINE(sem_connected, 0, 1);
 static K_SEM_DEFINE(sem_disconnected, 0, 1);
 
+static void print_conn_params(const char *event, uint32_t interval_us, uint16_t latency,
+			      uint16_t timeout)
+{
+	printk("%s: interval %u.%02u ms, latency %u, timeout %u ms\n", event,
+	       interval_us / USEC_PER_MSEC, (interval_us % USEC_PER_MSEC) / 10U, latency,
+	       timeout * 10U);
+}
+
 static void connected(struct bt_conn *conn, uint8_t err)
 {
+	struct bt_conn_info info;
+
 	if (err != 0) {
 		printk("Failed to connect to %s %u %s\n", bt_conn_dst_str(conn),
 		       err, bt_hci_err_to_str(err));
@@ -76,8 +86,21 @@ static void connected(struct bt_conn *conn, uint8_t err)
 	}
 
 	printk("Connected: %s\n", bt_conn_dst_str(conn));
+
+	if (bt_conn_get_info(conn, &info) == 0) {
+		print_conn_params("Connection parameters", info.le.interval_us, info.le.latency,
+				  info.le.timeout);
+	}
+
 	default_conn = bt_conn_ref(conn);
 	k_sem_give(&sem_connected);
+}
+
+static void le_param_updated(struct bt_conn *conn, uint16_t interval, uint16_t latency,
+			     uint16_t timeout)
+{
+	print_conn_params("Connection parameters updated", BT_CONN_INTERVAL_TO_US(interval),
+			  latency, timeout);
 }
 
 static void disconnected(struct bt_conn *conn, uint8_t reason)
@@ -108,6 +131,7 @@ static void security_changed(struct bt_conn *conn, bt_security_t level,
 BT_CONN_CB_DEFINE(conn_callbacks) = {
 	.connected = connected,
 	.disconnected = disconnected,
+	.le_param_updated = le_param_updated,
 	.security_changed = security_changed,
 };
 
