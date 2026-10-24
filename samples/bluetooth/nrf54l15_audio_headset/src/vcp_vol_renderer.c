@@ -17,7 +17,14 @@
 #include <zephyr/kernel.h>
 #include <zephyr/sys/printk.h>
 
+#include <dk_buttons_and_leds.h>
+
 #include "nrf54l15_audio_headset.h"
+
+/* The 50 dB DAC volume range is mapped to the volume range 0-255, so a step of 13 changes the
+ * volume by about 2.5 dB
+ */
+#define VOLUME_STEP 13U
 
 static struct bt_vcp_included vcp_included;
 
@@ -45,6 +52,30 @@ static struct bt_vcp_vol_rend_cb vcp_cbs = {
 	.flags = vcs_flags_cb,
 };
 
+/* The volume is changed through the Volume Control Service, so that the phone is notified and
+ * the output follows in vcs_state_cb()
+ */
+static void button_handler(uint32_t button_state, uint32_t has_changed)
+{
+	const uint32_t pressed = button_state & has_changed;
+	int err;
+
+	if ((pressed & DK_BTN1_MSK) != 0U) {
+		/* Turning the volume up also unmutes, like on a phone */
+		err = bt_vcp_vol_rend_unmute_vol_up();
+		if (err != 0) {
+			printk("Failed to turn the volume up (err %d)\n", err);
+		}
+	}
+
+	if ((pressed & DK_BTN2_MSK) != 0U) {
+		err = bt_vcp_vol_rend_vol_down();
+		if (err != 0) {
+			printk("Failed to turn the volume down (err %d)\n", err);
+		}
+	}
+}
+
 int vcp_vol_renderer_init(void)
 {
 	int err;
@@ -52,7 +83,7 @@ int vcp_vol_renderer_init(void)
 
 	memset(&vcp_register_param, 0, sizeof(vcp_register_param));
 
-	vcp_register_param.step = 1;
+	vcp_register_param.step = VOLUME_STEP;
 	vcp_register_param.mute = BT_VCP_STATE_UNMUTED;
 	vcp_register_param.volume = 100;
 	vcp_register_param.cb = &vcp_cbs;
@@ -69,6 +100,12 @@ int vcp_vol_renderer_init(void)
 
 	audio_out_volume_set(vcp_register_param.volume,
 			     vcp_register_param.mute == BT_VCP_STATE_MUTED);
+
+	err = dk_buttons_init(button_handler);
+	if (err != 0) {
+		printk("Failed to initialize the buttons (err %d)\n", err);
+		return err;
+	}
 
 	return 0;
 }

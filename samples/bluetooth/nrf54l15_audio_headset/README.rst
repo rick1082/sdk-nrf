@@ -79,6 +79,17 @@ The output statistics are logged as ``OUT:`` and ``I2S:`` lines.
 
 Bonding information is stored in the settings, so that a phone can reconnect after a reset.
 
+User interface
+**************
+
+Button 0:
+   Turns the volume up by about 2.5 dB, and unmutes the output.
+
+Button 1:
+   Turns the volume down by about 2.5 dB.
+
+The buttons change the volume of the Volume Control Service, so the volume shown on the phone follows.
+
 Configuration
 *************
 
@@ -112,6 +123,7 @@ After programming the sample to your development kit, complete the following ste
 #. Play media or start a call on the phone to have the phone set up CIS.
    The audio is played on the DAC, and the received ISO data is logged as ``[CIS]`` lines.
 #. Change the volume on the phone and observe that the output volume follows.
+#. Press **Button 0** and **Button 1** and observe that the output volume, and the volume shown on the phone, follow.
 #. Start Audio Sharing, or add a broadcast source from the phone, to have the phone act as Broadcast Assistant.
    The audio is played on the DAC, and the received ISO data is logged as ``[BIS]`` lines.
 
