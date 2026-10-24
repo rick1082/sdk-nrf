@@ -57,6 +57,15 @@ int bap_unicast_sr_init(void);
 int bap_broadcast_sink_init(void);
 
 /**
+ * @brief Stop receiving BISes, e.g. because unicast audio starts
+ *
+ * The BIG sync is stopped and not requested again by the broadcast sink itself, until the
+ * Broadcast Assistant requests the BIS sync again. The PA sync and the source in the Broadcast
+ * Receive State are kept.
+ */
+void bap_broadcast_sink_stop_bis(void);
+
+/**
  * @brief Reset the receive statistics of a stream
  *
  * @param stats Statistics to reset
@@ -93,15 +102,17 @@ int audio_out_init(void);
 /**
  * @brief Start playing a stream
  *
- * Up to two streams (left and right) from the same source are played at a time. The first
- * stream sets the codec configuration used for decoding.
+ * Up to two streams (left and right) per source are played. The first stream of a source sets
+ * the codec configuration used for decoding its streams. The source that started a stream last
+ * is played; when all its streams have stopped, the streams of the other source are played
+ * again, if any.
  *
  * @param src    Source of the stream
  * @param stream The stream that started
  *
- * @retval 0 if the stream is played
- * @retval -EBUSY if streams from another source are being played
- * @retval -ENOMEM if two streams are already being played
+ * @retval 0 if the stream is played, or will be played when its source becomes active again
+ * @retval -EALREADY if the stream was already started
+ * @retval -ENOMEM if two streams of @p src are already started
  * @retval -EINVAL if the codec configuration of the stream is not supported
  */
 int audio_out_stream_start(enum audio_out_src src, const struct bt_bap_stream *stream);
@@ -109,7 +120,7 @@ int audio_out_stream_start(enum audio_out_src src, const struct bt_bap_stream *s
 /**
  * @brief Stop playing a stream
  *
- * Does nothing if the stream is not being played.
+ * Does nothing if the stream was not started.
  *
  * @param stream The stream that stopped
  */
@@ -118,7 +129,7 @@ void audio_out_stream_stop(const struct bt_bap_stream *stream);
 /**
  * @brief Play an SDU received on a stream
  *
- * Does nothing if the stream is not being played.
+ * Does nothing if the stream is not of the source being played.
  *
  * @param stream The stream the SDU was received on
  * @param info   ISO receive info

@@ -117,15 +117,33 @@ static int pcm_frame_samples = MAX_NUM_SAMPLES;
 /* Expected SDU size, or 0 if unknown. Other sizes (e.g. multiple channels) are concealed. */
 static uint16_t lc3_octets_per_frame;
 
-/* The streams being played. All streams are from the same source (CIS or BIS) and use the
- * same codec configuration.
+/* LC3 configuration of the streams of a source */
+struct lc3_params {
+	int freq_hz;
+	int frame_dur_us;
+	uint16_t octets_per_frame; /* 0 if unknown */
+};
+
+/* The started streams of each source (CIS and BIS). All streams of a source use the codec
+ * configuration of its first stream. Only the streams of the active source are played: the
+ * source that started a stream last, or the other source when the active source has no streams
+ * left. This way the audio follows the phone when it switches between CIS and BIS, even if the
+ * streams of both are briefly running at the same time.
  */
-static struct out_stream {
-	const struct bt_bap_stream *stream;
-	uint8_t chan; /* OUT_CHAN_LEFT or OUT_CHAN_RIGHT */
-} out_streams[OUT_CHAN_CNT];
-static uint8_t out_stream_cnt;
-static enum audio_out_src out_src;
+static struct out_source {
+	enum audio_out_src src;
+	struct out_stream {
+		const struct bt_bap_stream *stream;
+		uint8_t chan; /* OUT_CHAN_LEFT or OUT_CHAN_RIGHT */
+	} streams[OUT_CHAN_CNT];
+	uint8_t cnt;
+	struct lc3_params params;
+} out_sources[] = {
+	[AUDIO_OUT_SRC_CIS] = {.src = AUDIO_OUT_SRC_CIS},
+	[AUDIO_OUT_SRC_BIS] = {.src = AUDIO_OUT_SRC_BIS},
+};
+/* The source being played, or NULL */
+static struct out_source *out_active;
 /* Stream start and stop may run in another thread than the reception of the audio data */
 static K_MUTEX_DEFINE(out_mutex);
 
@@ -599,10 +617,10 @@ static void frame_play(const struct recv_pkt_info *l, const struct recv_pkt_info
 	out_stats.decoded++;
 }
 
-static int out_stream_find(const struct bt_bap_stream *stream)
+static int out_stream_find(const struct out_source *source, const struct bt_bap_stream *stream)
 {
-	for (uint8_t i = 0U; i < out_stream_cnt; i++) {
-		if (out_streams[i].stream == stream) {
+	for (uint8_t i = 0U; i < source->cnt; i++) {
+		if (source->streams[i].stream == stream) {
 			return i;
 		}
 	}
@@ -610,7 +628,7 @@ static int out_stream_find(const struct bt_bap_stream *stream)
 	return -1;
 }
 
-/* Called with out_mutex held, for a stream in out_streams */
+/* Called with out_mutex held, for a stream of the active source */
 static void recv_locked(uint8_t chan, const struct bt_iso_recv_info *info,
 			const struct net_buf *buf)
 {
@@ -620,7 +638,7 @@ static void recv_locked(uint8_t chan, const struct bt_iso_recv_info *info,
 	struct k_msgq *own_q = recv_pkt_msgq_get(chan);
 	struct k_msgq *other_q = recv_pkt_msgq_get(chan == OUT_CHAN_LEFT ? OUT_CHAN_RIGHT
 									  : OUT_CHAN_LEFT);
-	const bool stereo = out_stream_cnt > 1U;
+	const bool stereo = out_active->cnt > 1U;
 	bool has_l;
 	bool has_r;
 
@@ -705,9 +723,9 @@ void audio_out_recv(const struct bt_bap_stream *stream, const struct bt_iso_recv
 
 	k_mutex_lock(&out_mutex, K_FOREVER);
 
-	idx = out_stream_find(stream);
+	idx = out_active != NULL ? out_stream_find(out_active, stream) : -1;
 	if (idx >= 0) {
-		recv_locked(out_streams[idx].chan, info, buf);
+		recv_locked(out_active->streams[idx].chan, info, buf);
 
 		if (++out_stats.sdu_cnt >= REPORT_INTERVAL) {
 			out_stats_report();
@@ -769,15 +787,6 @@ static const char *src_str(enum audio_out_src src)
 	return src == AUDIO_OUT_SRC_CIS ? "CIS" : "BIS";
 }
 
-/* LC3 configuration of the streams being played */
-struct lc3_params {
-	int freq_hz;
-	int frame_dur_us;
-	uint16_t octets_per_frame; /* 0 if unknown */
-};
-
-static struct lc3_params out_lc3_params;
-
 static int lc3_params_get(const struct bt_bap_stream *stream, struct lc3_params *params)
 {
 	const struct bt_audio_codec_cfg *codec_cfg = stream->codec_cfg;
@@ -814,35 +823,37 @@ static int lc3_params_get(const struct bt_bap_stream *stream, struct lc3_params 
 	return 0;
 }
 
-/* Set up the decoders, jitter buffer and I2S priming for the first stream to be played */
-static int out_setup(enum audio_out_src src, const struct bt_bap_stream *stream)
+static bool lc3_params_eq(const struct lc3_params *a, const struct lc3_params *b)
 {
-	struct lc3_params params;
+	return a->freq_hz == b->freq_hz && a->frame_dur_us == b->frame_dur_us &&
+	       a->octets_per_frame == b->octets_per_frame;
+}
+
+/* Set up the decoders, jitter buffer and I2S priming to play the streams of a source. Restarts
+ * the playback from an empty jitter buffer.
+ */
+static int out_setup(const struct out_source *source)
+{
+	const struct lc3_params *params = &source->params;
 	uint32_t sdus_per_interval;
 	int ret;
 
-	ret = lc3_params_get(stream, &params);
+	ret = lc3_decoders_setup(params->freq_hz, params->frame_dur_us);
 	if (ret != 0) {
 		return ret;
 	}
 
-	ret = lc3_decoders_setup(params.freq_hz, params.frame_dur_us);
-	if (ret != 0) {
-		return ret;
-	}
+	lc3_octets_per_frame = params->octets_per_frame;
 
-	out_lc3_params = params;
-	lc3_octets_per_frame = params.octets_per_frame;
-
-	sdus_per_interval = sdus_per_iso_interval_get(stream);
+	sdus_per_interval = sdus_per_iso_interval_get(source->streams[0].stream);
 	jitter_buffer_setup(sdus_per_interval);
 	i2s_prime_setup();
 
 	printk("Audio out (%s): %d Hz, %d us frames, %u octets, %u SDUs per ISO interval, jitter "
 	       "buffer %u slots, decode at %u\n",
-	       src_str(src), params.freq_hz, params.frame_dur_us, params.octets_per_frame,
-	       sdus_per_interval,
-	       jitter_buffer_size, jitter_buffer_check);
+	       src_str(source->src), params->freq_hz, params->frame_dur_us,
+	       params->octets_per_frame, sdus_per_interval, jitter_buffer_size,
+	       jitter_buffer_check);
 
 	/* Count from the stream start, not the I2S underruns while idle */
 	memset(&out_stats, 0, sizeof(out_stats));
@@ -856,23 +867,55 @@ static int out_setup(enum audio_out_src src, const struct bt_bap_stream *stream)
 	/* Buffer i2s_prime_bytes before playing, see i2s_comp_handler() */
 	(void)atomic_clear(&i2s_primed);
 
-	out_src = src;
-
 	return 0;
+}
+
+/* Stop playing: the remaining audio in the I2S ring buffer is played out, then silence */
+static void out_deactivate(void)
+{
+	out_active = NULL;
+
+	ARRAY_FOR_EACH(lc3_decoder, i) {
+		lc3_decoder[i] = NULL;
+	}
+
+	k_msgq_purge(&recv_pkt_msgq_l);
+	k_msgq_purge(&recv_pkt_msgq_r);
+}
+
+/* Play the streams of source instead of the streams of the active source, if any */
+static void out_activate(struct out_source *source)
+{
+	int err;
+
+	if (out_active != NULL) {
+		printk("Audio out: switching from %s to %s\n", src_str(out_active->src),
+		       src_str(source->src));
+	}
+
+	err = out_setup(source);
+	if (err != 0) {
+		printk("Audio out: cannot play %s: %d\n", src_str(source->src), err);
+		out_deactivate();
+
+		return;
+	}
+
+	out_active = source;
 }
 
 /* Use the stream's channel allocation if it is exactly front left or right and that output is
  * free; otherwise the first free output
  */
-static uint8_t out_chan_get(const struct bt_bap_stream *stream)
+static uint8_t out_chan_get(const struct out_source *source, const struct bt_bap_stream *stream)
 {
 	const enum bt_audio_location front_lr =
 		BT_AUDIO_LOCATION_FRONT_LEFT | BT_AUDIO_LOCATION_FRONT_RIGHT;
 	bool used[OUT_CHAN_CNT] = {false};
 	enum bt_audio_location loc;
 
-	for (uint8_t i = 0U; i < out_stream_cnt; i++) {
-		used[out_streams[i].chan] = true;
+	for (uint8_t i = 0U; i < source->cnt; i++) {
+		used[source->streams[i].chan] = true;
 	}
 
 	if (stream->codec_cfg != NULL &&
@@ -889,49 +932,75 @@ static uint8_t out_chan_get(const struct bt_bap_stream *stream)
 	return used[OUT_CHAN_LEFT] ? OUT_CHAN_RIGHT : OUT_CHAN_LEFT;
 }
 
+/* Check that a new stream of source can be played */
+static int out_stream_check(const struct out_source *source, const struct bt_bap_stream *stream,
+			    struct lc3_params *params)
+{
+	int err;
+
+	if (out_stream_find(source, stream) >= 0) {
+		return -EALREADY;
+	}
+
+	if (source->cnt == ARRAY_SIZE(source->streams)) {
+		printk("Audio out can only play %zu %s streams, not playing stream %p\n",
+		       ARRAY_SIZE(source->streams), src_str(source->src), stream);
+		return -ENOMEM;
+	}
+
+	err = lc3_params_get(stream, params);
+	if (err != 0) {
+		return err;
+	}
+
+	if (source->cnt == 0U) {
+		/* Check now that the decoders support it, so that switching cannot fail later */
+		if (lc3_frame_samples(params->frame_dur_us, params->freq_hz) < 0) {
+			printk("Unsupported LC3 configuration: %d Hz, %d us frames\n",
+			       params->freq_hz, params->frame_dur_us);
+			return -EINVAL;
+		}
+	} else if (!lc3_params_eq(params, &source->params)) {
+		/* E.g. the right CIS, which is decoded with the configuration of the left CIS */
+		printk("Stream %p has another LC3 configuration (%d Hz, %d us, %u octets) than the "
+		       "other %s stream, not playing it\n",
+		       stream, params->freq_hz, params->frame_dur_us, params->octets_per_frame,
+		       src_str(source->src));
+		return -EINVAL;
+	}
+
+	return 0;
+}
+
 int audio_out_stream_start(enum audio_out_src src, const struct bt_bap_stream *stream)
 {
-	int err = 0;
+	struct out_source *source = &out_sources[src];
+	struct lc3_params params;
+	int err;
 
 	k_mutex_lock(&out_mutex, K_FOREVER);
 
-	if (out_stream_find(stream) >= 0) {
-		err = -EALREADY;
-	} else if (out_stream_cnt > 0U && src != out_src) {
-		printk("Audio out is playing %s, not playing %s stream %p\n", src_str(out_src),
-		       src_str(src), stream);
-		err = -EBUSY;
-	} else if (out_stream_cnt == ARRAY_SIZE(out_streams)) {
-		printk("Audio out can only play %zu streams, not playing stream %p\n",
-		       ARRAY_SIZE(out_streams), stream);
-		err = -ENOMEM;
-	} else if (out_stream_cnt == 0U) {
-		err = out_setup(src, stream);
-	} else {
-		/* E.g. the right CIS, which is decoded with the configuration of the left CIS */
-		struct lc3_params params;
-
-		err = lc3_params_get(stream, &params);
-		if (err == 0 && (params.freq_hz != out_lc3_params.freq_hz ||
-				 params.frame_dur_us != out_lc3_params.frame_dur_us ||
-				 params.octets_per_frame != out_lc3_params.octets_per_frame)) {
-			printk("Stream %p has another LC3 configuration (%d Hz, %d us, %u octets) "
-			       "than the stream being played, not playing it\n",
-			       stream, params.freq_hz, params.frame_dur_us,
-			       params.octets_per_frame);
-			err = -EINVAL;
-		}
-	}
-
+	err = out_stream_check(source, stream, &params);
 	if (err == 0) {
-		struct out_stream *out_stream = &out_streams[out_stream_cnt];
+		struct out_stream *out_stream = &source->streams[source->cnt];
+
+		if (source->cnt == 0U) {
+			source->params = params;
+		}
 
 		out_stream->stream = stream;
-		out_stream->chan = out_chan_get(stream);
-		out_stream_cnt++;
+		out_stream->chan = out_chan_get(source, stream);
+		source->cnt++;
 
-		printk("Audio out: playing %s stream %p on the %s output\n", src_str(src), stream,
+		printk("Audio out: %s stream %p on the %s output\n", src_str(src), stream,
 		       out_stream->chan == OUT_CHAN_LEFT ? "left" : "right");
+
+		/* The source that started last is played; another stream of the active source
+		 * just joins it
+		 */
+		if (out_active != source) {
+			out_activate(source);
+		}
 	}
 
 	k_mutex_unlock(&out_mutex);
@@ -941,24 +1010,41 @@ int audio_out_stream_start(enum audio_out_src src, const struct bt_bap_stream *s
 
 void audio_out_stream_stop(const struct bt_bap_stream *stream)
 {
-	int idx;
-
 	k_mutex_lock(&out_mutex, K_FOREVER);
 
-	idx = out_stream_find(stream);
-	if (idx >= 0) {
-		k_msgq_purge(recv_pkt_msgq_get(out_streams[idx].chan));
+	ARRAY_FOR_EACH_PTR(out_sources, source) {
+		const int idx = out_stream_find(source, stream);
+		uint8_t chan;
 
-		out_stream_cnt--;
-		out_streams[idx] = out_streams[out_stream_cnt];
+		if (idx < 0) {
+			continue;
+		}
 
-		printk("Audio out: stopped playing stream %p\n", stream);
+		chan = source->streams[idx].chan;
+		source->cnt--;
+		source->streams[idx] = source->streams[source->cnt];
 
-		if (out_stream_cnt == 0U) {
-			ARRAY_FOR_EACH(lc3_decoder, i) {
-				lc3_decoder[i] = NULL;
+		printk("Audio out: %s stream %p stopped\n", src_str(source->src), stream);
+
+		if (source == out_active) {
+			k_msgq_purge(recv_pkt_msgq_get(chan));
+		}
+
+		if (source == out_active && source->cnt == 0U) {
+			struct out_source *other = &out_sources[source->src == AUDIO_OUT_SRC_CIS
+									  ? AUDIO_OUT_SRC_BIS
+									  : AUDIO_OUT_SRC_CIS];
+
+			if (other->cnt > 0U) {
+				/* Fall back to the streams that are still running */
+				out_activate(other);
+			} else {
+				printk("Audio out: idle\n");
+				out_deactivate();
 			}
 		}
+
+		break;
 	}
 
 	k_mutex_unlock(&out_mutex);

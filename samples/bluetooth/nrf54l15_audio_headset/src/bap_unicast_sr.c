@@ -274,6 +274,12 @@ static void stream_enabled(struct bt_bap_stream *stream)
 
 	printk("Enabled %s stream %p\n", dir_str(ep_info.dir), stream);
 
+	/* The radio cannot receive a BIG and the CISes at the same time: with both, the CIS data
+	 * is lost and not all CISes get established. Unicast audio takes over, so stop the BIS
+	 * reception before the phone sets up the CISes.
+	 */
+	bap_broadcast_sink_stop_bis();
+
 	/* The unicast server is responsible for starting the sink streams */
 	if (ep_info.dir == BT_AUDIO_DIR_SINK) {
 		/* Automatically do the receiver start ready operation */

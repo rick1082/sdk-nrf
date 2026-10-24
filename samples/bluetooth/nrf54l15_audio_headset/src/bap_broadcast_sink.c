@@ -117,6 +117,25 @@ static int check_start_scan(void)
 	return 0;
 }
 
+static void broadcast_stop_work_handler(struct k_work *work)
+{
+	int err;
+
+	if (broadcast_sink.requested_bis_sync != 0U ||
+	    !atomic_test_bit(flags, FLAG_BROADCAST_SYNCED)) {
+		return;
+	}
+
+	printk("BIS sync is no longer requested, stopping sync\n");
+
+	err = bt_bap_broadcast_sink_stop(broadcast_sink.bap_broadcast_sink);
+	if (err != 0) {
+		printk("Failed to stop Broadcast Sink: %d\n", err);
+	}
+}
+
+static K_WORK_DEFINE(broadcast_stop_work, broadcast_stop_work_handler);
+
 static void broadcast_stream_started_cb(struct bt_bap_stream *stream)
 {
 	struct broadcast_stream *broadcast_stream =
@@ -127,6 +146,14 @@ static void broadcast_stream_started_cb(struct bt_bap_stream *stream)
 	iso_rx_reset(&broadcast_stream->rx_stats);
 	atomic_clear_bit(flags, FLAG_BROADCAST_SYNCING);
 	atomic_set_bit(flags, FLAG_BROADCAST_SYNCED);
+
+	if (broadcast_sink.requested_bis_sync == 0U) {
+		/* The Broadcast Assistant withdrew the BIS sync request while we were syncing and
+		 * the sync could not be cancelled. The BIG cannot be stopped from this callback.
+		 */
+		k_work_submit(&broadcast_stop_work);
+		return;
+	}
 
 	(void)audio_out_stream_start(AUDIO_OUT_SRC_BIS, stream);
 }
@@ -543,6 +570,49 @@ static void broadcast_code_cb(struct bt_conn *conn,
 	check_sync_broadcast();
 }
 
+static void recv_state_updated_cb(struct bt_conn *conn,
+				  const struct bt_bap_scan_delegator_recv_state *recv_state)
+{
+	printk("Receive state %u: PA sync state %u, encryption state %u", recv_state->src_id,
+	       recv_state->pa_sync_state, recv_state->encrypt_state);
+
+	for (uint8_t i = 0U; i < recv_state->num_subgroups; i++) {
+		printk(", subgroup %u BIS sync 0x%08X", i, recv_state->subgroups[i].bis_sync);
+	}
+
+	printk("\n");
+}
+
+static int remove_source_cb(struct bt_conn *conn, uint8_t src_id)
+{
+	printk("Removing broadcast source %u\n", src_id);
+
+	if (broadcast_sink.req_recv_state != NULL &&
+	    broadcast_sink.req_recv_state->src_id == src_id) {
+		broadcast_sink.req_recv_state = NULL;
+	}
+
+	broadcast_sink.requested_bis_sync = 0U;
+
+	/* The scan delegator only removes sources that are neither PA nor BIS synced, so the
+	 * broadcast sink of the source is idle and can be deleted
+	 */
+	if (broadcast_sink.pa_sync != NULL) {
+		int err;
+
+		/* This will trigger bap_pa_sync_terminated_cb, which deletes the broadcast sink */
+		err = bt_le_per_adv_sync_delete(broadcast_sink.pa_sync);
+		if (err != 0) {
+			printk("Failed to delete PA sync: %d\n", err);
+		}
+	} else if (!atomic_test_bit(flags, FLAG_BROADCAST_SYNCED) &&
+		   !atomic_test_bit(flags, FLAG_BROADCAST_SYNCING)) {
+		delete_broadcast_sink();
+	}
+
+	return 0;
+}
+
 static uint32_t get_req_bis_sync(const uint32_t bis_sync_req[CONFIG_BT_BAP_BASS_MAX_SUBGROUPS])
 {
 	uint32_t bis_sync = 0U;
@@ -559,38 +629,39 @@ static int bis_sync_req_cb(struct bt_conn *conn,
 			   const uint32_t bis_sync_req[CONFIG_BT_BAP_BASS_MAX_SUBGROUPS])
 {
 	const uint32_t new_bis_sync_req = get_req_bis_sync(bis_sync_req);
+	const bool big_active = atomic_test_bit(flags, FLAG_BROADCAST_SYNCED) ||
+				atomic_test_bit(flags, FLAG_BROADCAST_SYNCING);
 
 	printk("BIS sync request received for %p: 0x%08X\n", recv_state, new_bis_sync_req);
 
-	if (broadcast_sink.requested_bis_sync == new_bis_sync_req) {
-		printk("New request (0x%08X) is the same as last request; ignoring\n",
-		       new_bis_sync_req);
+	broadcast_sink.req_recv_state = recv_state;
+
+	if (big_active && broadcast_sink.requested_bis_sync == new_bis_sync_req) {
+		printk("Already syncing or synced to the requested BISes; ignoring\n");
 
 		return 0; /* no op */
 	}
 
-	if (atomic_test_bit(flags, FLAG_BROADCAST_SYNCED)) {
-		/* If the BIS sync request is received while we are already
-		 * synced, it means that the requested BIS sync has changed.
+	if (big_active) {
+		/* The requested BIS sync has changed, e.g. to 0 to stop the reception. Stop the
+		 * current sync (or cancel a pending one). The stream stopped callback will be
+		 * called as part of this, and we do not need to wait for any events from the
+		 * controller. Thus, when this returns, the broadcast sink is stopped.
 		 */
 		int err;
 
-		printk("Already synced. Stopping current sync\n");
+		printk("Stopping current sync\n");
 
-		/* The stream stopped callback will be called as part of this,
-		 * and we do not need to wait for any events from the
-		 * controller. Thus, when this returns, the broadcast sink is stopped
-		 */
 		err = bt_bap_broadcast_sink_stop(broadcast_sink.bap_broadcast_sink);
 		if (err != 0) {
+			/* If the BIG still gets synced, broadcast_stream_started_cb() stops it */
 			printk("Failed to stop Broadcast Sink: %d\n", err);
-
-			return err;
 		}
-
-		atomic_clear_bit(flags, FLAG_BROADCAST_SYNCED);
 	}
 
+	/* Mirror the request of the scan delegator, which only calls this callback again when
+	 * the request changes. A request of 0 thus stays in effect until the next request.
+	 */
 	broadcast_sink.requested_bis_sync = new_bis_sync_req;
 	check_sync_broadcast();
 
@@ -648,9 +719,10 @@ static void bap_pa_sync_terminated_cb(struct bt_le_per_adv_sync *sync,
 
 	printk("PA sync %p lost with reason 0x%02X\n", (void *)sync, info->reason);
 
-	/* Without PA we cannot sync to any new BIG - Clear data */
+	/* Without PA we cannot sync to any new BIG - Clear data. The BIS sync request is kept: the
+	 * BIG may still be synced, and the request remains in effect if the PA is synced again.
+	 */
 	broadcast_sink.pa_sync = NULL;
-	broadcast_sink.requested_bis_sync = 0U;
 	k_work_cancel_delayable(&pa_timer);
 	atomic_clear_bit(flags, FLAG_BROADCAST_SYNCABLE);
 	atomic_clear_bit(flags, FLAG_PA_SYNCED);
@@ -778,13 +850,42 @@ static void broadcast_scan_recv(const struct bt_le_scan_recv_info *info, struct 
 	broadcast_sink.requested_bis_sync = BT_BAP_BIS_SYNC_NO_PREF;
 }
 
+void bap_broadcast_sink_stop_bis(void)
+{
+	int err;
+
+	/* Do not sync to the BIG again by ourselves; the Broadcast Assistant can request the BIS
+	 * sync again
+	 */
+	broadcast_sink.requested_bis_sync = 0U;
+
+	if (!atomic_test_bit(flags, FLAG_BROADCAST_SYNCED) &&
+	    !atomic_test_bit(flags, FLAG_BROADCAST_SYNCING)) {
+		return;
+	}
+
+	printk("Stopping the BIS reception\n");
+
+	/* The BIS streams are stopped as part of this, and the Broadcast Receive State then shows
+	 * the BISes as not synced. The PA sync is kept, so the BIS sync can quickly be requested
+	 * again.
+	 */
+	err = bt_bap_broadcast_sink_stop(broadcast_sink.bap_broadcast_sink);
+	if (err != 0) {
+		/* If the BIG still gets synced, broadcast_stream_started_cb() stops it */
+		printk("Failed to stop Broadcast Sink: %d\n", err);
+	}
+}
+
 int bap_broadcast_sink_init(void)
 {
 	static struct bt_bap_scan_delegator_cb scan_delegator_cbs = {
+		.recv_state_updated = recv_state_updated_cb,
 		.pa_sync_req = pa_sync_req_cb,
 		.pa_sync_term_req = pa_sync_term_req_cb,
 		.broadcast_code = broadcast_code_cb,
 		.bis_sync_req = bis_sync_req_cb,
+		.remove_source = remove_source_cb,
 	};
 	static struct bt_bap_broadcast_sink_cb broadcast_sink_cbs = {
 		.base_recv = base_recv_cb,

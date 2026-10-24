@@ -68,7 +68,19 @@ Audio output
 ============
 
 The received LC3 frames are decoded at 48 kHz and played on a TLV320 DAC over I2S.
-Only one source (CIS or BIS) is played at a time; streams from the other source are ignored until the playing streams stop.
+Only one source (CIS or BIS) is played at a time: the source that started last.
+When the phone switches between CIS and BIS, the audio follows it, even if the streams of both are briefly running at the same time.
+When all streams of the played source have stopped, the streams of the other source are played again, if any.
+
+The CIS and BIS reception is stopped as follows:
+
+* The CIS are stopped by the phone through the Audio Stream Control Service, for example when Audio Sharing is started.
+* The BIS are stopped when the phone enables an ASE for unicast audio, as the radio cannot receive the BISes and the CISes at the same time.
+  The PA sync is kept, so the Broadcast Assistant can request the BIS sync again.
+* The BIS are also stopped when the Broadcast Assistant removes the BIS sync request (Modify Source), for example when Audio Sharing is stopped, or when the broadcast source stops.
+
+When the BIS are stopped, the Broadcast Receive State shows them as not synced, so the Broadcast Assistant can remove the source.
+The receive state updates are logged as ``Receive state`` lines.
 
 * The TLV320 is the I2S master, clocked from the I2S MCK of the nRF54L15.
 * A jitter buffer per channel aligns the left and right BISes on their SDU timestamps.
