@@ -1,0 +1,32 @@
+#
+# Copyright (c) 2022 Codecoup
+# Copyright 2023 NXP
+#
+# SPDX-License-Identifier: Apache-2.0
+#
+
+mainmenu "nRF54L15 Audio Headset"
+
+menu "Zephyr"
+source "Kconfig.zephyr"
+endmenu
+
+menu "nRF54L15 Audio Headset"
+
+config NRF54L15_AUDIO_HEADSET_PAST
+	bool
+	default y
+	# enable PAST support if we can
+	select BT_PER_ADV_SYNC_TRANSFER_RECEIVER if (!HAS_BT_CTLR || \
+						     BT_CTLR_SYNC_TRANSFER_RECEIVER_SUPPORT)
+	help
+	  Lets a Broadcast Assistant (e.g. a phone) transfer the periodic
+	  advertising sync of a broadcast source to this device.
+
+config NRF54L15_AUDIO_HEADSET_SCAN_SELF
+	bool "Scan for TMAP Broadcast Media Senders without Broadcast Assistant"
+	help
+	  If set to true, the sample will scan for and sync to a TMAP BMS by
+	  itself, in addition to accepting requests from a Broadcast Assistant.
+
+endmenu
