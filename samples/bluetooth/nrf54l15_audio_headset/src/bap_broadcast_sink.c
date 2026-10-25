@@ -328,6 +328,11 @@ static void check_sync_broadcast(void)
 		printk("Failed to sync the broadcast sink: %d\n", err);
 	} else {
 		atomic_set_bit(flags, FLAG_BROADCAST_SYNCING);
+
+		/* The radio cannot receive the BIG and CISes at the same time. Broadcast audio
+		 * takes over, so stop the unicast audio.
+		 */
+		bap_unicast_sr_stop_cis();
 	}
 }
 

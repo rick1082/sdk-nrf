@@ -71,10 +71,13 @@ The received LC3 frames are decoded at 48 kHz and played on a TLV320 DAC over I2
 Only one source (CIS or BIS) is played at a time: the source that started last.
 When the phone switches between CIS and BIS, the audio follows it, even if the streams of both are briefly running at the same time.
 When all streams of the played source have stopped, the streams of the other source are played again, if any.
+When the audio switches to another source, the remaining audio of the previous source is discarded.
 
 The CIS and BIS reception is stopped as follows:
 
 * The CIS are stopped by the phone through the Audio Stream Control Service, for example when Audio Sharing is started.
+* The CIS are also stopped when the BIS reception starts, as the radio cannot receive the BISes and the CISes at the same time.
+  The headset then releases the unicast streams, which disconnects the CISes.
 * The BIS are stopped when the phone enables an ASE for unicast audio, as the radio cannot receive the BISes and the CISes at the same time.
   The PA sync is kept, so the Broadcast Assistant can request the BIS sync again.
 * The BIS are also stopped when the Broadcast Assistant removes the BIS sync request (Modify Source), for example when Audio Sharing is stopped, or when the broadcast source stops.

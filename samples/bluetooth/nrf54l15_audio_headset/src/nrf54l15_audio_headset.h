@@ -50,6 +50,14 @@ int vcp_vol_renderer_init(void);
 int bap_unicast_sr_init(void);
 
 /**
+ * @brief Stop receiving and sending CISes, e.g. because broadcast audio starts
+ *
+ * Releases the unicast streams that use a CIS, which disconnects the CISes. The phone can
+ * configure and enable the streams again.
+ */
+void bap_unicast_sr_stop_cis(void);
+
+/**
  * @brief Initialize BAP Broadcast Sink and Scan Delegator (BIS)
  *
  * @return 0 if success, errno on failure.

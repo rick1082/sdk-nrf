@@ -99,6 +99,8 @@ static uint32_t drift_target_ms = DRIFT_TARGET_MIN_MS;
 static uint32_t i2s_prime_bytes = (DRIFT_TARGET_MIN_MS + 10) * I2S_BLOCK_BYTES;
 /* Cleared at stream start, set by the I2S ISR once i2s_prime_bytes are buffered */
 static atomic_t i2s_primed;
+/* Audio of the previously played source to discard from the ring buffer, see out_setup() */
+static atomic_t i2s_flush_bytes;
 
 #define MAX_SAMPLE_RATE       48000
 #define MAX_FRAME_DURATION_US 10000
@@ -181,6 +183,7 @@ static void i2s_comp_handler(nrfx_i2s_buffers_t const *released_bufs, uint32_t s
 {
 	uint16_t *tx_buf;
 	uint16_t *rx_buf;
+	uint32_t flush;
 	uint32_t read;
 
 	if (status != NRFX_I2S_STATUS_NEXT_BUFFERS_NEEDED || released_bufs == NULL) {
@@ -195,6 +198,12 @@ static void i2s_comp_handler(nrfx_i2s_buffers_t const *released_bufs, uint32_t s
 		rx_buf = i2s_rx_buf_b;
 	} else {
 		return;
+	}
+
+	/* The ISR is the only consumer of the ring buffer, so it discards the audio */
+	flush = atomic_clear(&i2s_flush_bytes);
+	if (flush > 0U) {
+		(void)ring_buf_get(&i2s_tx_ring_buf, NULL, flush);
 	}
 
 	/* Play silence, without consuming, until a new stream has buffered i2s_prime_bytes */
@@ -863,6 +872,12 @@ static int out_setup(const struct out_source *source)
 	if (drift_state != DRIFT_NOMINAL) {
 		drift_state_set(DRIFT_NOMINAL);
 	}
+
+	/* Do not play what is left of the audio of the previously played source, which would also
+	 * cut the priming short. Nothing is added to the ring buffer while out_mutex is held. Set
+	 * before clearing i2s_primed, so that the ISR cannot get primed by the old audio.
+	 */
+	atomic_set(&i2s_flush_bytes, ring_buf_size_get(&i2s_tx_ring_buf));
 
 	/* Buffer i2s_prime_bytes before playing, see i2s_comp_handler() */
 	(void)atomic_clear(&i2s_primed);

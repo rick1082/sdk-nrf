@@ -390,6 +390,63 @@ static void tx_thread_func(void *arg1, void *arg2, void *arg3)
 	}
 }
 
+/* Release a stream if it uses a CIS. A Release (rather than a Disable) makes the CIS
+ * disconnect, so that the radio is free for a BIG.
+ */
+static void stream_release_if_cis(struct bt_bap_stream *stream)
+{
+	struct bt_bap_ep_info ep_info;
+	int err;
+
+	if (stream->ep == NULL || bt_bap_ep_get_info(stream->ep, &ep_info) != 0) {
+		return;
+	}
+
+	switch (ep_info.state) {
+	case BT_BAP_EP_STATE_ENABLING:
+	case BT_BAP_EP_STATE_STREAMING:
+	case BT_BAP_EP_STATE_DISABLING:
+		break;
+	case BT_BAP_EP_STATE_QOS_CONFIGURED:
+		/* A disabled stream may still keep its CIS */
+		if (ep_info.iso_chan != NULL && ep_info.iso_chan->state == BT_ISO_STATE_CONNECTED) {
+			break;
+		}
+
+		return;
+	default:
+		return;
+	}
+
+	printk("Releasing %s stream %p to receive BISes\n", dir_str(ep_info.dir), stream);
+
+	err = bt_bap_stream_release(stream);
+	if (err != 0) {
+		printk("Failed to release stream %p: %d\n", stream, err);
+	}
+}
+
+static void stop_cis_work_handler(struct k_work *work)
+{
+	ARRAY_FOR_EACH_PTR(sink_streams, unicast_stream) {
+		stream_release_if_cis(&unicast_stream->stream);
+	}
+
+	ARRAY_FOR_EACH_PTR(source_streams, unicast_stream) {
+		stream_release_if_cis(&unicast_stream->stream);
+	}
+}
+
+static K_WORK_DEFINE(stop_cis_work, stop_cis_work_handler);
+
+void bap_unicast_sr_stop_cis(void)
+{
+	/* Release the streams from the system workqueue rather than from the Bluetooth callback
+	 * that starts the BIS reception, e.g. when receiving a BIGInfo
+	 */
+	k_work_submit(&stop_cis_work);
+}
+
 int bap_unicast_sr_init(void)
 {
 	int err;
