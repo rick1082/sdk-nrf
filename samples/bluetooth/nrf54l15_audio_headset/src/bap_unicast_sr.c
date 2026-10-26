@@ -31,6 +31,12 @@
 
 #define TX_LOG_INTERVAL 100U
 
+/* Preferred retransmission number proposed to the phone in the Codec Configured state, which
+ * the phone uses for the CIS. 13 is the value of the high reliability QoS settings of BAP (e.g.
+ * BT_BAP_LC3_UNICAST_PRESET_48_4_2), for a more robust audio stream than the low latency ones.
+ */
+#define QOS_PREF_RTN 10U
+
 static struct unicast_stream {
 	struct bt_bap_stream stream;
 	struct iso_rx_stats rx_stats;
@@ -39,7 +45,7 @@ static struct unicast_stream {
 } sink_streams[CONFIG_BT_ASCS_MAX_ASE_SNK_COUNT], source_streams[CONFIG_BT_ASCS_MAX_ASE_SRC_COUNT];
 
 static const struct bt_bap_qos_cfg_pref qos_pref =
-	BT_BAP_QOS_CFG_PREF(true, BT_GAP_LE_PHY_2M, 0x02, 10, 20000, 40000, 20000, 40000);
+	BT_BAP_QOS_CFG_PREF(true, BT_GAP_LE_PHY_2M, QOS_PREF_RTN, 10, 20000, 40000, 20000, 40000);
 
 static void print_hex(const uint8_t *ptr, size_t len)
 {
